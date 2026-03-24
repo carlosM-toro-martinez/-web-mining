@@ -1,0 +1,340 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+// generator client {
+//   provider = "prisma-client"
+//   output   = "../src/generated/prisma"
+// }
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////
+// CONFIGURACIÓN GLOBAL //
+//////////////////////////
+
+model Configuracion {
+  id           Int          @id @default(autoincrement())
+  metodoCosteo MetodoCosteo @default(ULTIMO_PRECIO)
+  createdAt    DateTime     @default(now())
+}
+
+enum MetodoCosteo {
+  ULTIMO_PRECIO
+  PROMEDIO_PONDERADO
+}
+
+//////////////////////////
+// USUARIOS             //
+//////////////////////////
+
+model User {
+  id        Int      @id @default(autoincrement())
+  nombre    String
+  email     String   @unique
+  password  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  movimientos Movimiento[]
+  logs        Log[]
+  eppAsignaciones EppAsignacion[]
+
+  valesSolicitados Vale[] @relation("Solicitante")
+  valesAprobados   Vale[] @relation("Supervisor")
+}
+
+enum Role {
+  ADMIN
+  ALMACENERO
+  SUPERINTENDENTE
+  TRABAJADOR
+}
+
+//////////////////////////
+// CATEGORÍA INVENTARIO //
+//////////////////////////
+
+model CategoriaInventario {
+  id       Int    @id @default(autoincrement())
+  codigo   String
+  nombre   String
+
+  parentId Int?
+  parent   CategoriaInventario? @relation("Tree", fields: [parentId], references: [id])
+  children CategoriaInventario[] @relation("Tree")
+
+  productos Producto[]
+}
+
+//////////////////////////
+// CONTABILIDAD         //
+//////////////////////////
+
+model CentroCosto {
+  id      Int    @id @default(autoincrement())
+  codigo  String @unique
+  nombre  String
+
+  cuentas CuentaContable[]
+}
+
+model FuncionGasto {
+  id      Int    @id @default(autoincrement())
+  codigo  String @unique
+  nombre  String
+
+  cuentas CuentaContable[]
+}
+
+model CuentaContable {
+  id             Int @id @default(autoincrement())
+  codigoCompleto String @unique
+
+  centroCostoId  Int
+  funcionGastoId Int
+
+  centroCosto  CentroCosto  @relation(fields: [centroCostoId], references: [id])
+  funcionGasto FuncionGasto @relation(fields: [funcionGastoId], references: [id])
+
+  movimientos Movimiento[]
+}
+
+//////////////////////////
+// PRODUCTOS            //
+//////////////////////////
+
+model Producto {
+  id          Int    @id @default(autoincrement())
+  codigo      String @unique
+  nombre      String
+  unidad      String
+
+  categoriaId Int
+  categoria   CategoriaInventario @relation(fields: [categoriaId], references: [id])
+
+  esEpp       Boolean @default(false)
+
+  stock       Stock?
+  movimientos Movimiento[]
+  compraItems CompraItem[]
+  valeItems   ValeItem[]
+  eppAsignaciones EppAsignacion[]
+  pedidoItems PedidoItem[]
+}
+
+//////////////////////////
+// STOCK                //
+//////////////////////////
+
+model Stock {
+  id         Int @id @default(autoincrement())
+  productoId Int @unique
+
+  cantidad   Decimal @db.Decimal(12,2)
+  precioUnit Decimal @db.Decimal(12,2)   // último precio
+  precioProm Decimal @db.Decimal(12,2)   // promedio ponderado
+
+  updatedAt  DateTime @updatedAt
+
+  producto   Producto @relation(fields: [productoId], references: [id])
+}
+
+//////////////////////////
+// MOVIMIENTOS (KARDEX) //
+//////////////////////////
+
+model Movimiento {
+  id            String   @id @default(uuid())
+  operationId   String   @unique
+
+  productoId    Int
+  tipo          TipoMovimiento
+
+  cantidad      Decimal @db.Decimal(12,2)
+  precioUnit    Decimal @db.Decimal(12,2)
+
+  entradaBs     Decimal @db.Decimal(12,2) @default(0)
+  salidaBs      Decimal @db.Decimal(12,2) @default(0)
+  saldoBs       Decimal @db.Decimal(12,2)
+
+  stockAntes    Decimal @db.Decimal(12,2)
+  stockDespues  Decimal @db.Decimal(12,2)
+
+  usuarioId     Int
+  cuentaId      Int?
+
+  referencia    String?
+  referenciaId  String?
+
+  createdAt     DateTime @default(now())
+
+  producto Producto @relation(fields: [productoId], references: [id])
+  usuario  User     @relation(fields: [usuarioId], references: [id])
+  cuenta   CuentaContable? @relation(fields: [cuentaId], references: [id])
+}
+
+enum TipoMovimiento {
+  ENTRADA
+  SALIDA
+}
+
+//////////////////////////
+// PROVEEDORES          //
+//////////////////////////
+
+model Proveedor {
+  id       Int    @id @default(autoincrement())
+  nombre   String
+  contacto String?
+
+  compras Compra[]
+  pedidos Pedido[]
+}
+
+//////////////////////////
+// PEDIDOS              //
+//////////////////////////
+
+model Pedido {
+  id        String   @id @default(uuid())
+  proveedorId Int
+  estado    EstadoPedido
+  createdAt DateTime @default(now())
+
+  observacion String?
+
+  proveedor Proveedor @relation(fields: [proveedorId], references: [id])
+  items     PedidoItem[]
+}
+
+enum EstadoPedido {
+  PENDIENTE
+  PARCIAL
+  COMPLETADO
+}
+
+model PedidoItem {
+  id         String @id @default(uuid())
+  pedidoId   String
+  productoId Int
+
+  cantidadPedida   Decimal @db.Decimal(12,2)
+  cantidadRecibida Decimal @db.Decimal(12,2) @default(0)
+
+  pedido   Pedido  @relation(fields: [pedidoId], references: [id])
+  producto Producto @relation(fields: [productoId], references: [id])
+}
+
+//////////////////////////
+// COMPRAS              //
+//////////////////////////
+
+model Compra {
+  id           String   @id @default(uuid())
+  proveedorId  Int
+  estado       EstadoCompra
+  createdAt    DateTime @default(now())
+
+  proveedor Proveedor @relation(fields: [proveedorId], references: [id])
+  items     CompraItem[]
+}
+
+enum EstadoCompra {
+  PENDIENTE
+  PARCIAL
+  COMPLETADO
+}
+
+model CompraItem {
+  id         String @id @default(uuid())
+  compraId   String
+  productoId Int
+
+  cantidadPedida   Decimal @db.Decimal(12,2)
+  cantidadRecibida Decimal @db.Decimal(12,2) @default(0)
+  precioUnit       Decimal @db.Decimal(12,2)
+
+  compra   Compra   @relation(fields: [compraId], references: [id])
+  producto Producto @relation(fields: [productoId], references: [id])
+}
+
+//////////////////////////
+// VALES                //
+//////////////////////////
+
+model Vale {
+  id                String   @id @default(uuid())
+  solicitanteId     Int
+  superintendenteId Int?
+
+  estado            EstadoVale
+
+  aprobadoAt        DateTime?
+  entregadoAt       DateTime?
+
+  createdAt         DateTime @default(now())
+
+  solicitante     User @relation("Solicitante", fields: [solicitanteId], references: [id])
+  superintendente User? @relation("Supervisor", fields: [superintendenteId], references: [id])
+
+  items ValeItem[]
+}
+
+enum EstadoVale {
+  PENDIENTE
+  APROBADO
+  PARCIAL
+  COMPLETADO
+  RECHAZADO
+}
+
+model ValeItem {
+  id            String @id @default(uuid())
+  valeId        String
+  productoId    Int
+
+  cantidadSolicitada Decimal @db.Decimal(12,2)
+  cantidadEntregada  Decimal @db.Decimal(12,2) @default(0)
+
+  vale     Vale     @relation(fields: [valeId], references: [id])
+  producto Producto @relation(fields: [productoId], references: [id])
+}
+
+//////////////////////////
+// EPP                  //
+//////////////////////////
+
+model EppAsignacion {
+  id         String   @id @default(uuid())
+  productoId Int
+  usuarioId  Int
+
+  fechaEntrega    DateTime @default(now())
+  fechaDevolucion DateTime?
+
+  producto Producto @relation(fields: [productoId], references: [id])
+  usuario  User     @relation(fields: [usuarioId], references: [id])
+}
+
+//////////////////////////
+// LOGS                 //
+//////////////////////////
+
+model Log {
+  id         String   @id @default(uuid())
+  usuarioId  Int
+  accion     String
+  data       Json
+  createdAt  DateTime @default(now())
+
+  usuario User @relation(fields: [usuarioId], references: [id])
+}
