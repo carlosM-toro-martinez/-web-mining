@@ -13,12 +13,15 @@ async function seed() {
       return;
     }
 
-    // Crear usuario admin
-    const hashedPassword = await bcrypt.hash("encuentraSS2026", 10);
+    // Crear usuario admin con datos desde ENV (o valores por defecto)
+    const adminEmail = process.env.ADMIN_EMAIL || "carlostoro@gmail.com";
+    const adminPlainPassword = process.env.ADMIN_PASSWORD || "pass123";
+
+    const hashedPassword = await bcrypt.hash(adminPlainPassword, 10);
     const adminUser = await prisma.user.create({
       data: {
-        nombre: "carlos toro",
-        email: "carlostoro@gmail.com",
+        nombre: process.env.ADMIN_NAME || "carlos toro",
+        email: adminEmail,
         password: hashedPassword,
         role: "ADMIN",
       },
