@@ -1,28 +1,75 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
-import type { LoginDTO, RegisterDTO } from "./auth.types.js";
+import type {
+  LoginDTO,
+  RegisterDTO,
+  ForgotPasswordDTO,
+  ResetPasswordDTO,
+  ChangePasswordDTO,
+} from "./auth.types.js";
 import { logger } from "../../config/logger.js";
+import { HttpError } from "../../errors/http.error.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret";
 
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
 export const authService = {
   async register(data: RegisterDTO) {
+    console.log("🔄 AUTH SERVICE: register called with:", data);
+
     const hashedPassword = await bcrypt.hash(data.password, 10);
+    console.log("🔐 Password hashed successfully");
 
-    const user = await prisma.user.create({
-      data: {
-        nombre: data.nombre,
-        email: data.email,
-        password: hashedPassword,
-        role: data.role,
-      },
-      select: { id: true, nombre: true, email: true, role: true },
-    });
+    try {
+      console.log("💾 Creating user in database...");
+      const user = await prisma.user.create({
+        data: {
+          nombre: data.nombre,
+          email: data.email,
+          password: hashedPassword,
+          role: data.role,
+        },
+        select: { id: true, nombre: true, email: true, role: true },
+      });
 
-    logger.info({ userId: user.id, action: "USER_REGISTERED" }, "Nuevo usuario registrado");
+      console.log("✅ User created successfully:", user);
+      logger.info({ userId: user.id, action: "USER_REGISTERED" }, "Nuevo usuario registrado");
 
-    return user;
+      return user;
+    } catch (unknownError) {
+      const error = unknownError instanceof Error ? unknownError : new Error("Unknown error");
+
+      console.log("❌ DATABASE ERROR:", error.message);
+      logger.error(
+        { error: error.message, stack: error.stack, email: data.email, role: data.role },
+        "Error al crear usuario",
+      );
+
+      if (
+        unknownError instanceof Prisma.PrismaClientKnownRequestError &&
+        unknownError.code === "P2002"
+      ) {
+        throw new HttpError("Email ya registrado", 409, {
+          target: (unknownError.meta as { target?: string[] }).target,
+        });
+      }
+      throw new HttpError("Error interno al crear usuario", 500, {
+        originalMessage: error.message,
+      });
+    }
   },
 
   async login(data: LoginDTO) {
@@ -32,7 +79,7 @@ export const authService = {
 
     if (!user || !(await bcrypt.compare(data.password, user.password))) {
       logger.warn({ email: data.email }, "Intento de login fallido");
-      throw new Error("Credenciales inválidas");
+      throw new HttpError("Credenciales inválidas", 401);
     }
 
     const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "1h" });
@@ -43,5 +90,88 @@ export const authService = {
       token,
       user: { id: user.id, nombre: user.nombre, email: user.email, role: user.role },
     };
+  },
+
+  async forgotPassword(data: ForgotPasswordDTO) {
+    const user = await prisma.user.findUnique({ where: { email: data.email } });
+    if (!user) {
+      throw new HttpError("Usuario no encontrado", 404);
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { resetToken, resetTokenExpiry },
+    });
+
+    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
+
+    // Siempre loggear el token para desarrollo/debugging
+    console.log(`🔑 RESET TOKEN PARA ${user.email}: ${resetToken}`);
+    console.log(`🔗 RESET URL: ${resetUrl}`);
+
+    // Enviar email si hay configuración SMTP
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      await transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: user.email,
+        subject: "Recuperación de contraseña - Minera Marte",
+        html: `<p>Hola ${user.nombre},</p><p>Haz clic en el enlace para resetear tu contraseña: <a href="${resetUrl}">${resetUrl}</a></p><p>Este enlace expira en 10 minutos.</p>`,
+      });
+    } else {
+      console.log("⚠️  SMTP no configurado: email no enviado, usa el token de arriba");
+    }
+
+    logger.info({ userId: user.id }, "Token de recuperación enviado");
+
+    return { message: "Correo de recuperación enviado" };
+  },
+
+  async resetPassword(data: ResetPasswordDTO) {
+    const user = await prisma.user.findFirst({
+      where: {
+        resetToken: data.token,
+        resetTokenExpiry: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      throw new HttpError("Token inválido o expirado", 400);
+    }
+
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetToken: null,
+        resetTokenExpiry: null,
+      },
+    });
+
+    logger.info({ userId: user.id }, "Contraseña reseteada");
+
+    return { message: "Contraseña actualizada exitosamente" };
+  },
+
+  async changePassword(userId: number, data: ChangePasswordDTO) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !(await bcrypt.compare(data.currentPassword, user.password))) {
+      throw new HttpError("Contraseña actual incorrecta", 400);
+    }
+
+    const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    logger.info({ userId }, "Contraseña cambiada");
+
+    return { message: "Contraseña cambiada exitosamente" };
   },
 };

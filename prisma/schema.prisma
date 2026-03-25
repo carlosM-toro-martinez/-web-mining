@@ -44,6 +44,9 @@ model User {
   role      Role
   createdAt DateTime @default(now())
 
+  resetToken       String?
+  resetTokenExpiry DateTime?
+
   movimientos Movimiento[]
   logs        Log[]
   eppAsignaciones EppAsignacion[]
