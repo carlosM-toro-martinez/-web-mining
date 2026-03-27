@@ -20,7 +20,6 @@ const validateQuery = (schema: any) => (req: any, res: any, next: any) => {
       .status(400)
       .json({ success: false, error: "Query validation error", details: result.error.flatten() });
   }
-  req.query = result.data;
   next();
 };
 
@@ -31,7 +30,6 @@ const validateParams = (schema: any) => (req: any, res: any, next: any) => {
       .status(400)
       .json({ success: false, error: "Params validation error", details: result.error.flatten() });
   }
-  req.params = result.data;
   next();
 };
 
