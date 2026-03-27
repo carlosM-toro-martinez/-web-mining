@@ -106,7 +106,7 @@ export const authService = {
       data: { resetToken, resetTokenExpiry },
     });
 
-    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
+    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}?token=${resetToken}`;
 
     // Siempre loggear el token para desarrollo/debugging
     console.log(`🔑 RESET TOKEN PARA ${user.email}: ${resetToken}`);
