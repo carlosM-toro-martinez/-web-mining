@@ -45,12 +45,37 @@ export const productoService = {
             },
           },
           stock: true,
+          movimientos: {
+            where: {
+              cuentaId: {
+                not: null,
+              },
+            },
+            take: 1,
+            orderBy: [{ createdAt: "desc" }],
+            include: {
+              cuenta: {
+                include: {
+                  centroCosto: true,
+                  funcionGasto: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.producto.count({ where }),
     ]);
 
-    return { productos, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    const productosConCuenta = productos.map(({ movimientos, ...producto }) => ({
+      ...producto,
+      cuentaContable: movimientos[0]?.cuenta ?? null,
+    }));
+
+    return {
+      productos: productosConCuenta,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   },
 
   async getById(id: number) {
