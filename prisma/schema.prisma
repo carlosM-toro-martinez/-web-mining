@@ -53,6 +53,8 @@ model User {
 
   valesSolicitados Vale[] @relation("Solicitante")
   valesAprobados   Vale[] @relation("Supervisor")
+
+  muestras Muestra[]
 }
 
 enum Role {
@@ -340,4 +342,94 @@ model Log {
   createdAt  DateTime @default(now())
 
   usuario User @relation(fields: [usuarioId], references: [id])
+}
+
+//////////////////////////
+// EXPLORACIONES (MINAS)
+//////////////////////////
+
+model Ubicacion {
+  id        String @id @default(uuid())
+
+  nivel     String?
+  sector    String?
+  galeria   String?
+  punto     String?
+
+  x         Float?
+  y         Float?
+  z         Float?
+  elevacion Float?
+
+  createdAt DateTime @default(now())
+
+  muestras  Muestra[]
+}
+
+model Muestra {
+  id            String   @id @default(uuid())
+
+  codigo        String
+  numero        Int?
+
+  tipo          String?
+
+  fechaMuestreo DateTime?
+  fechaEntrega  DateTime?
+
+  descripcion   String?
+
+  usuarioId     Int?
+  usuario       User? @relation(fields: [usuarioId], references: [id])
+
+  ubicacionId   String
+  ubicacion     Ubicacion @relation(fields: [ubicacionId], references: [id])
+
+  resultados    Resultado[]
+  atributos     MuestraAtributo[]
+
+  createdAt     DateTime @default(now())
+}
+
+model Elemento {
+  id       String @id @default(uuid())
+  nombre   String @unique
+  unidad   String?
+
+  resultados Resultado[]
+}
+
+model Resultado {
+  id          String @id @default(uuid())
+
+  muestraId   String
+  elementoId  String
+
+  valor       Float?
+
+  muestra     Muestra  @relation(fields: [muestraId], references: [id])
+  elemento    Elemento @relation(fields: [elementoId], references: [id])
+
+  createdAt   DateTime @default(now())
+
+  @@unique([muestraId, elementoId])
+}
+
+model Atributo {
+  id     String @id @default(uuid())
+  nombre String @unique
+
+  muestras MuestraAtributo[]
+}
+
+model MuestraAtributo {
+  id          String @id @default(uuid())
+
+  muestraId   String
+  atributoId  String
+
+  valor       String
+
+  muestra     Muestra   @relation(fields: [muestraId], references: [id])
+  atributo    Atributo  @relation(fields: [atributoId], references: [id])
 }
