@@ -9,8 +9,3 @@ export type ResultDTO = {
   elemento: string;
   valor: number;
 };
-
-export type AtributoDTO = {
-  nombre: string;
-  valor: string;
-};

@@ -6,35 +6,26 @@ export const createElementoSchema = z.object({
 });
 
 export const createMuestraSchema = z.object({
-  ubicacion: z.object({
-    nivel: z.string().optional(),
-    sector: z.string().optional(),
-    galeria: z.string().optional(),
-    punto: z.string().optional(),
-    x: z.number().optional(),
-    y: z.number().optional(),
-    z: z.number().optional(),
-    elevacion: z.number().optional(),
-  }),
-  codigo: z.string().min(1),
+  nombre: z.string().min(1),
   numero: z.number().int().optional(),
-  tipo: z.string().optional(),
+  laboratorio1: z.string().optional(),
+  laboratorio2: z.string().optional(),
+  laboratorio3: z.string().optional(),
   fechaMuestreo: z.string().datetime().optional(),
   fechaEntrega: z.string().datetime().optional(),
   descripcion: z.string().optional(),
+  ubicacion: z.object({
+    nivel: z.string().min(1),
+    este: z.number().optional(),
+    norte: z.number().optional(),
+    elevacion: z.number().optional(),
+    referenciaLugar: z.string().optional(),
+  }),
   resultados: z
     .array(
       z.object({
         elemento: z.string().min(1),
         valor: z.number(),
-      }),
-    )
-    .optional(),
-  atributos: z
-    .array(
-      z.object({
-        nombre: z.string().min(1),
-        valor: z.string().min(1),
       }),
     )
     .optional(),

@@ -66,4 +66,46 @@ export const authController = {
       res.status(status).json({ success: false, message, ...(details ? { details } : {}) });
     }
   },
+
+  async refresh(req: AuthRequest, res: Response) {
+    try {
+      const refreshToken = req.body.refreshToken || req.cookies?.refreshToken;
+
+      if (!refreshToken) {
+        return res.status(400).json({ success: false, message: "Refresh token requerido" });
+      }
+
+      const result = await authService.refresh(refreshToken);
+
+      // Configurar cookie HttpOnly si lo deseas (opcional)
+      res.cookie("accessToken", result.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 3 * 60 * 60 * 1000, // 3 horas
+      });
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = (error as any).statusCode || 401;
+      const message = (error as any).message || "Error al renovar token";
+      res.status(status).json({ success: false, message });
+    }
+  },
+
+  async logout(req: AuthRequest, res: Response) {
+    try {
+      const result = await authService.logout(req.user!.id);
+
+      // Limpiar cookies
+      res.clearCookie("accessToken");
+      res.clearCookie("refreshToken");
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = (error as any).statusCode || 400;
+      const message = (error as any).message || "Error en logout";
+      res.status(status).json({ success: false, message });
+    }
+  },
 };

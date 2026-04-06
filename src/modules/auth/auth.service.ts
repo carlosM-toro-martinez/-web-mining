@@ -15,6 +15,12 @@ import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret";
+const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || "refresh_secret";
+
+// Tiempos de expiración
+const ACCESS_TOKEN_EXPIRY = "3h"; // 3 horas
+const REFRESH_TOKEN_EXPIRY = "7d"; // 7 días
+const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 días en ms
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
@@ -82,12 +88,30 @@ export const authService = {
       throw new HttpError("Credenciales inválidas", 401);
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "1h" });
+    // Generar access token (corta duración)
+    const accessToken = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+      expiresIn: ACCESS_TOKEN_EXPIRY,
+    });
+
+    // Generar refresh token (larga duración)
+    const refreshToken = jwt.sign({ id: user.id }, REFRESH_TOKEN_SECRET, {
+      expiresIn: REFRESH_TOKEN_EXPIRY,
+    });
+
+    // Guardar refresh token en la base de datos
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        refreshToken,
+        refreshTokenExpiry: new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS),
+      },
+    });
 
     logger.info({ userId: user.id }, "Usuario logueado exitosamente");
 
     return {
-      token,
+      accessToken,
+      refreshToken,
       user: { id: user.id, nombre: user.nombre, email: user.email, role: user.role },
     };
   },
@@ -173,5 +197,63 @@ export const authService = {
     logger.info({ userId }, "Contraseña cambiada");
 
     return { message: "Contraseña cambiada exitosamente" };
+  },
+
+  async refresh(refreshToken: string) {
+    try {
+      // Validar el refresh token
+      const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET) as { id: number };
+
+      // Buscar el usuario y verificar que el token coincida
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: {
+          id: true,
+          role: true,
+          nombre: true,
+          email: true,
+          refreshToken: true,
+          refreshTokenExpiry: true,
+        },
+      });
+
+      if (!user || user.refreshToken !== refreshToken) {
+        throw new HttpError("Refresh token inválido o revocado", 401);
+      }
+
+      if (!user.refreshTokenExpiry || user.refreshTokenExpiry < new Date()) {
+        throw new HttpError("Refresh token expirado", 401);
+      }
+
+      // Generar nuevo access token
+      const newAccessToken = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+        expiresIn: ACCESS_TOKEN_EXPIRY,
+      });
+
+      logger.info({ userId: user.id }, "Access token renovado");
+
+      return {
+        accessToken: newAccessToken,
+        user: { id: user.id, nombre: user.nombre, email: user.email, role: user.role },
+      };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      logger.warn({ error: (error as Error).message }, "Error en refresh token");
+      throw new HttpError("Refresh token inválido", 401);
+    }
+  },
+
+  async logout(userId: number) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        refreshToken: null,
+        refreshTokenExpiry: null,
+      },
+    });
+
+    logger.info({ userId }, "Usuario deslogueado");
+
+    return { message: "Logout exitoso" };
   },
 };
