@@ -67,6 +67,33 @@ export const authController = {
     }
   },
 
+  async listarUsuarios(req: AuthRequest, res: Response) {
+    try {
+      const users = await authService.getAllUsers();
+      res.json({ success: true, data: users });
+    } catch (error) {
+      const status = (error as any).statusCode || 500;
+      const message = (error as any).message || "Error al obtener usuarios";
+      res.status(status).json({ success: false, message });
+    }
+  },
+
+  async actualizarUsuario(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!id) {
+        return res.status(400).json({ success: false, message: "ID de usuario requerido" });
+      }
+
+      const user = await authService.updateUser(id, req.body);
+      res.json({ success: true, data: user });
+    } catch (error) {
+      const status = (error as any).statusCode || 400;
+      const message = (error as any).message || "Error al actualizar usuario";
+      res.status(status).json({ success: false, message });
+    }
+  },
+
   async refresh(req: AuthRequest, res: Response) {
     try {
       const refreshToken = req.body.refreshToken || req.cookies?.refreshToken;

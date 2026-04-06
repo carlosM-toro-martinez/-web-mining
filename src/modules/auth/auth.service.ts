@@ -10,6 +10,7 @@ import type {
   ForgotPasswordDTO,
   ResetPasswordDTO,
   ChangePasswordDTO,
+  UpdateUserDTO,
 } from "./auth.types.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
@@ -88,6 +89,11 @@ export const authService = {
       throw new HttpError("Credenciales inválidas", 401);
     }
 
+    if (user.activo === false) {
+      logger.warn({ userId: user.id }, "Usuario inactivo intentó iniciar sesión");
+      throw new HttpError("Usuario inactivo", 403);
+    }
+
     // Generar access token (corta duración)
     const accessToken = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
       expiresIn: ACCESS_TOKEN_EXPIRY,
@@ -114,6 +120,46 @@ export const authService = {
       refreshToken,
       user: { id: user.id, nombre: user.nombre, email: user.email, role: user.role },
     };
+  },
+
+  async getAllUsers() {
+    return prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        role: true,
+        activo: true,
+        createdAt: true,
+      },
+    });
+  },
+
+  async updateUser(id: number, data: UpdateUserDTO) {
+    const updateData: { [key: string]: any } = {};
+
+    if (data.nombre !== undefined) updateData.nombre = data.nombre.trim();
+    if (data.email !== undefined) updateData.email = data.email.trim();
+    if (data.role !== undefined) updateData.role = data.role;
+    if (data.activo !== undefined) updateData.activo = data.activo;
+
+    if (Object.keys(updateData).length === 0) {
+      throw new HttpError("No hay datos para actualizar", 400);
+    }
+
+    return prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        role: true,
+        activo: true,
+        createdAt: true,
+      },
+    });
   },
 
   async forgotPassword(data: ForgotPasswordDTO) {
