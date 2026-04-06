@@ -23,6 +23,8 @@ export const exploracionesRepository = {
     laboratorio1?: string | null;
     laboratorio2?: string | null;
     laboratorio3?: string | null;
+    tipoMuestra?: string | null;
+    sector?: string | null;
     fechaMuestreo?: Date | null;
     fechaEntrega?: Date | null;
     descripcion?: string | null;
@@ -74,6 +76,8 @@ export const exploracionesRepository = {
       laboratorio1?: string | null;
       laboratorio2?: string | null;
       laboratorio3?: string | null;
+      tipoMuestra?: string | null;
+      sector?: string | null;
       fechaMuestreo?: Date | null;
       fechaEntrega?: Date | null;
       descripcion?: string | null;

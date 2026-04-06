@@ -11,6 +11,8 @@ export const createMuestraSchema = z.object({
   laboratorio1: z.string().optional(),
   laboratorio2: z.string().optional(),
   laboratorio3: z.string().optional(),
+  tipoMuestra: z.string().optional(),
+  sector: z.string().optional(),
   fechaMuestreo: z.string().datetime().optional(),
   fechaEntrega: z.string().datetime().optional(),
   descripcion: z.string().optional(),

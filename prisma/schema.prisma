@@ -376,6 +376,9 @@ model Muestra {
   laboratorio2  String?
   laboratorio3  String?
 
+  tipoMuestra   String?
+  sector        String?
+
   fechaMuestreo DateTime?
   fechaEntrega  DateTime?
 
