@@ -47,6 +47,9 @@ model User {
   resetToken       String?
   resetTokenExpiry DateTime?
 
+  refreshToken     String?
+  refreshTokenExpiry DateTime?
+
   movimientos Movimiento[]
   logs        Log[]
   eppAsignaciones EppAsignacion[]
@@ -349,17 +352,13 @@ model Log {
 //////////////////////////
 
 model Ubicacion {
-  id        String @id @default(uuid())
+  id              String @id @default(uuid())
 
-  nivel     String?
-  sector    String?
-  galeria   String?
-  punto     String?
-
-  x         Float?
-  y         Float?
-  z         Float?
-  elevacion Float?
+  nivel           String
+  este            Float?
+  norte           Float?
+  elevacion       Float?
+  referenciaLugar String?
 
   createdAt DateTime @default(now())
 
@@ -369,10 +368,12 @@ model Ubicacion {
 model Muestra {
   id            String   @id @default(uuid())
 
-  codigo        String
+  nombre        String
   numero        Int?
 
-  tipo          String?
+  laboratorio1  String?
+  laboratorio2  String?
+  laboratorio3  String?
 
   fechaMuestreo DateTime?
   fechaEntrega  DateTime?
@@ -386,7 +387,6 @@ model Muestra {
   ubicacion     Ubicacion @relation(fields: [ubicacionId], references: [id])
 
   resultados    Resultado[]
-  atributos     MuestraAtributo[]
 
   createdAt     DateTime @default(now())
 }
@@ -415,21 +415,4 @@ model Resultado {
   @@unique([muestraId, elementoId])
 }
 
-model Atributo {
-  id     String @id @default(uuid())
-  nombre String @unique
 
-  muestras MuestraAtributo[]
-}
-
-model MuestraAtributo {
-  id          String @id @default(uuid())
-
-  muestraId   String
-  atributoId  String
-
-  valor       String
-
-  muestra     Muestra   @relation(fields: [muestraId], references: [id])
-  atributo    Atributo  @relation(fields: [atributoId], references: [id])
-}

@@ -44,6 +44,33 @@ export const exploracionesController = {
     }
   },
 
+  async actualizarMuestra(req: AuthRequest, res: Response) {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const userId = req.user?.id;
+
+      if (!id) {
+        return res.status(400).json({ success: false, error: "ID de muestra requerido" });
+      }
+
+      const muestra = await exploracionesService.updateMuestra(id, req.body, userId);
+      res.json({ success: true, data: muestra });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async listarLaboratorios(req: AuthRequest, res: Response) {
+    try {
+      const laboratorios = await exploracionesService.getLaboratorios();
+      res.json({ success: true, data: laboratorios });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async crearElemento(req: AuthRequest, res: Response) {
     try {
       const elemento = await exploracionesService.createElemento(req.body);
@@ -58,6 +85,36 @@ export const exploracionesController = {
     try {
       const elementos = await exploracionesService.getElementos();
       res.json({ success: true, data: elementos });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async listarUbicaciones(req: AuthRequest, res: Response) {
+    try {
+      const ubicaciones = await exploracionesService.getAllUbicaciones();
+      res.json({ success: true, data: ubicaciones });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async listarTodasMuestras(req: AuthRequest, res: Response) {
+    try {
+      const muestras = await exploracionesService.getAllMuestras();
+      res.json({ success: true, data: muestras });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async listarResultados(req: AuthRequest, res: Response) {
+    try {
+      const resultados = await exploracionesService.getAllResultados();
+      res.json({ success: true, data: resultados });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
       res.status(status).json({ success: false, error: (error as Error).message });
