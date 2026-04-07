@@ -28,6 +28,7 @@ export const createMuestraSchema = z.object({
       z.object({
         elemento: z.string().min(1),
         valor: z.number(),
+        prefijo: z.enum(["<", ">", "~", "="]).optional(),
       }),
     )
     .optional(),

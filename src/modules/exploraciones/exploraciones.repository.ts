@@ -44,11 +44,16 @@ export const exploracionesRepository = {
     return prisma.elemento.create({ data });
   },
 
-  async upsertResultado(muestraId: string, elementoId: string, valor: number) {
+  async upsertResultado(
+    muestraId: string,
+    elementoId: string,
+    valor: number,
+    prefijo?: string | null,
+  ) {
     return prisma.resultado.upsert({
       where: { muestraId_elementoId: { muestraId, elementoId } },
-      update: { valor },
-      create: { muestraId, elementoId, valor },
+      update: { valor, prefijo: prefijo ?? null },
+      create: { muestraId, elementoId, valor, prefijo: prefijo ?? null },
     });
   },
 

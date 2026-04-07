@@ -69,7 +69,12 @@ export const exploracionesService = {
           elemento = await exploracionesRepository.createElemento({ nombre: elementoNombre });
         }
 
-        await exploracionesRepository.upsertResultado(muestra.id, elemento.id, resultado.valor);
+        await exploracionesRepository.upsertResultado(
+          muestra.id,
+          elemento.id,
+          resultado.valor,
+          resultado.prefijo,
+        );
       }
     }
 
@@ -129,7 +134,12 @@ export const exploracionesService = {
           elemento = await exploracionesRepository.createElemento({ nombre: elementoNombre });
         }
 
-        await exploracionesRepository.upsertResultado(id, elemento.id, resultado.valor);
+        await exploracionesRepository.upsertResultado(
+          id,
+          elemento.id,
+          resultado.valor,
+          resultado.prefijo,
+        );
       }
     }
 

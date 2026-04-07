@@ -410,6 +410,7 @@ model Resultado {
   elementoId  String
 
   valor       Float?
+  prefijo     String? // "<", ">", "~", "=", etc.
 
   muestra     Muestra  @relation(fields: [muestraId], references: [id])
   elemento    Elemento @relation(fields: [elementoId], references: [id])
