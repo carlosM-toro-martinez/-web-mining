@@ -19,7 +19,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "default_secret";
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || "refresh_secret";
 
 // Tiempos de expiración
-const ACCESS_TOKEN_EXPIRY = "3h"; // 3 horas
+const ACCESS_TOKEN_EXPIRY = "8h"; // 3 horas
 const REFRESH_TOKEN_EXPIRY = "7d"; // 7 días
 const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 días en ms
 
