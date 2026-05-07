@@ -3,12 +3,18 @@ import { randomUUID } from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+<<<<<<< HEAD
 import type { CreateSalidaDTO, CreateEntradaDTO } from "./movimiento.types.js";
 
 function getCostoUnitario(
   stock: { precioUnit: Prisma.Decimal; precioProm: Prisma.Decimal },
   metodo: string,
 ) {
+=======
+import type { CreateSalidaDTO } from "./movimiento.types.js";
+
+function getCostoUnitario(stock: { precioUnit: Prisma.Decimal; precioProm: Prisma.Decimal }, metodo: string) {
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
   if (metodo === "PROMEDIO_PONDERADO") {
     return new Prisma.Decimal(stock.precioProm);
   }
@@ -23,6 +29,7 @@ async function getMetodoCosteo(tx: PrismaClient | Prisma.TransactionClient) {
   return config?.metodoCosteo ?? "ULTIMO_PRECIO";
 }
 
+<<<<<<< HEAD
 async function validarUsuarios(
   tx: PrismaClient | Prisma.TransactionClient,
   usuarioEntregaId: number,
@@ -51,6 +58,18 @@ export const movimientoService = {
         where: { id: data.productoId },
         include: { stock: true },
       });
+=======
+export const movimientoService = {
+  async createSalida(data: CreateSalidaDTO, userId: number) {
+    const result = await prisma.$transaction(async (tx) => {
+      const [producto, cuenta] = await Promise.all([
+        tx.producto.findUnique({
+          where: { id: data.productoId },
+          include: { stock: true },
+        }),
+        tx.cuentaContable.findUnique({ where: { id: data.cuentaId } }),
+      ]);
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 
       if (!producto) {
         throw new HttpError("Producto no encontrado", 404);
@@ -60,12 +79,15 @@ export const movimientoService = {
         throw new HttpError("El producto no tiene stock inicializado", 400);
       }
 
+<<<<<<< HEAD
       const cuentaId = data.cuentaId ?? producto.cuentaId;
       if (!cuentaId) {
         throw new HttpError("Cuenta contable requerida para movimientos de salida", 400);
       }
 
       const cuenta = await tx.cuentaContable.findUnique({ where: { id: cuentaId } });
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
       if (!cuenta) {
         throw new HttpError("Cuenta contable no encontrada", 404);
       }
@@ -104,22 +126,32 @@ export const movimientoService = {
           stockAntes,
           stockDespues,
           usuarioId: userId,
+<<<<<<< HEAD
           usuarioEntregaId: data.usuarioEntregaId,
           usuarioRecibidoId: data.usuarioRecibidoId,
           cuentaId,
+=======
+          cuentaId: data.cuentaId,
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
           ...(data.referencia !== undefined ? { referencia: data.referencia } : {}),
           ...(data.referenciaId !== undefined ? { referenciaId: data.referenciaId } : {}),
         },
         include: {
           producto: true,
+<<<<<<< HEAD
           usuario: { select: { id: true, nombre: true, email: true } },
           usuarioEntrega: { select: { id: true, nombre: true, email: true } },
           usuarioRecibido: { select: { id: true, nombre: true, email: true } },
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
           cuenta: {
             include: {
               centroCosto: true,
               funcionGasto: true,
+<<<<<<< HEAD
               sector: true,
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
             },
           },
         },
@@ -133,11 +165,15 @@ export const movimientoService = {
             movimientoId: movimiento.id,
             productoId: data.productoId,
             cantidad: data.cantidad,
+<<<<<<< HEAD
             cuentaId,
             usuarioEntregaId: data.usuarioEntregaId,
             usuarioRecibidoId: data.usuarioRecibidoId,
             referencia: data.referencia,
             referenciaId: data.referenciaId,
+=======
+            cuentaId: data.cuentaId,
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
           },
         },
       });
@@ -152,6 +188,7 @@ export const movimientoService = {
 
     return result;
   },
+<<<<<<< HEAD
 
   async createEntrada(data: CreateEntradaDTO, userId: number) {
     const result = await prisma.$transaction(async (tx) => {
@@ -260,4 +297,6 @@ export const movimientoService = {
 
     return result;
   },
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 };

@@ -9,8 +9,11 @@ import type {
   UpdateFuncionGastoDTO,
   CreateCuentaContableDTO,
   UpdateCuentaContableDTO,
+<<<<<<< HEAD
   CreateSectorDTO,
   UpdateSectorDTO,
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 } from "./contabilidad.types.js";
 
 function mapPrismaError(error: unknown): never {
@@ -25,6 +28,7 @@ function mapPrismaError(error: unknown): never {
   throw error;
 }
 
+<<<<<<< HEAD
 async function validateCuentaRelacion(
   centroCostoId: number,
   funcionGastoId: number,
@@ -44,6 +48,13 @@ async function validateCuentaRelacion(
     { id: number } | null,
     { id: number } | null,
   ];
+=======
+async function validateCuentaRelacion(centroCostoId: number, funcionGastoId: number) {
+  const [centroCosto, funcionGasto] = await Promise.all([
+    prisma.centroCosto.findUnique({ where: { id: centroCostoId }, select: { id: true } }),
+    prisma.funcionGasto.findUnique({ where: { id: funcionGastoId }, select: { id: true } }),
+  ]);
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 
   if (!centroCosto) {
     throw new HttpError("Centro de costo no encontrado", 404);
@@ -52,10 +63,13 @@ async function validateCuentaRelacion(
   if (!funcionGasto) {
     throw new HttpError("Función de gasto no encontrada", 404);
   }
+<<<<<<< HEAD
 
   if (sectorId !== undefined && !sector) {
     throw new HttpError("Sector no encontrado", 404);
   }
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 }
 
 export const contabilidadService = {
@@ -264,6 +278,7 @@ export const contabilidadService = {
     );
   },
 
+<<<<<<< HEAD
   async getSectores() {
     return prisma.sector.findMany({
       include: {
@@ -359,12 +374,17 @@ export const contabilidadService = {
     logger.info({ userId, sectorId: id, action: "DELETE_SECTOR" }, "Sector eliminado");
   },
 
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
   async getCuentasContables() {
     return prisma.cuentaContable.findMany({
       include: {
         centroCosto: true,
         funcionGasto: true,
+<<<<<<< HEAD
         sector: true,
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
         _count: { select: { movimientos: true } },
       },
       orderBy: [{ codigoCompleto: "asc" }],
@@ -377,7 +397,10 @@ export const contabilidadService = {
       include: {
         centroCosto: true,
         funcionGasto: true,
+<<<<<<< HEAD
         sector: true,
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
         movimientos: {
           take: 20,
           orderBy: [{ createdAt: "desc" }],
@@ -387,6 +410,7 @@ export const contabilidadService = {
   },
 
   async createCuentaContable(data: CreateCuentaContableDTO, userId: number) {
+<<<<<<< HEAD
     await validateCuentaRelacion(data.centroCostoId, data.funcionGastoId, data.sectorId);
 
     try {
@@ -403,6 +427,16 @@ export const contabilidadService = {
           centroCosto: true,
           funcionGasto: true,
           sector: true,
+=======
+    await validateCuentaRelacion(data.centroCostoId, data.funcionGastoId);
+
+    try {
+      const created = await prisma.cuentaContable.create({
+        data,
+        include: {
+          centroCosto: true,
+          funcionGasto: true,
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
         },
       });
 
@@ -414,10 +448,14 @@ export const contabilidadService = {
         },
       });
 
+<<<<<<< HEAD
       logger.info(
         { userId, cuentaId: created.id, action: "CREATE_CUENTA_CONTABLE" },
         "Cuenta creada",
       );
+=======
+      logger.info({ userId, cuentaId: created.id, action: "CREATE_CUENTA_CONTABLE" }, "Cuenta creada");
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 
       return created;
     } catch (error) {
@@ -426,13 +464,18 @@ export const contabilidadService = {
   },
 
   async updateCuentaContable(id: number, data: UpdateCuentaContableDTO, userId: number) {
+<<<<<<< HEAD
     const cleanData = Object.fromEntries(
       Object.entries(data).filter(([, v]) => v !== undefined),
     ) as any;
+=======
+    const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
     if (Object.keys(cleanData).length === 0) {
       throw new HttpError("No se enviaron campos para actualizar", 400);
     }
 
+<<<<<<< HEAD
     if (
       cleanData.centroCostoId !== undefined ||
       cleanData.funcionGastoId !== undefined ||
@@ -441,6 +484,12 @@ export const contabilidadService = {
       const cuentaActual = await prisma.cuentaContable.findUnique({
         where: { id },
         select: { centroCostoId: true, funcionGastoId: true, sectorId: true },
+=======
+    if (cleanData.centroCostoId !== undefined || cleanData.funcionGastoId !== undefined) {
+      const cuentaActual = await prisma.cuentaContable.findUnique({
+        where: { id },
+        select: { centroCostoId: true, funcionGastoId: true },
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
       });
 
       if (!cuentaActual) {
@@ -449,8 +498,12 @@ export const contabilidadService = {
 
       const centroCostoId = cleanData.centroCostoId ?? cuentaActual.centroCostoId;
       const funcionGastoId = cleanData.funcionGastoId ?? cuentaActual.funcionGastoId;
+<<<<<<< HEAD
       const sectorId = cleanData.sectorId ?? cuentaActual.sectorId;
       await validateCuentaRelacion(centroCostoId, funcionGastoId, sectorId);
+=======
+      await validateCuentaRelacion(centroCostoId, funcionGastoId);
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
     }
 
     try {
@@ -460,7 +513,10 @@ export const contabilidadService = {
         include: {
           centroCosto: true,
           funcionGasto: true,
+<<<<<<< HEAD
           sector: true,
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
         },
       });
 
@@ -506,3 +562,7 @@ export const contabilidadService = {
     logger.info({ userId, cuentaId: id, action: "DELETE_CUENTA_CONTABLE" }, "Cuenta eliminada");
   },
 };
+<<<<<<< HEAD
+=======
+
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd

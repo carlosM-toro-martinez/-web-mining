@@ -13,6 +13,7 @@ export const movimientoController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+<<<<<<< HEAD
 
   async createEntrada(req: AuthRequest, res: Response) {
     try {
@@ -24,3 +25,7 @@ export const movimientoController = {
     }
   },
 };
+=======
+};
+
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
