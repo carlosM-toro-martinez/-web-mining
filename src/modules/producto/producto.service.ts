@@ -45,12 +45,43 @@ export const productoService = {
             },
           },
           stock: true,
+          cuenta: {
+            include: {
+              centroCosto: true,
+              funcionGasto: true,
+            },
+          },
+          movimientos: {
+            where: {
+              cuentaId: {
+                not: null,
+              },
+            },
+            take: 1,
+            orderBy: [{ createdAt: "desc" }],
+            include: {
+              cuenta: {
+                include: {
+                  centroCosto: true,
+                  funcionGasto: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.producto.count({ where }),
     ]);
 
-    return { productos, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    const productosConCuenta = productos.map(({ movimientos, ...producto }) => ({
+      ...producto,
+      cuentaContable: movimientos[0]?.cuenta ?? null,
+    }));
+
+    return {
+      productos: productosConCuenta,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   },
 
   async getById(id: number) {
@@ -63,6 +94,12 @@ export const productoService = {
           },
         },
         stock: true,
+        cuenta: {
+          include: {
+            centroCosto: true,
+            funcionGasto: true,
+          },
+        },
       },
     });
   },
@@ -99,12 +136,45 @@ export const productoService = {
   async create(data: CreateProductoDTO, userId: number) {
     await this.validarJerarquiaCategoria(data.grupoId, data.subgrupoId);
 
+    // Validar centro de costo y función de gasto
+    const [centroCosto, funcionGasto] = await Promise.all([
+      prisma.centroCosto.findUnique({ where: { id: data.centroCostoId } }),
+      prisma.funcionGasto.findUnique({ where: { id: data.funcionGastoId } }),
+    ]);
+
+    if (!centroCosto) {
+      throw new HttpError("Centro de costo no encontrado", 404);
+    }
+
+    if (!funcionGasto) {
+      throw new HttpError("Función de gasto no encontrada", 404);
+    }
+
+    // Generar código completo de cuenta
+    const codigoCompleto = `${centroCosto.codigo}-${funcionGasto.codigo}`;
+
+    // Buscar cuenta existente o crear nueva
+    let cuenta = await prisma.cuentaContable.findUnique({
+      where: { codigoCompleto },
+    });
+
+    if (!cuenta) {
+      cuenta = await prisma.cuentaContable.create({
+        data: {
+          codigoCompleto,
+          centroCostoId: data.centroCostoId,
+          funcionGastoId: data.funcionGastoId,
+        },
+      });
+    }
+
     const producto = await prisma.producto.create({
       data: {
         codigo: data.codigo,
         nombre: data.nombre,
         unidad: data.unidad,
         categoriaId: data.subgrupoId,
+        cuentaId: cuenta.id,
         esEpp: data.esEpp ?? false,
 
         stock: {
@@ -125,16 +195,15 @@ export const productoService = {
       },
     });
 
-    logger.info(
-      { userId, productoId: producto.id, action: "CREATE_PRODUCTO" },
-      "Producto creado",
-    );
+    logger.info({ userId, productoId: producto.id, action: "CREATE_PRODUCTO" }, "Producto creado");
 
     return this.getById(producto.id);
   },
 
   async update(id: number, data: UpdateProductoDTO, userId: number) {
-    const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
+    const cleanData = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined),
+    ) as any;
 
     if (cleanData.grupoId !== undefined || cleanData.subgrupoId !== undefined) {
       if (cleanData.grupoId === undefined || cleanData.subgrupoId === undefined) {
@@ -145,8 +214,48 @@ export const productoService = {
       cleanData.categoriaId = cleanData.subgrupoId;
     }
 
+    // Si se envían centroCostoId y funcionGastoId, actualizar cuenta
+    if (cleanData.centroCostoId !== undefined || cleanData.funcionGastoId !== undefined) {
+      if (cleanData.centroCostoId === undefined || cleanData.funcionGastoId === undefined) {
+        throw new HttpError("Para cambiar cuenta debes enviar centroCostoId y funcionGastoId", 400);
+      }
+
+      const [centroCosto, funcionGasto] = await Promise.all([
+        prisma.centroCosto.findUnique({ where: { id: cleanData.centroCostoId } }),
+        prisma.funcionGasto.findUnique({ where: { id: cleanData.funcionGastoId } }),
+      ]);
+
+      if (!centroCosto) {
+        throw new HttpError("Centro de costo no encontrado", 404);
+      }
+
+      if (!funcionGasto) {
+        throw new HttpError("Función de gasto no encontrada", 404);
+      }
+
+      const codigoCompleto = `${centroCosto.codigo}-${funcionGasto.codigo}`;
+
+      let cuenta = await prisma.cuentaContable.findUnique({
+        where: { codigoCompleto },
+      });
+
+      if (!cuenta) {
+        cuenta = await prisma.cuentaContable.create({
+          data: {
+            codigoCompleto,
+            centroCostoId: cleanData.centroCostoId,
+            funcionGastoId: cleanData.funcionGastoId,
+          },
+        });
+      }
+
+      cleanData.cuentaId = cuenta.id;
+    }
+
     delete cleanData.grupoId;
     delete cleanData.subgrupoId;
+    delete cleanData.centroCostoId;
+    delete cleanData.funcionGastoId;
 
     const producto = await prisma.producto.update({
       where: { id },

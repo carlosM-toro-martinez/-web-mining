@@ -2,7 +2,20 @@ import { Router } from "express";
 import productoRoutes from "../modules/producto/producto.routes.js";
 import authRoutes from "../modules/auth/auth.routes.js";
 import categoriaInventarioRoutes from "../modules/categoriaInventario/categoriaInventario.routes.js";
+<<<<<<< HEAD
 import exploracionesRoutes from "../modules/exploraciones/exploraciones.routes.js";
+import contabilidadRoutes from "../modules/contabilidad/contabilidad.routes.js";
+import movimientoRoutes from "../modules/movimiento/movimiento.routes.js";
+import valesRoutes from "../modules/vales/vales.routes.js";
+import comprasRoutes from "../modules/compras/compras.routes.js";
+import proveedoresRoutes from "../modules/proveedores/proveedores.routes.js";
+import reportesRoutes from "../modules/reportes/reportes.routes.js";
+import employeeRoutes from "../modules/employee/employee.routes.js";
+import biometricRoutes from "../modules/biometric/biometric.routes.js";
+=======
+import contabilidadRoutes from "../modules/contabilidad/contabilidad.routes.js";
+import movimientoRoutes from "../modules/movimiento/movimiento.routes.js";
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 
 const router = Router();
 
@@ -15,6 +28,19 @@ router.use((req, res, next) => {
 router.use("/auth", authRoutes);
 router.use("/categorias-inventario", categoriaInventarioRoutes);
 router.use("/productos", productoRoutes);
+router.use("/contabilidad", contabilidadRoutes);
+router.use("/", contabilidadRoutes);
+router.use("/movimientos", movimientoRoutes);
+<<<<<<< HEAD
+router.use("/vales", valesRoutes);
+router.use("/compras", comprasRoutes);
+router.use("/proveedores", proveedoresRoutes);
 router.use("/exploraciones", exploracionesRoutes);
+router.use("/reportes", reportesRoutes);
+router.use("/employees", employeeRoutes);
+router.use("/biometric", biometricRoutes);
+router.use("/iclock", biometricRoutes);
+=======
+>>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
 
 export default router;

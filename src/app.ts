@@ -6,12 +6,15 @@ import swaggerUi from "swagger-ui-express";
 
 import { logger } from "./config/logger.js";
 import routes from "./routes/index.js";
+import biometricRoutes from "./modules/biometric/biometric.routes.js";
+import employeeRoutes from "./modules/employee/employee.routes.js";
 
 const app = express();
 
 app.use(cors());
 app.use(helmet());
 app.use(express.json());
+app.use(express.text({ type: "*/*" }));
 app.use(cookieParser());
 
 // Log request info for development visibility
@@ -157,6 +160,9 @@ const swaggerDocument = {
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 app.use("/api", routes);
+app.use("/employees", employeeRoutes);
+app.use("/iclock", biometricRoutes);
+app.use("/biometric", biometricRoutes);
 
 // Global error handler
 // eslint-disable-next-line no-unused-vars
