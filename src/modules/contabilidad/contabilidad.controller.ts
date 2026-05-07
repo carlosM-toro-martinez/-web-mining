@@ -130,7 +130,6 @@ export const contabilidadController = {
     }
   },
 
-<<<<<<< HEAD
   async getSectores(_req: AuthRequest, res: Response) {
     try {
       const data = await contabilidadService.getSectores();
@@ -192,8 +191,6 @@ export const contabilidadController = {
     }
   },
 
-=======
->>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
   async getCuentasContables(_req: AuthRequest, res: Response) {
     try {
       const data = await contabilidadService.getCuentasContables();
@@ -255,7 +252,3 @@ export const contabilidadController = {
     }
   },
 };
-<<<<<<< HEAD
-=======
-
->>>>>>> be7654ce96cde142b1a747ccc1ee99fabacfb3cd
