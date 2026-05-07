@@ -1,0 +1,59 @@
+import { Router } from "express";
+import { z } from "zod";
+import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { validate } from "../../middleware/validate.middleware.js";
+import { comprasController } from "./compras.controller.js";
+import { createCompraSchema, recibirCompraSchema, compraQuerySchema } from "./compras.schema.js";
+
+const idSchema = z.object({
+  id: z.string().min(1),
+});
+
+const validateParams = (schema: any) => (req: any, res: any, next: any) => {
+  const result = schema.safeParse(req.params);
+  if (!result.success) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Params validation error", details: result.error.flatten() });
+  }
+  next();
+};
+
+const validateQuery = (schema: any) => (req: any, res: any, next: any) => {
+  const result = schema.safeParse(req.query);
+  if (!result.success) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Query validation error", details: result.error.flatten() });
+  }
+  next();
+};
+
+const router = Router();
+
+router.use(authenticate);
+
+// Crear compra (ADMIN, ALMACENERO)
+router.post(
+  "/",
+  authorize("ADMIN", "ALMACENERO"),
+  validate(createCompraSchema),
+  comprasController.createCompra,
+);
+
+// Listar compras
+router.get("/", validateQuery(compraQuerySchema), comprasController.getCompras);
+
+// Obtener compra por ID
+router.get("/:id", validateParams(idSchema), comprasController.getCompraById);
+
+// Recibir compra (ADMIN, ALMACENERO)
+router.patch(
+  "/:id/recibir",
+  authorize("ADMIN", "ALMACENERO"),
+  validateParams(idSchema),
+  validate(recibirCompraSchema),
+  comprasController.recibirCompra,
+);
+
+export default router;

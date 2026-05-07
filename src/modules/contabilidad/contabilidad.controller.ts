@@ -130,6 +130,67 @@ export const contabilidadController = {
     }
   },
 
+  async getSectores(_req: AuthRequest, res: Response) {
+    try {
+      const data = await contabilidadService.getSectores();
+      res.json({ success: true, data });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 500))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getSectorById(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      const data = await contabilidadService.getSectorById(id);
+      if (!data) {
+        return res.status(404).json({ success: false, error: "Sector no encontrado" });
+      }
+      res.json({ success: true, data });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 500))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async createSector(req: AuthRequest, res: Response) {
+    try {
+      const data = await contabilidadService.createSector(req.body, req.user!.id);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 400))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async updateSector(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      const data = await contabilidadService.updateSector(id, req.body, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 400))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async deleteSector(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      await contabilidadService.deleteSector(id, req.user!.id);
+      res.status(204).json({ success: true });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 400))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getCuentasContables(_req: AuthRequest, res: Response) {
     try {
       const data = await contabilidadService.getCuentasContables();
@@ -191,4 +252,3 @@ export const contabilidadController = {
     }
   },
 };
-

@@ -10,6 +10,8 @@ import {
   updateFuncionGastoSchema,
   createCuentaContableSchema,
   updateCuentaContableSchema,
+  createSectorSchema,
+  updateSectorSchema,
 } from "./contabilidad.schema.js";
 
 const idSchema = z.object({
@@ -30,7 +32,11 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/centros-costo", contabilidadController.getCentrosCosto);
-router.get("/centros-costo/:id", validateParams(idSchema), contabilidadController.getCentroCostoById);
+router.get(
+  "/centros-costo/:id",
+  validateParams(idSchema),
+  contabilidadController.getCentroCostoById,
+);
 router.post(
   "/centros-costo",
   authorize("ADMIN", "ALMACENERO"),
@@ -77,13 +83,31 @@ router.delete(
   contabilidadController.deleteFuncionGasto,
 );
 
+router.get("/sectores", contabilidadController.getSectores);
+router.get("/sectores/:id", validateParams(idSchema), contabilidadController.getSectorById);
+router.post(
+  "/sectores",
+  authorize("ADMIN", "ALMACENERO"),
+  validate(createSectorSchema),
+  contabilidadController.createSector,
+);
+router.put(
+  "/sectores/:id",
+  authorize("ADMIN", "ALMACENERO"),
+  validateParams(idSchema),
+  validate(updateSectorSchema),
+  contabilidadController.updateSector,
+);
+router.delete(
+  "/sectores/:id",
+  authorize("ADMIN"),
+  validateParams(idSchema),
+  contabilidadController.deleteSector,
+);
+
 router.get("/cuentas", contabilidadController.getCuentasContables);
 router.get("/cuentas-contables", contabilidadController.getCuentasContables);
-router.get(
-  "/cuentas/:id",
-  validateParams(idSchema),
-  contabilidadController.getCuentaContableById,
-);
+router.get("/cuentas/:id", validateParams(idSchema), contabilidadController.getCuentaContableById);
 router.get(
   "/cuentas-contables/:id",
   validateParams(idSchema),

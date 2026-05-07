@@ -13,5 +13,14 @@ export const movimientoController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
-};
 
+  async createEntrada(req: AuthRequest, res: Response) {
+    try {
+      const data = await movimientoService.createEntrada(req.body, req.user!.id);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+};

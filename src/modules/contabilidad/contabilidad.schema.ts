@@ -23,8 +23,17 @@ export const createCuentaContableSchema = z
     codigoCompleto: z.string().min(1),
     centroCostoId: z.number().int().positive(),
     funcionGastoId: z.number().int().positive(),
+    sectorId: z.number().int().positive().optional(),
   })
   .strict();
 
 export const updateCuentaContableSchema = createCuentaContableSchema.partial();
 
+export const createSectorSchema = z
+  .object({
+    codigo: z.string().min(1),
+    nombre: z.string().min(1),
+  })
+  .strict();
+
+export const updateSectorSchema = createSectorSchema.partial();

@@ -7,6 +7,8 @@ export const createProductoSchema = z
     unidad: z.string().min(1),
     grupoId: z.number().int().positive(),
     subgrupoId: z.number().int().positive(),
+    centroCostoId: z.number().int().positive(),
+    funcionGastoId: z.number().int().positive(),
     esEpp: z.boolean().optional(),
   })
   .strict();
