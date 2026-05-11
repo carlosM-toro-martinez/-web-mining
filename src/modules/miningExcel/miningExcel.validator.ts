@@ -1,153 +1,118 @@
-import type { ImportError, ParsedWorkbook, ValidateResult } from "./miningExcel.types.js";
+import type { ImportWarning, ParsedWorkbook, ValidateResult } from "./miningExcel.types.js";
 
 export function validateWorkbook(wb: ParsedWorkbook): ValidateResult {
-  const errors: ImportError[] = [];
+  const warnings: ImportWarning[] = [...wb.warnings];
 
   // Build set of known holeIds from DHColl
   const knownHoleIds = new Set(wb.coll.map((r) => r.holeId));
 
   // ── DHColl ────────────────────────────────────────────────────────────────────
   if (!wb.coll.length) {
-    errors.push({
+    warnings.push({
       sheet: "DHColl",
-      row: 1,
-      field: "Hole_ID",
-      message: "La hoja DHColl no contiene sondajes válidos. Es obligatoria.",
+      message: "La hoja DHColl no contiene sondajes válidos. Se importará sin datos de collar.",
     });
   }
 
-  wb.coll.forEach((r) => {
-    if (!r.holeId) {
-      errors.push({ sheet: "DHColl", row: r.rowIndex, field: "Hole_ID", message: "Hole_ID vacío" });
-    }
-    if (r.east === 0 && r.north === 0) {
-      errors.push({
-        sheet: "DHColl",
-        row: r.rowIndex,
-        field: "Orig_East/Orig_North",
-        message: `Sondaje ${r.holeId}: coordenadas Este/Norte son 0`,
-      });
-    }
-    if (r.maxDepth <= 0) {
-      errors.push({
-        sheet: "DHColl",
-        row: r.rowIndex,
-        field: "Max_Depth",
-        message: `Sondaje ${r.holeId}: Max_Depth debe ser positivo`,
-      });
-    }
-  });
+  const collZeroCoords = wb.coll.filter((r) => r.east === 0 && r.north === 0);
+  if (collZeroCoords.length) {
+    warnings.push({
+      sheet: "DHColl",
+      message: `${collZeroCoords.length} sondaje(s) con coordenadas Este/Norte en 0: ${collZeroCoords.map((r) => r.holeId).join(", ")}`,
+    });
+  }
+
+  const collBadDepth = wb.coll.filter((r) => r.maxDepth <= 0);
+  if (collBadDepth.length) {
+    warnings.push({
+      sheet: "DHColl",
+      message: `${collBadDepth.length} sondaje(s) con Max_Depth inválido (≤ 0): ${collBadDepth.map((r) => r.holeId).join(", ")}`,
+    });
+  }
 
   // ── DHSamp ────────────────────────────────────────────────────────────────────
   if (!wb.samp.length) {
-    errors.push({
+    warnings.push({ sheet: "DHSamp", message: "La hoja DHSamp no contiene filas válidas." });
+  }
+
+  const sampBadInterval = wb.samp.filter((r) => r.mTo <= r.mFrom);
+  if (sampBadInterval.length) {
+    const examples = sampBadInterval
+      .slice(0, 3)
+      .map((r) => `fila ${r.rowIndex} (${r.holeId}: ${r.mFrom}→${r.mTo})`)
+      .join(", ");
+    warnings.push({
       sheet: "DHSamp",
-      row: 1,
-      field: "general",
-      message: "La hoja DHSamp no contiene filas válidas. Es obligatoria.",
+      message: `${sampBadInterval.length} fila(s) con mTo ≤ mFrom — serán omitidas. Ejemplos: ${examples}`,
     });
   }
 
-  wb.samp.forEach((r) => {
-    if (!knownHoleIds.has(r.holeId)) {
-      errors.push({
-        sheet: "DHSamp",
-        row: r.rowIndex,
-        field: "Hole_ID",
-        message: `El sondaje '${r.holeId}' no existe en DHColl`,
-      });
-    }
-    if (r.mTo <= r.mFrom) {
-      errors.push({
-        sheet: "DHSamp",
-        row: r.rowIndex,
-        field: "mTo",
-        message: `Sondaje ${r.holeId} fila ${r.rowIndex}: mTo (${r.mTo}) debe ser mayor que mFrom (${r.mFrom})`,
-      });
-    }
-    const collHole = wb.coll.find((c) => c.holeId === r.holeId);
-    if (collHole && r.mTo > collHole.maxDepth + 0.01) {
-      errors.push({
-        sheet: "DHSamp",
-        row: r.rowIndex,
-        field: "mTo",
-        message: `Sondaje ${r.holeId}: mTo=${r.mTo} supera Max_Depth=${collHole.maxDepth}`,
-      });
-    }
+  const sampExceedsDepth = wb.samp.filter((r) => {
+    const coll = wb.coll.find((c) => c.holeId === r.holeId);
+    return coll && r.mTo > coll.maxDepth + 0.01;
   });
+  if (sampExceedsDepth.length) {
+    warnings.push({
+      sheet: "DHSamp",
+      message: `${sampExceedsDepth.length} fila(s) con mTo superior al Max_Depth del sondaje — se importarán igualmente.`,
+    });
+  }
 
   // ── DHSurv ────────────────────────────────────────────────────────────────────
-  wb.surv.forEach((r) => {
-    if (!knownHoleIds.has(r.holeId)) {
-      errors.push({
-        sheet: "DHSurv",
-        row: r.rowIndex,
-        field: "Hole_ID",
-        message: `El sondaje '${r.holeId}' no existe en DHColl`,
-      });
-    }
-    if (r.azimuth < 0 || r.azimuth > 360) {
-      errors.push({
-        sheet: "DHSurv",
-        row: r.rowIndex,
-        field: "Azimuth",
-        message: `Sondaje ${r.holeId}: azimuth=${r.azimuth} fuera de rango [0, 360]`,
-      });
-    }
-    if (r.dip < -90 || r.dip > 90) {
-      errors.push({
-        sheet: "DHSurv",
-        row: r.rowIndex,
-        field: "Dip",
-        message: `Sondaje ${r.holeId}: dip=${r.dip} fuera de rango [-90, 90]`,
-      });
-    }
-  });
-
-  // ── DHLith ───────────────────────────────────────────────────────────────────
-  wb.lith.forEach((r) => {
-    if (!knownHoleIds.has(r.holeId)) {
-      errors.push({
-        sheet: "DHLith",
-        row: r.rowIndex,
-        field: "Hole_ID",
-        message: `El sondaje '${r.holeId}' no existe en DHColl`,
-      });
-    }
-    if (r.mTo <= r.mFrom) {
-      errors.push({
-        sheet: "DHLith",
-        row: r.rowIndex,
-        field: "mTo",
-        message: `mTo (${r.mTo}) debe ser mayor que mFrom (${r.mFrom})`,
-      });
-    }
-  });
-
-  // ── Other sheets — only validate holeId existence ─────────────────────────
-  const otherSheets: Array<{ rows: Array<{ holeId: string; rowIndex: number }>; name: string }> = [
-    { rows: wb.min, name: "DHMin" },
-    { rows: wb.alt, name: "DHAlt" },
-    { rows: wb.rec, name: "DHRec" },
-    { rows: wb.sg, name: "DHSG" },
-    { rows: wb.mag, name: "DHMag" },
-    { rows: wb.struct, name: "DHStruct" },
-  ];
-
-  for (const { rows, name } of otherSheets) {
-    rows.forEach((r) => {
-      if (!knownHoleIds.has(r.holeId)) {
-        errors.push({
-          sheet: name,
-          row: r.rowIndex,
-          field: "Hole_ID",
-          message: `El sondaje '${r.holeId}' no existe en DHColl`,
-        });
-      }
+  const survBadAz = wb.surv.filter((r) => r.azimuth < 0 || r.azimuth > 360);
+  if (survBadAz.length) {
+    warnings.push({
+      sheet: "DHSurv",
+      message: `${survBadAz.length} fila(s) con azimuth fuera de rango [0, 360] — se importarán igualmente.`,
     });
   }
 
-  // ── Summary counts ────────────────────────────────────────────────────────
+  const survBadDip = wb.surv.filter((r) => r.dip < -90 || r.dip > 90);
+  if (survBadDip.length) {
+    warnings.push({
+      sheet: "DHSurv",
+      message: `${survBadDip.length} fila(s) con dip fuera de rango [-90, 90] — se importarán igualmente.`,
+    });
+  }
+
+  // ── DHLith ───────────────────────────────────────────────────────────────────
+  const lithBadInterval = wb.lith.filter((r) => r.mTo <= r.mFrom);
+  if (lithBadInterval.length) {
+    warnings.push({
+      sheet: "DHLith",
+      message: `${lithBadInterval.length} fila(s) con mTo ≤ mFrom — serán omitidas.`,
+    });
+  }
+
+  // ── Orphan hole IDs (in data sheets but not in DHColl) ───────────────────────
+  function warnOrphans(rows: Array<{ holeId: string; rowIndex: number }>, sheet: string): void {
+    const seen = new Set<string>();
+    let count = 0;
+    for (const r of rows) {
+      if (!knownHoleIds.has(r.holeId)) {
+        count++;
+        seen.add(r.holeId);
+      }
+    }
+    if (seen.size > 0) {
+      warnings.push({
+        sheet,
+        message: `${count} fila(s) con sondajes [${[...seen].join(", ")}] ausentes en DHColl — se crearán automáticamente al importar.`,
+      });
+    }
+  }
+
+  warnOrphans(wb.samp, "DHSamp");
+  warnOrphans(wb.surv, "DHSurv");
+  warnOrphans(wb.lith, "DHLith");
+  warnOrphans(wb.min, "DHMin");
+  warnOrphans(wb.alt, "DHAlt");
+  warnOrphans(wb.rec, "DHRec");
+  warnOrphans(wb.sg, "DHSG");
+  warnOrphans(wb.mag, "DHMag");
+  warnOrphans(wb.struct, "DHStruct");
+
+  // ── Summary counts ────────────────────────────────────────────────────────────
   const intervalKeys = new Set<string>();
   wb.samp.forEach((r) => intervalKeys.add(`${r.holeId}|${r.mFrom}|${r.mTo}`));
   wb.lith.forEach((r) => intervalKeys.add(`${r.holeId}|${r.mFrom}|${r.mTo}`));
@@ -163,9 +128,9 @@ export function validateWorkbook(wb: ParsedWorkbook): ValidateResult {
   const totalAlts = wb.alt.reduce((acc, r) => acc + r.alterations.length, 0);
 
   return {
-    valid: errors.length === 0,
-    errors,
-    warnings: wb.warnings,
+    valid: true,
+    errors: [],
+    warnings,
     summary: {
       drillHoles: wb.coll.length,
       surveys: wb.surv.length,

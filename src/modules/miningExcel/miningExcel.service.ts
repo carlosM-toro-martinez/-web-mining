@@ -11,21 +11,13 @@ export async function validateExcel(buffer: Buffer, opts: ImportOptions): Promis
   return validateWorkbook(wb);
 }
 
-// ─── Execute import (full transaction) ────────────────────────────────────────
+// ─── Execute import ────────────────────────────────────────────────────────────
 
 export async function executeExcel(
   buffer: Buffer,
   opts: ImportOptions,
 ): Promise<{ warnings: ImportWarning[]; summary: ExecuteSummary }> {
   const wb = parseWorkbook(buffer, opts.defaultZoneName);
-  const validation = validateWorkbook(wb);
-
-  if (!validation.valid) {
-    throw Object.assign(new Error("El Excel contiene errores y no fue importado"), {
-      statusCode: 422,
-      errors: validation.errors,
-    });
-  }
 
   const summary: ExecuteSummary = {
     projectsCreated: 0,
@@ -45,338 +37,460 @@ export async function executeExcel(
   };
 
   const uid = opts.userId;
+  const now = new Date();
+  const executeWarnings: ImportWarning[] = [];
 
-  await prisma.$transaction(
-    async (tx) => {
-      // ── 1. Project ───────────────────────────────────────────────────────────
-      const project = await tx.project.upsert({
-        where: { name: opts.projectName } as any,
-        create: { name: opts.projectName, createdById: uid, updatedById: uid } as any,
-        update: {},
+  // ── 1. Project (id=1) ────────────────────────────────────────────────────────
+  const project = await prisma.project.findUniqueOrThrow({ where: { id: 1 } });
+
+  // ── 2. Zones ─────────────────────────────────────────────────────────────────
+  const zoneNames = [...new Set(wb.coll.map((r) => r.zoneName))];
+  const zoneMap = new Map<string, number>();
+
+  for (const zoneName of zoneNames) {
+    let zone = await prisma.zone.findFirst({ where: { projectId: project.id, name: zoneName } });
+    if (!zone) {
+      zone = await prisma.zone.create({
+        data: { projectId: project.id, name: zoneName, createdById: uid, updatedById: uid } as any,
       });
-      if (!(project as any)._count) summary.projectsCreated = 1;
+      summary.zonesCreated++;
+    }
+    zoneMap.set(zoneName, zone.id);
+  }
 
-      // ── 2. Zones by name (from coll or defaultZoneName) ──────────────────────
-      const zoneNames = [...new Set(wb.coll.map((r) => r.zoneName))];
-      const zoneMap = new Map<string, number>();
+  // ── 3. DrillHoles from DHColl ─────────────────────────────────────────────────
+  const drillHoleMap = new Map<string, number>();
 
-      for (const zoneName of zoneNames) {
-        let zone = await tx.zone.findFirst({
-          where: { projectId: project.id, name: zoneName },
+  for (const row of wb.coll) {
+    const zoneId = zoneMap.get(row.zoneName)!;
+    let hole = await prisma.drillHole.findFirst({ where: { projectId: project.id, name: row.holeId } });
+    if (!hole) {
+      hole = await prisma.drillHole.create({
+        data: {
+          projectId: project.id,
+          zoneId,
+          name: row.holeId,
+          east: row.east,
+          north: row.north,
+          elevation: row.elevation ?? null,
+          depth: row.maxDepth,
+          azimuth: row.azimuth ?? null,
+          dip: row.dip ?? null,
+          type: row.holeType as any,
+          campaign: row.campaign ?? null,
+          year: row.year ?? null,
+          createdById: uid,
+          updatedById: uid,
+          updatedAt: now,
+        } as any,
+      });
+      summary.drillHolesCreated++;
+    }
+    drillHoleMap.set(row.holeId, hole.id);
+  }
+
+  // ── 3b. Auto-create orphan holes ─────────────────────────────────────────────
+  const allDataHoleIds = new Set<string>([
+    ...wb.surv.map((r) => r.holeId),
+    ...wb.samp.map((r) => r.holeId),
+    ...wb.lith.map((r) => r.holeId),
+    ...wb.min.map((r) => r.holeId),
+    ...wb.alt.map((r) => r.holeId),
+    ...wb.rec.map((r) => r.holeId),
+    ...wb.sg.map((r) => r.holeId),
+    ...wb.mag.map((r) => r.holeId),
+    ...wb.struct.map((r) => r.holeId),
+  ]);
+
+  const orphanIds = [...allDataHoleIds].filter((id) => !drillHoleMap.has(id));
+
+  if (orphanIds.length > 0) {
+    let defaultZoneId = zoneMap.get(opts.defaultZoneName);
+    if (!defaultZoneId) {
+      let defZone = await prisma.zone.findFirst({ where: { projectId: project.id, name: opts.defaultZoneName } });
+      if (!defZone) {
+        defZone = await prisma.zone.create({
+          data: { projectId: project.id, name: opts.defaultZoneName, createdById: uid, updatedById: uid } as any,
         });
-        if (!zone) {
-          zone = await tx.zone.create({
-            data: { projectId: project.id, name: zoneName, createdById: uid, updatedById: uid } as any,
-          });
-          summary.zonesCreated++;
-        }
-        zoneMap.set(zoneName, zone.id);
+        summary.zonesCreated++;
       }
+      zoneMap.set(opts.defaultZoneName, defZone.id);
+      defaultZoneId = defZone.id;
+    }
 
-      // ── 3. DrillHoles ─────────────────────────────────────────────────────────
-      const drillHoleMap = new Map<string, number>(); // holeId → DB id
+    type HasInterval = { holeId: string; mTo: number };
+    const allIntervalRows: HasInterval[] = [
+      ...wb.samp, ...wb.lith, ...wb.min, ...wb.alt,
+      ...wb.rec, ...wb.sg, ...wb.mag, ...wb.struct,
+    ];
+    const orphanMaxDepth = new Map<string, number>();
+    for (const r of allIntervalRows) {
+      if (!orphanIds.includes(r.holeId)) continue;
+      const cur = orphanMaxDepth.get(r.holeId) ?? 0;
+      if (r.mTo > cur) orphanMaxDepth.set(r.holeId, r.mTo);
+    }
 
-      for (const row of wb.coll) {
-        const zoneId = zoneMap.get(row.zoneName)!;
-
-        let hole = await tx.drillHole.findFirst({
-          where: { projectId: project.id, name: row.holeId },
+    for (const holeId of orphanIds) {
+      let hole = await prisma.drillHole.findFirst({ where: { projectId: project.id, name: holeId } });
+      if (!hole) {
+        hole = await prisma.drillHole.create({
+          data: {
+            projectId: project.id,
+            zoneId: defaultZoneId,
+            name: holeId,
+            east: 0,
+            north: 0,
+            elevation: null,
+            depth: orphanMaxDepth.get(holeId) ?? 0,
+            type: "OTHER",
+            createdById: uid,
+            updatedById: uid,
+            updatedAt: now,
+          } as any,
         });
-
-        if (!hole) {
-          hole = await tx.drillHole.create({
-            data: {
-              projectId: project.id,
-              zoneId,
-              name: row.holeId,
-              east: row.east,
-              north: row.north,
-              elevation: row.elevation ?? null,
-              depth: row.maxDepth,
-              azimuth: row.azimuth ?? null,
-              dip: row.dip ?? null,
-              type: row.holeType as any,
-              campaign: row.campaign ?? null,
-              year: row.year ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.drillHolesCreated++;
-        }
-        drillHoleMap.set(row.holeId, hole.id);
+        summary.drillHolesCreated++;
       }
+      drillHoleMap.set(holeId, hole.id);
+    }
 
-      // ── 4. DrillHoleSurveys ───────────────────────────────────────────────────
-      for (const row of wb.surv) {
-        const dhId = drillHoleMap.get(row.holeId);
-        if (!dhId) continue;
+    executeWarnings.push({
+      sheet: "DHColl",
+      message: `${orphanIds.length} sondaje(s) creados automáticamente sin collar (coordenadas 0): ${orphanIds.join(", ")}`,
+    });
+  }
 
-        const exists = await tx.drillHoleSurvey.findFirst({
-          where: { drillHoleId: dhId, depth: row.depth as any },
-        });
-        if (!exists) {
-          await tx.drillHoleSurvey.create({
-            data: {
-              drillHoleId: dhId,
-              depth: row.depth,
-              azimuth: row.azimuth,
-              dip: row.dip,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.surveysCreated++;
-        }
-      }
+  // ── 4. Surveys ───────────────────────────────────────────────────────────────
+  for (const row of wb.surv) {
+    const dhId = drillHoleMap.get(row.holeId);
+    if (!dhId) continue;
+    const exists = await prisma.drillHoleSurvey.findFirst({
+      where: { drillHoleId: dhId, depth: row.depth as any },
+    });
+    if (!exists) {
+      await prisma.drillHoleSurvey.create({
+        data: {
+          drillHoleId: dhId,
+          depth: row.depth,
+          azimuth: row.azimuth,
+          dip: row.dip,
+          createdById: uid,
+          updatedById: uid,
+          updatedAt: now,
+        } as any,
+      });
+      summary.surveysCreated++;
+    }
+  }
 
-      // ── Helper: findOrCreate Interval ─────────────────────────────────────────
-      const intervalCache = new Map<string, number>(); // "holeId|from|to" → interval DB id
+  // ── 5. Intervals — pre-load all existing, then bulk-create missing ────────────
+  const drillHoleIds = [...drillHoleMap.values()];
 
-      async function getOrCreateInterval(
-        holeId: string,
-        mFrom: number,
-        mTo: number,
-      ): Promise<number | null> {
-        const key = `${holeId}|${mFrom}|${mTo}`;
-        if (intervalCache.has(key)) return intervalCache.get(key)!;
+  const existingIntervals = await prisma.interval.findMany({
+    where: { drillHoleId: { in: drillHoleIds } },
+    select: { id: true, drillHoleId: true, fromDepth: true, toDepth: true },
+  });
 
-        const dhId = drillHoleMap.get(holeId);
-        if (!dhId) return null;
+  const intervalMap = new Map<string, number>(); // "dhId|from|to" → intervalId
+  for (const iv of existingIntervals) {
+    const key = `${iv.drillHoleId}|${Number(iv.fromDepth)}|${Number(iv.toDepth)}`;
+    intervalMap.set(key, iv.id);
+  }
 
-        let interval = await tx.interval.findFirst({
-          where: { drillHoleId: dhId, fromDepth: mFrom as any, toDepth: mTo as any },
-        });
-        if (!interval) {
-          interval = await tx.interval.create({
-            data: {
-              drillHoleId: dhId,
-              fromDepth: mFrom,
-              toDepth: mTo,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.intervalsCreated++;
-        }
-        intervalCache.set(key, interval.id);
-        return interval.id;
-      }
+  // Collect all unique intervals needed across all data sheets
+  type HasMInterval = { holeId: string; mFrom: number; mTo: number };
+  const allDataRows: HasMInterval[] = [
+    ...wb.samp, ...wb.lith, ...wb.min, ...wb.alt,
+    ...wb.rec, ...wb.sg, ...wb.mag, ...wb.struct,
+  ];
 
-      // ── 5. DHSamp → Interval + Assay + AssayValues ───────────────────────────
-      for (const row of wb.samp) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  const neededIntervals = new Map<string, { drillHoleId: number; from: number; to: number }>();
+  for (const row of allDataRows) {
+    const dhId = drillHoleMap.get(row.holeId);
+    if (!dhId) continue;
+    const key = `${dhId}|${row.mFrom}|${row.mTo}`;
+    if (!intervalMap.has(key) && !neededIntervals.has(key)) {
+      neededIntervals.set(key, { drillHoleId: dhId, from: row.mFrom, to: row.mTo });
+    }
+  }
 
-        // One assay per interval
-        const existingAssay = await tx.assay.findFirst({ where: { intervalId } });
-        if (!existingAssay) {
-          const assay = await tx.assay.create({
-            data: {
-              intervalId,
-              au: row.au,
-              cu: row.cu,
-              ag: row.ag,
-              assayMethod: "OTHER",
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.assaysCreated++;
+  // Create missing intervals
+  for (const [key, data] of neededIntervals) {
+    const interval = await prisma.interval.create({
+      data: {
+        drillHoleId: data.drillHoleId,
+        fromDepth: data.from,
+        toDepth: data.to,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    intervalMap.set(key, interval.id);
+    summary.intervalsCreated++;
+  }
 
-          if (row.elements.length > 0) {
-            await tx.assayValue.createMany({
-              data: row.elements.map((e) => ({
-                assayId: assay.id,
-                element: e.element,
-                value: e.value,
-                unit: e.unit,
-                createdById: uid,
-                updatedById: uid,
-              })) as any,
-              skipDuplicates: true,
-            });
-            summary.assayValuesCreated += row.elements.length;
-          }
-        }
-      }
+  function getIntervalId(holeId: string, mFrom: number, mTo: number): number | null {
+    const dhId = drillHoleMap.get(holeId);
+    if (!dhId) return null;
+    return intervalMap.get(`${dhId}|${mFrom}|${mTo}`) ?? null;
+  }
 
-      // ── 6. DHLith → Lithology ─────────────────────────────────────────────────
-      for (const row of wb.lith) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  // ── 6. Assays + AssayValues (bulk) ────────────────────────────────────────────
+  const existingAssays = await prisma.assay.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true },
+  });
+  const assayedIntervals = new Set(existingAssays.map((a) => a.intervalId));
 
-        const exists = await tx.lithology.findFirst({ where: { intervalId } });
-        if (!exists) {
-          await tx.lithology.create({
-            data: {
-              intervalId,
-              rockType: row.rockType ?? null,
-              code: row.code ?? null,
-              color: row.color ?? null,
-              grainSize: row.grainSize ?? null,
-              texture: row.texture ?? null,
-              weathering: row.weathering ?? null,
-              comments: row.comments ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.lithologiesCreated++;
-        }
-      }
+  const allAssayValues: any[] = [];
 
-      // ── 7. DHMin → Mineralization ─────────────────────────────────────────────
-      for (const row of wb.min) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  for (const row of wb.samp) {
+    if (row.mTo <= row.mFrom) continue;
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId || assayedIntervals.has(intervalId)) continue;
 
-        for (const m of row.mineralizations) {
-          const exists = await tx.mineralization.findFirst({
-            where: { intervalId, mineral: m.mineral },
-          });
-          if (!exists) {
-            await tx.mineralization.create({
-              data: {
-                intervalId,
-                mineral: m.mineral,
-                percentage: m.percentage ?? null,
-                style: m.style ?? null,
-                comments: row.comments ?? null,
-                createdById: uid,
-                updatedById: uid,
-              } as any,
-            });
-            summary.mineralizationsCreated++;
-          }
-        }
-      }
+    const assay = await prisma.assay.create({
+      data: {
+        intervalId,
+        au: row.au,
+        cu: row.cu,
+        ag: row.ag,
+        assayMethod: "OTHER",
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    assayedIntervals.add(intervalId);
+    summary.assaysCreated++;
 
-      // ── 8. DHAlt → Alteration ─────────────────────────────────────────────────
-      for (const row of wb.alt) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+    for (const e of row.elements) {
+      allAssayValues.push({
+        assayId: assay.id,
+        element: e.element,
+        value: e.value,
+        unit: e.unit,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      });
+    }
+  }
 
-        for (const a of row.alterations) {
-          const exists = await tx.alteration.findFirst({
-            where: { intervalId, type: a.type },
-          });
-          if (!exists) {
-            await tx.alteration.create({
-              data: {
-                intervalId,
-                type: a.type,
-                intensity: a.intensity ?? null,
-                description: a.description ?? null,
-                comments: row.comments ?? null,
-                createdById: uid,
-                updatedById: uid,
-              } as any,
-            });
-            summary.alterationsCreated++;
-          }
-        }
-      }
+  // One bulk insert for all assay values
+  if (allAssayValues.length > 0) {
+    const CHUNK = 5000;
+    for (let i = 0; i < allAssayValues.length; i += CHUNK) {
+      await prisma.assayValue.createMany({
+        data: allAssayValues.slice(i, i + CHUNK) as any,
+        skipDuplicates: true,
+      });
+    }
+    summary.assayValuesCreated = allAssayValues.length;
+  }
 
-      // ── 9. DHRec → Recovery ───────────────────────────────────────────────────
-      for (const row of wb.rec) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  // ── 7. Lithologies (bulk) ─────────────────────────────────────────────────────
+  const existingLiths = await prisma.lithology.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true },
+  });
+  const lithedIntervals = new Set(existingLiths.map((l) => l.intervalId));
 
-        const exists = await tx.recovery.findFirst({ where: { intervalId } });
-        if (!exists) {
-          await tx.recovery.create({
-            data: {
-              intervalId,
-              recoveryPercent: row.recoveryPercent ?? null,
-              rqdPercent: row.rqdPercent ?? null,
-              coreLoss: row.coreLoss ?? null,
-              comments: row.comments ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.recoveriesCreated++;
-        }
-      }
+  for (const row of wb.lith) {
+    if (row.mTo <= row.mFrom) continue;
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId || lithedIntervals.has(intervalId)) continue;
+    await prisma.lithology.create({
+      data: {
+        intervalId,
+        rockType: row.rockType ?? null,
+        code: row.code ?? null,
+        color: row.color ?? null,
+        grainSize: row.grainSize ?? null,
+        texture: row.texture ?? null,
+        weathering: row.weathering ?? null,
+        comments: row.comments ?? null,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    lithedIntervals.add(intervalId);
+    summary.lithologiesCreated++;
+  }
 
-      // ── 10. DHSG → Density ────────────────────────────────────────────────────
-      for (const row of wb.sg) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  // ── 8. Mineralizations ────────────────────────────────────────────────────────
+  const existingMins = await prisma.mineralization.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true, mineral: true },
+  });
+  const minSet = new Set(existingMins.map((m) => `${m.intervalId}|${m.mineral}`));
 
-        const exists = await tx.density.findFirst({
-          where: { intervalId, method: row.method ?? null },
-        });
-        if (!exists) {
-          await tx.density.create({
-            data: {
-              intervalId,
-              specificGravity: row.specificGravity,
-              method: row.method ?? null,
-              dryDensity: row.dryDensity ?? null,
-              wetDensity: row.wetDensity ?? null,
-              comments: row.comments ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.densitiesCreated++;
-        }
-      }
+  for (const row of wb.min) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId) continue;
+    for (const m of row.mineralizations) {
+      const key = `${intervalId}|${m.mineral}`;
+      if (minSet.has(key)) continue;
+      await prisma.mineralization.create({
+        data: {
+          intervalId,
+          mineral: m.mineral,
+          percentage: m.percentage ?? null,
+          style: m.style ?? null,
+          comments: row.comments ?? null,
+          createdById: uid,
+          updatedById: uid,
+          updatedAt: now,
+        } as any,
+      });
+      minSet.add(key);
+      summary.mineralizationsCreated++;
+    }
+  }
 
-      // ── 11. DHMag → MagneticSusceptibility ───────────────────────────────────
-      for (const row of wb.mag) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  // ── 9. Alterations ────────────────────────────────────────────────────────────
+  const existingAlts = await prisma.alteration.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true, type: true },
+  });
+  const altSet = new Set(existingAlts.map((a) => `${a.intervalId}|${a.type}`));
 
-        const exists = await tx.magneticSusceptibility.findFirst({ where: { intervalId } });
-        if (!exists) {
-          await tx.magneticSusceptibility.create({
-            data: {
-              intervalId,
-              value: row.value,
-              unit: row.unit ?? null,
-              instrument: row.instrument ?? null,
-              comments: row.comments ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.magneticSusceptibilitiesCreated++;
-        }
-      }
+  for (const row of wb.alt) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId) continue;
+    for (const a of row.alterations) {
+      const key = `${intervalId}|${a.type}`;
+      if (altSet.has(key)) continue;
+      await prisma.alteration.create({
+        data: {
+          intervalId,
+          type: a.type,
+          intensity: a.intensity ?? null,
+          description: a.description ?? null,
+          comments: row.comments ?? null,
+          createdById: uid,
+          updatedById: uid,
+          updatedAt: now,
+        } as any,
+      });
+      altSet.add(key);
+      summary.alterationsCreated++;
+    }
+  }
 
-      // ── 12. DHStruct → GeologicalStructure ────────────────────────────────────
-      for (const row of wb.struct) {
-        const intervalId = await getOrCreateInterval(row.holeId, row.mFrom, row.mTo);
-        if (!intervalId) continue;
+  // ── 10. Recoveries ────────────────────────────────────────────────────────────
+  const existingRecs = await prisma.recovery.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true },
+  });
+  const recSet = new Set(existingRecs.map((r) => r.intervalId));
 
-        const exists = await tx.geologicalStructure.findFirst({
-          where: { intervalId, structureType: row.structureType },
-        });
-        if (!exists) {
-          await tx.geologicalStructure.create({
-            data: {
-              intervalId,
-              structureType: row.structureType,
-              angle: row.angle ?? null,
-              width: row.width ?? null,
-              orientation: row.orientation ?? null,
-              description: row.description ?? null,
-              comments: row.comments ?? null,
-              createdById: uid,
-              updatedById: uid,
-            } as any,
-          });
-          summary.geologicalStructuresCreated++;
-        }
-      }
+  for (const row of wb.rec) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId || recSet.has(intervalId)) continue;
+    await prisma.recovery.create({
+      data: {
+        intervalId,
+        recoveryPercent: row.recoveryPercent ?? null,
+        rqdPercent: row.rqdPercent ?? null,
+        coreLoss: row.coreLoss ?? null,
+        comments: row.comments ?? null,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    recSet.add(intervalId);
+    summary.recoveriesCreated++;
+  }
 
-      logger.info({ userId: uid, project: opts.projectName, summary }, "Mining Excel import completed");
-    },
-    { timeout: 180_000 },
-  );
+  // ── 11. Densities ─────────────────────────────────────────────────────────────
+  const existingDens = await prisma.density.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true, method: true },
+  });
+  const denSet = new Set(existingDens.map((d) => `${d.intervalId}|${d.method ?? ""}`));
 
-  return { warnings: wb.warnings, summary };
+  for (const row of wb.sg) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId) continue;
+    const key = `${intervalId}|${row.method ?? ""}`;
+    if (denSet.has(key)) continue;
+    await prisma.density.create({
+      data: {
+        intervalId,
+        specificGravity: row.specificGravity,
+        method: row.method ?? null,
+        dryDensity: row.dryDensity ?? null,
+        wetDensity: row.wetDensity ?? null,
+        comments: row.comments ?? null,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    denSet.add(key);
+    summary.densitiesCreated++;
+  }
+
+  // ── 12. Magnetic Susceptibilities ─────────────────────────────────────────────
+  const existingMags = await prisma.magneticSusceptibility.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true },
+  });
+  const magSet = new Set(existingMags.map((m) => m.intervalId));
+
+  for (const row of wb.mag) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId || magSet.has(intervalId)) continue;
+    await prisma.magneticSusceptibility.create({
+      data: {
+        intervalId,
+        value: row.value,
+        unit: row.unit ?? null,
+        instrument: row.instrument ?? null,
+        comments: row.comments ?? null,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    magSet.add(intervalId);
+    summary.magneticSusceptibilitiesCreated++;
+  }
+
+  // ── 13. Geological Structures ─────────────────────────────────────────────────
+  const existingStructs = await prisma.geologicalStructure.findMany({
+    where: { intervalId: { in: [...intervalMap.values()] } },
+    select: { intervalId: true, structureType: true },
+  });
+  const structSet = new Set(existingStructs.map((s) => `${s.intervalId}|${s.structureType}`));
+
+  for (const row of wb.struct) {
+    const intervalId = getIntervalId(row.holeId, row.mFrom, row.mTo);
+    if (!intervalId) continue;
+    const key = `${intervalId}|${row.structureType}`;
+    if (structSet.has(key)) continue;
+    await prisma.geologicalStructure.create({
+      data: {
+        intervalId,
+        structureType: row.structureType,
+        angle: row.angle ?? null,
+        width: row.width ?? null,
+        orientation: row.orientation ?? null,
+        description: row.description ?? null,
+        comments: row.comments ?? null,
+        createdById: uid,
+        updatedById: uid,
+        updatedAt: now,
+      } as any,
+    });
+    structSet.add(key);
+    summary.geologicalStructuresCreated++;
+  }
+
+  logger.info({ userId: uid, project: project.id, summary }, "Mining Excel import completed");
+
+  return { warnings: [...wb.warnings, ...executeWarnings], summary };
 }
