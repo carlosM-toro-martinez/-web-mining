@@ -13,6 +13,7 @@ import employeeRoutes from "../modules/employee/employee.routes.js";
 import biometricRoutes from "../modules/biometric/biometric.routes.js";
 import miningExplorationRoutes from "../modules/miningExploration/miningExploration.routes.js";
 import surfaceExplorationRoutes from "../modules/surfaceExploration/surfaceExploration.routes.js";
+import miningExcelRoutes from "../modules/miningExcel/miningExcel.routes.js";
 
 const router = Router();
 
@@ -39,5 +40,6 @@ router.use("/surface-exploration", surfaceExplorationRoutes);
 router.use("/employees", employeeRoutes);
 router.use("/biometric", biometricRoutes);
 router.use("/iclock", biometricRoutes);
+router.use("/imports/mining-excel", miningExcelRoutes);
 
 export default router;

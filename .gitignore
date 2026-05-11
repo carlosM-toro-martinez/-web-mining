@@ -16,3 +16,8 @@ RESUMEN_EJECUTIVO.md
 
 prisma/mining-schema.prisma
 prisma/ERD.svg
+
+seed-mining-excel.js
+convert-surface-excel.js
+DataRoom.xls
+.claude/
