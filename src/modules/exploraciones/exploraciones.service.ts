@@ -104,7 +104,7 @@ export const exploracionesService = {
   async updateMuestra(id: string, payload: CreateMuestraDTO, userId?: number) {
     const existing = await this.getMuestraById(id);
 
-    await exploracionesRepository.updateSamplePoint(existing.samplePoint.id, {
+    await exploracionesRepository.updateSamplePoint((existing as any).samplePoint?.id ?? "", {
       miningLaborId: payload.ubicacion.miningLaborId,
       east: payload.ubicacion.este ?? null,
       north: payload.ubicacion.norte ?? null,

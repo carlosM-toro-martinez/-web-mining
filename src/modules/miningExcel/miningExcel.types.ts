@@ -16,12 +16,12 @@ export interface ParsedColl {
   holeType: string;
   east: number;
   north: number;
-  elevation?: number;
-  azimuth?: number;
-  dip?: number;
+  elevation?: number | undefined;
+  azimuth?: number | undefined;
+  dip?: number | undefined;
   maxDepth: number;
-  campaign?: string;
-  year?: number;
+  campaign?: string | undefined;
+  year?: number | undefined;
   zoneName: string;
   rowIndex: number;
 }
@@ -49,13 +49,13 @@ export interface ParsedLith {
   holeId: string;
   mFrom: number;
   mTo: number;
-  rockType?: string;
-  code?: string;
-  color?: string;
-  grainSize?: string;
-  texture?: string;
-  weathering?: string;
-  comments?: string;
+  rockType?: string | undefined;
+  code?: string | undefined;
+  color?: string | undefined;
+  grainSize?: string | undefined;
+  texture?: string | undefined;
+  weathering?: string | undefined;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -63,8 +63,8 @@ export interface ParsedMin {
   holeId: string;
   mFrom: number;
   mTo: number;
-  mineralizations: Array<{ mineral: string; percentage?: number; style?: string }>;
-  comments?: string;
+  mineralizations: Array<{ mineral: string; percentage?: number | undefined; style?: string | undefined }>;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -72,8 +72,8 @@ export interface ParsedAlt {
   holeId: string;
   mFrom: number;
   mTo: number;
-  alterations: Array<{ type: string; intensity?: number; description?: string }>;
-  comments?: string;
+  alterations: Array<{ type: string; intensity?: number | undefined; description?: string | undefined }>;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -81,10 +81,10 @@ export interface ParsedRec {
   holeId: string;
   mFrom: number;
   mTo: number;
-  recoveryPercent?: number;
-  rqdPercent?: number;
-  coreLoss?: number;
-  comments?: string;
+  recoveryPercent?: number | undefined;
+  rqdPercent?: number | undefined;
+  coreLoss?: number | undefined;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -93,10 +93,10 @@ export interface ParsedSG {
   mFrom: number;
   mTo: number;
   specificGravity: number;
-  method?: string;
-  dryDensity?: number;
-  wetDensity?: number;
-  comments?: string;
+  method?: string | undefined;
+  dryDensity?: number | undefined;
+  wetDensity?: number | undefined;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -105,9 +105,9 @@ export interface ParsedMag {
   mFrom: number;
   mTo: number;
   value: number;
-  unit?: string;
-  instrument?: string;
-  comments?: string;
+  unit?: string | undefined;
+  instrument?: string | undefined;
+  comments?: string | undefined;
   rowIndex: number;
 }
 
@@ -116,11 +116,11 @@ export interface ParsedStruct {
   mFrom: number;
   mTo: number;
   structureType: string;
-  angle?: number;
-  width?: number;
-  orientation?: string;
-  description?: string;
-  comments?: string;
+  angle?: number | undefined;
+  width?: number | undefined;
+  orientation?: string | undefined;
+  description?: string | undefined;
+  comments?: string | undefined;
   rowIndex: number;
 }
 

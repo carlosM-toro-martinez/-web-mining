@@ -97,15 +97,15 @@ function parseElementCol(colName: string): { element: string; unit: string } | n
 
   // Pattern: ELEMENT (UNIT)
   const parenMatch = normalized.match(/^([A-Za-z][A-Za-z0-9]*)\s*\(([^)]+)\)/);
-  if (parenMatch) return { element: parenMatch[1], unit: parenMatch[2].trim() };
+  if (parenMatch) return { element: parenMatch[1]!, unit: parenMatch[2]!.trim() };
 
   // Pattern: ELEMENT_UNIT or ELEMENT UNIT
   const underMatch = normalized.match(/^([A-Za-z][A-Za-z0-9]*)[\s_]+(ppm|ppb|%|g\/t|oz\/t)$/i);
-  if (underMatch) return { element: underMatch[1], unit: underMatch[2] };
+  if (underMatch) return { element: underMatch[1]!, unit: underMatch[2]! };
 
   // Pattern: ELEMENT_% (e.g., Al_%)
   const pctMatch = normalized.match(/^([A-Za-z][A-Za-z0-9]*)_(%)/);
-  if (pctMatch) return { element: pctMatch[1], unit: pctMatch[2] };
+  if (pctMatch) return { element: pctMatch[1]!, unit: pctMatch[2]! };
 
   return null;
 }
@@ -147,7 +147,7 @@ function parseColl(
     return { rows, warnings };
   }
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID", "HOLEID", "HoleID"]),
     type: findColKey(ref, ["Hole_Type", "HoleType", "HOLE_TYPE"]),
@@ -208,7 +208,7 @@ function parseSurv(wb: XLSX.WorkBook): { rows: ParsedSurv[]; warnings: ImportWar
     return { rows, warnings };
   }
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID", "HoleID"]),
     depth: findColKey(ref, ["Depth", "Profundidad"]),
@@ -243,7 +243,7 @@ function parseSamp(wb: XLSX.WorkBook): { rows: ParsedSamp[]; warnings: ImportWar
     return { rows, warnings };
   }
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID", "HoleID"]),
     mFrom: findColKey(ref, ["mFrom", "From", "FromDepth"]),
@@ -293,7 +293,7 @@ function parseLith(wb: XLSX.WorkBook): { rows: ParsedLith[]; warnings: ImportWar
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -341,7 +341,7 @@ function parseMin(wb: XLSX.WorkBook): { rows: ParsedMin[]; warnings: ImportWarni
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -395,7 +395,7 @@ function parseAlt(wb: XLSX.WorkBook): { rows: ParsedAlt[]; warnings: ImportWarni
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -449,7 +449,7 @@ function parseRec(wb: XLSX.WorkBook): { rows: ParsedRec[]; warnings: ImportWarni
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -491,7 +491,7 @@ function parseSG(wb: XLSX.WorkBook): { rows: ParsedSG[]; warnings: ImportWarning
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -536,7 +536,7 @@ function parseMag(wb: XLSX.WorkBook): { rows: ParsedMag[]; warnings: ImportWarni
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     mFrom: findColKey(ref, ["mFrom", "From"]),
@@ -580,7 +580,7 @@ function parseStruct(wb: XLSX.WorkBook): { rows: ParsedStruct[]; warnings: Impor
 
   if (!raw.length) return { rows, warnings };
 
-  const ref = raw[0];
+  const ref = raw[0] as Record<string, unknown>;
   const C = {
     id: findColKey(ref, ["Hole_ID"]),
     // DHStruct uses mFROM/mTO (uppercase)

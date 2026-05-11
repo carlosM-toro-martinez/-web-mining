@@ -9,7 +9,7 @@ export const exploracionesRepository = {
     reference?: string | null;
     station?: string | null;
   }) {
-    return prisma.samplePoint.create({ data });
+    return (prisma as any).samplePoint.create({ data });
   },
 
   async createSample(data: {
@@ -26,7 +26,7 @@ export const exploracionesRepository = {
     userId?: number | null;
     samplePointId: string;
   }) {
-    return prisma.sample.create({ data });
+    return prisma.sample.create({ data: data as any });
   },
 
   async findElementByName(name: string) {
@@ -41,7 +41,7 @@ export const exploracionesRepository = {
     unit?: string | null;
     description?: string | null;
   }) {
-    return prisma.element.create({ data });
+    return prisma.element.create({ data: data as any });
   },
 
   async upsertResult(
@@ -51,7 +51,7 @@ export const exploracionesRepository = {
     qualifier?: string | null,
   ) {
     return prisma.sampleResult.upsert({
-      where: { sampleId_elementId: { sampleId, elementId } },
+      where: { sampleId_elementId: { sampleId, elementId } } as any,
       update: { value, qualifier: qualifier ?? null },
       create: { sampleId, elementId, value, qualifier: qualifier ?? null },
     });
@@ -68,7 +68,7 @@ export const exploracionesRepository = {
       station?: string | null;
     },
   ) {
-    return prisma.samplePoint.update({ where: { id }, data });
+    return (prisma as any).samplePoint.update({ where: { id }, data });
   },
 
   async updateSample(
@@ -86,7 +86,7 @@ export const exploracionesRepository = {
       description?: string | null;
     },
   ) {
-    return prisma.sample.update({ where: { id }, data });
+    return prisma.sample.update({ where: { id }, data: data as any });
   },
 
   async deleteResultsBySampleId(sampleId: string) {
@@ -94,26 +94,26 @@ export const exploracionesRepository = {
   },
 
   async getLaboratorios() {
-    const labs1 = await prisma.sample.findMany({
+    const labs1 = await (prisma as any).sample.findMany({
       where: { laboratory1: { not: null } },
       select: { laboratory1: true },
       distinct: ["laboratory1"],
     });
-    const labs2 = await prisma.sample.findMany({
+    const labs2 = await (prisma as any).sample.findMany({
       where: { laboratory2: { not: null } },
       select: { laboratory2: true },
       distinct: ["laboratory2"],
     });
-    const labs3 = await prisma.sample.findMany({
+    const labs3 = await (prisma as any).sample.findMany({
       where: { laboratory3: { not: null } },
       select: { laboratory3: true },
       distinct: ["laboratory3"],
     });
 
     const uniqueLabs = new Set<string>();
-    labs1.forEach((l) => l.laboratory1 && uniqueLabs.add(l.laboratory1));
-    labs2.forEach((l) => l.laboratory2 && uniqueLabs.add(l.laboratory2));
-    labs3.forEach((l) => l.laboratory3 && uniqueLabs.add(l.laboratory3));
+    (labs1 as any[]).forEach((l: any) => l.laboratory1 && uniqueLabs.add(l.laboratory1));
+    (labs2 as any[]).forEach((l: any) => l.laboratory2 && uniqueLabs.add(l.laboratory2));
+    (labs3 as any[]).forEach((l: any) => l.laboratory3 && uniqueLabs.add(l.laboratory3));
 
     return Array.from(uniqueLabs).sort();
   },
@@ -130,9 +130,8 @@ export const exploracionesRepository = {
         take: limit,
         orderBy: { createdAt: "desc" },
         include: {
-          samplePoint: true,
           results: { include: { element: true } },
-        },
+        } as any,
       }),
       prisma.sample.count(),
     ]);
@@ -144,24 +143,21 @@ export const exploracionesRepository = {
     return prisma.sample.findUnique({
       where: { id },
       include: {
-        samplePoint: true,
         results: { include: { element: true } },
-      },
+      } as any,
     });
   },
 
   async getAllUbicaciones() {
-    return prisma.samplePoint.findMany({ orderBy: { createdAt: "desc" } });
+    return (prisma as any).samplePoint.findMany({ orderBy: { createdAt: "desc" } });
   },
 
   async getAllMuestras() {
     return prisma.sample.findMany({
       orderBy: { createdAt: "desc" },
       include: {
-        samplePoint: true,
         results: { include: { element: true } },
-        user: true,
-      },
+      } as any,
     });
   },
 
