@@ -4,8 +4,3 @@ import { createMuestraSchema, createElementoSchema } from "./exploraciones.schem
 export type CreateElementoDTO = z.infer<typeof createElementoSchema>;
 
 export type CreateMuestraDTO = z.infer<typeof createMuestraSchema>;
-
-export type ResultDTO = {
-  elemento: string;
-  valor: number;
-};

@@ -1,4 +1,4 @@
-import { PrismaClient, SyncStatus, SyncAction } from "@prisma/client";
+import { PrismaClient, SyncAction } from "@prisma/client";
 import type {
   CreateEmployeeInput,
   UpdateEmployeeInput,

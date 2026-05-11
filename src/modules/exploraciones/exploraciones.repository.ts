@@ -1,183 +1,176 @@
 import { prisma } from "../../config/prisma.js";
-import type { CreateElementoDTO, CreateMuestraDTO } from "./exploraciones.types.js";
-
-type CreateElementoRepoDTO = {
-  nombre: string;
-  unidad?: string | null;
-};
 
 export const exploracionesRepository = {
-  async createUbicacion(data: {
-    nivel: string;
-    este?: number | null;
-    norte?: number | null;
-    elevacion?: number | null;
-    referenciaLugar?: string | null;
+  async createSamplePoint(data: {
+    miningLaborId: string;
+    east?: number | null;
+    north?: number | null;
+    elevation?: number | null;
+    reference?: string | null;
+    station?: string | null;
   }) {
-    return prisma.ubicacion.create({ data });
+    return prisma.samplePoint.create({ data });
   },
 
-  async createMuestra(data: {
-    nombre: string;
-    numero?: number | null;
-    laboratorio1?: string | null;
-    laboratorio2?: string | null;
-    laboratorio3?: string | null;
-    tipoMuestra?: string | null;
+  async createSample(data: {
+    code: string;
+    sampleType: "CHANNEL" | "CHIP" | "GRAB" | "CORE" | "SOIL" | "ROCK" | "OTHER";
+    sampleNumber?: number | null;
+    laboratory1?: string | null;
+    laboratory2?: string | null;
+    laboratory3?: string | null;
     sector?: string | null;
-    fechaMuestreo?: Date | null;
-    fechaEntrega?: Date | null;
-    descripcion?: string | null;
-    usuarioId?: number | null;
-    ubicacionId: string;
+    collectedAt?: Date | null;
+    deliveredAt?: Date | null;
+    description?: string | null;
+    userId?: number | null;
+    samplePointId: string;
   }) {
-    return prisma.muestra.create({ data });
+    return prisma.sample.create({ data });
   },
 
-  async findElementoByName(nombre: string) {
-    return prisma.elemento.findFirst({
-      where: { nombre: { equals: nombre, mode: "insensitive" } },
+  async findElementByName(name: string) {
+    return prisma.element.findFirst({
+      where: { name: { equals: name, mode: "insensitive" } },
     });
   },
 
-  async createElemento(data: CreateElementoRepoDTO) {
-    return prisma.elemento.create({ data });
+  async createElement(data: {
+    name: string;
+    symbol?: string | null;
+    unit?: string | null;
+    description?: string | null;
+  }) {
+    return prisma.element.create({ data });
   },
 
-  async upsertResultado(
-    muestraId: string,
-    elementoId: string,
-    valor: number,
-    prefijo?: string | null,
+  async upsertResult(
+    sampleId: string,
+    elementId: string,
+    value: number,
+    qualifier?: string | null,
   ) {
-    return prisma.resultado.upsert({
-      where: { muestraId_elementoId: { muestraId, elementoId } },
-      update: { valor, prefijo: prefijo ?? null },
-      create: { muestraId, elementoId, valor, prefijo: prefijo ?? null },
+    return prisma.sampleResult.upsert({
+      where: { sampleId_elementId: { sampleId, elementId } },
+      update: { value, qualifier: qualifier ?? null },
+      create: { sampleId, elementId, value, qualifier: qualifier ?? null },
     });
   },
 
-  async updateUbicacion(
+  async updateSamplePoint(
     id: string,
     data: {
-      nivel?: string;
-      este?: number | null;
-      norte?: number | null;
-      elevacion?: number | null;
-      referenciaLugar?: string | null;
+      miningLaborId?: string;
+      east?: number | null;
+      north?: number | null;
+      elevation?: number | null;
+      reference?: string | null;
+      station?: string | null;
     },
   ) {
-    return prisma.ubicacion.update({
-      where: { id },
-      data,
-    });
+    return prisma.samplePoint.update({ where: { id }, data });
   },
 
-  async updateMuestra(
+  async updateSample(
     id: string,
     data: {
-      nombre?: string;
-      numero?: number | null;
-      laboratorio1?: string | null;
-      laboratorio2?: string | null;
-      laboratorio3?: string | null;
-      tipoMuestra?: string | null;
+      code?: string;
+      sampleType?: "CHANNEL" | "CHIP" | "GRAB" | "CORE" | "SOIL" | "ROCK" | "OTHER";
+      sampleNumber?: number | null;
+      laboratory1?: string | null;
+      laboratory2?: string | null;
+      laboratory3?: string | null;
       sector?: string | null;
-      fechaMuestreo?: Date | null;
-      fechaEntrega?: Date | null;
-      descripcion?: string | null;
+      collectedAt?: Date | null;
+      deliveredAt?: Date | null;
+      description?: string | null;
     },
   ) {
-    return prisma.muestra.update({
-      where: { id },
-      data,
-    });
+    return prisma.sample.update({ where: { id }, data });
   },
 
-  async deleteResultadosByMuestraId(muestraId: string) {
-    return prisma.resultado.deleteMany({
-      where: { muestraId },
-    });
+  async deleteResultsBySampleId(sampleId: string) {
+    return prisma.sampleResult.deleteMany({ where: { sampleId } });
   },
 
   async getLaboratorios() {
-    const labs1 = await prisma.muestra.findMany({
-      where: { laboratorio1: { not: null } },
-      select: { laboratorio1: true },
-      distinct: ["laboratorio1"],
+    const labs1 = await prisma.sample.findMany({
+      where: { laboratory1: { not: null } },
+      select: { laboratory1: true },
+      distinct: ["laboratory1"],
     });
-    const labs2 = await prisma.muestra.findMany({
-      where: { laboratorio2: { not: null } },
-      select: { laboratorio2: true },
-      distinct: ["laboratorio2"],
+    const labs2 = await prisma.sample.findMany({
+      where: { laboratory2: { not: null } },
+      select: { laboratory2: true },
+      distinct: ["laboratory2"],
     });
-    const labs3 = await prisma.muestra.findMany({
-      where: { laboratorio3: { not: null } },
-      select: { laboratorio3: true },
-      distinct: ["laboratorio3"],
+    const labs3 = await prisma.sample.findMany({
+      where: { laboratory3: { not: null } },
+      select: { laboratory3: true },
+      distinct: ["laboratory3"],
     });
 
     const uniqueLabs = new Set<string>();
-    labs1.forEach((l) => l.laboratorio1 && uniqueLabs.add(l.laboratorio1));
-    labs2.forEach((l) => l.laboratorio2 && uniqueLabs.add(l.laboratorio2));
-    labs3.forEach((l) => l.laboratorio3 && uniqueLabs.add(l.laboratorio3));
+    labs1.forEach((l) => l.laboratory1 && uniqueLabs.add(l.laboratory1));
+    labs2.forEach((l) => l.laboratory2 && uniqueLabs.add(l.laboratory2));
+    labs3.forEach((l) => l.laboratory3 && uniqueLabs.add(l.laboratory3));
 
     return Array.from(uniqueLabs).sort();
   },
 
   async getElementos() {
-    return prisma.elemento.findMany({ orderBy: { nombre: "asc" } });
+    return prisma.element.findMany({ orderBy: { name: "asc" } });
   },
 
   async getMuestras(page: number, limit: number) {
     const skip = (page - 1) * limit;
     const [muestras, total] = await Promise.all([
-      prisma.muestra.findMany({
+      prisma.sample.findMany({
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
         include: {
-          ubicacion: true,
-          resultados: { include: { elemento: true } },
+          samplePoint: true,
+          results: { include: { element: true } },
         },
       }),
-      prisma.muestra.count(),
+      prisma.sample.count(),
     ]);
 
     return { muestras, total };
   },
 
   async getMuestraById(id: string) {
-    return prisma.muestra.findUnique({
+    return prisma.sample.findUnique({
       where: { id },
       include: {
-        ubicacion: true,
-        resultados: { include: { elemento: true } },
+        samplePoint: true,
+        results: { include: { element: true } },
       },
     });
   },
 
   async getAllUbicaciones() {
-    return prisma.ubicacion.findMany({ orderBy: { createdAt: "desc" } });
+    return prisma.samplePoint.findMany({ orderBy: { createdAt: "desc" } });
   },
 
   async getAllMuestras() {
-    return prisma.muestra.findMany({
+    return prisma.sample.findMany({
       orderBy: { createdAt: "desc" },
       include: {
-        ubicacion: true,
-        resultados: { include: { elemento: true } },
-        usuario: true,
+        samplePoint: true,
+        results: { include: { element: true } },
+        user: true,
       },
     });
   },
 
   async getAllResultados() {
-    return prisma.resultado.findMany({
+    return prisma.sampleResult.findMany({
       orderBy: { createdAt: "desc" },
       include: {
-        muestra: true,
-        elemento: true,
+        sample: true,
+        element: true,
       },
     });
   },

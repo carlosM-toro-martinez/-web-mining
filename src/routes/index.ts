@@ -12,6 +12,7 @@ import reportesRoutes from "../modules/reportes/reportes.routes.js";
 import employeeRoutes from "../modules/employee/employee.routes.js";
 import biometricRoutes from "../modules/biometric/biometric.routes.js";
 import miningExplorationRoutes from "../modules/miningExploration/miningExploration.routes.js";
+import surfaceExplorationRoutes from "../modules/surfaceExploration/surfaceExploration.routes.js";
 
 const router = Router();
 
@@ -32,7 +33,9 @@ router.use("/compras", comprasRoutes);
 router.use("/proveedores", proveedoresRoutes);
 router.use("/exploraciones", exploracionesRoutes);
 router.use("/reportes", reportesRoutes);
+router.use("/mining-exploration", miningExplorationRoutes);
 router.use("/", miningExplorationRoutes);
+router.use("/surface-exploration", surfaceExplorationRoutes);
 router.use("/employees", employeeRoutes);
 router.use("/biometric", biometricRoutes);
 router.use("/iclock", biometricRoutes);

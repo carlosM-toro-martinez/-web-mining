@@ -137,8 +137,11 @@ export const createLithologySchema = z
   .object({
     intervalId: z.coerce.number().int().positive(),
     rockType: z.string().optional(),
-    alteration: z.string().optional(),
-    mineralization: z.string().optional(),
+    code: z.string().optional(),
+    color: z.string().optional(),
+    grainSize: z.string().optional(),
+    texture: z.string().optional(),
+    weathering: z.string().optional(),
     comments: z.string().optional(),
   })
   .strict();
@@ -147,8 +150,11 @@ export const updateLithologySchema = z
   .object({
     intervalId: z.coerce.number().int().positive().optional(),
     rockType: z.string().optional(),
-    alteration: z.string().optional(),
-    mineralization: z.string().optional(),
+    code: z.string().optional(),
+    color: z.string().optional(),
+    grainSize: z.string().optional(),
+    texture: z.string().optional(),
+    weathering: z.string().optional(),
     comments: z.string().optional(),
   })
   .strict();
@@ -206,5 +212,250 @@ export const updateResourceSchema = z
     ag: z.number().min(0).optional(),
     cuEq: z.number().min(0).optional(),
     description: z.string().optional(),
+  })
+  .strict();
+
+// ─── DrillHoleSurvey ─────────────────────────────────────────────────────────
+export const drillHoleSurveyQuerySchema = paginationSchema.extend({
+  drillHoleId: z.coerce.number().int().positive().optional(),
+});
+
+export const createDrillHoleSurveySchema = z
+  .object({
+    drillHoleId: z.coerce.number().int().positive().optional(),
+    depth: z.number(),
+    azimuth: z.number(),
+    dip: z.number(),
+  })
+  .strict();
+
+export const updateDrillHoleSurveySchema = z
+  .object({
+    drillHoleId: z.coerce.number().int().positive().optional(),
+    depth: z.number().optional(),
+    azimuth: z.number().optional(),
+    dip: z.number().optional(),
+  })
+  .strict();
+
+// ─── AssayValue ───────────────────────────────────────────────────────────────
+export const assayValueQuerySchema = paginationSchema.extend({
+  assayId: z.coerce.number().int().positive().optional(),
+  element: z.string().optional(),
+});
+
+export const createAssayValueSchema = z
+  .object({
+    assayId: z.coerce.number().int().positive().optional(),
+    element: z.string().min(1),
+    value: z.number(),
+    unit: z.string().optional(),
+    detectionLimit: z.number().optional(),
+  })
+  .strict();
+
+export const updateAssayValueSchema = z
+  .object({
+    assayId: z.coerce.number().int().positive().optional(),
+    element: z.string().min(1).optional(),
+    value: z.number().optional(),
+    unit: z.string().optional(),
+    detectionLimit: z.number().optional(),
+  })
+  .strict();
+
+// ─── Alteration ───────────────────────────────────────────────────────────────
+export const alterationQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createAlterationSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    type: z.string().min(1),
+    intensity: z.number().min(0).max(100).optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateAlterationSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    type: z.string().min(1).optional(),
+    intensity: z.number().min(0).max(100).optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── Mineralization ───────────────────────────────────────────────────────────
+export const mineralizationQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createMineralizationSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    mineral: z.string().min(1),
+    percentage: z.number().min(0).max(100).optional(),
+    style: z.string().optional(),
+    habit: z.string().optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateMineralizationSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    mineral: z.string().min(1).optional(),
+    percentage: z.number().min(0).max(100).optional(),
+    style: z.string().optional(),
+    habit: z.string().optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── GeologicalStructure ──────────────────────────────────────────────────────
+export const geologicalStructureQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createGeologicalStructureSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    structureType: z.string().min(1),
+    angle: z.number().optional(),
+    width: z.number().min(0).optional(),
+    orientation: z.string().optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateGeologicalStructureSchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    structureType: z.string().min(1).optional(),
+    angle: z.number().optional(),
+    width: z.number().min(0).optional(),
+    orientation: z.string().optional(),
+    description: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── Recovery ─────────────────────────────────────────────────────────────────
+export const recoveryQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createRecoverySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    recoveryPercent: z.number().min(0).max(100).optional(),
+    rqdPercent: z.number().min(0).max(100).optional(),
+    coreLoss: z.number().min(0).optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateRecoverySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    recoveryPercent: z.number().min(0).max(100).optional(),
+    rqdPercent: z.number().min(0).max(100).optional(),
+    coreLoss: z.number().min(0).optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── Density ──────────────────────────────────────────────────────────────────
+export const densityQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createDensitySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    specificGravity: z.number().positive(),
+    method: z.string().optional(),
+    dryDensity: z.number().positive().optional(),
+    wetDensity: z.number().positive().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateDensitySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    specificGravity: z.number().positive().optional(),
+    method: z.string().optional(),
+    dryDensity: z.number().positive().optional(),
+    wetDensity: z.number().positive().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── MagneticSusceptibility ───────────────────────────────────────────────────
+export const magneticSusceptibilityQuerySchema = paginationSchema.extend({
+  intervalId: z.coerce.number().int().positive().optional(),
+});
+
+export const createMagneticSusceptibilitySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    value: z.number(),
+    unit: z.string().optional(),
+    instrument: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateMagneticSusceptibilitySchema = z
+  .object({
+    intervalId: z.coerce.number().int().positive().optional(),
+    value: z.number().optional(),
+    unit: z.string().optional(),
+    instrument: z.string().optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+// ─── SignificantIntercept ─────────────────────────────────────────────────────
+export const significantInterceptQuerySchema = paginationSchema.extend({
+  drillHoleId: z.coerce.number().int().positive().optional(),
+  zoneId: z.coerce.number().int().positive().optional(),
+});
+
+export const createSignificantInterceptSchema = z
+  .object({
+    drillHoleId: z.coerce.number().int().positive(),
+    isIncluding: z.boolean().optional(),
+    fromDepth: z.number(),
+    toDepth: z.number(),
+    width: z.number().min(0),
+    trueWidth: z.number().min(0).optional(),
+    au: z.number().min(0).optional(),
+    cu: z.number().min(0).optional(),
+    ag: z.number().min(0).optional(),
+    comments: z.string().optional(),
+  })
+  .strict();
+
+export const updateSignificantInterceptSchema = z
+  .object({
+    drillHoleId: z.coerce.number().int().positive().optional(),
+    isIncluding: z.boolean().optional(),
+    fromDepth: z.number().optional(),
+    toDepth: z.number().optional(),
+    width: z.number().min(0).optional(),
+    trueWidth: z.number().min(0).optional(),
+    au: z.number().min(0).optional(),
+    cu: z.number().min(0).optional(),
+    ag: z.number().min(0).optional(),
+    comments: z.string().optional(),
   })
   .strict();

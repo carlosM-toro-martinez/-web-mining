@@ -1,4 +1,4 @@
-import { SyncStatus } from "@prisma/client";
+import type { SyncStatus } from "@prisma/client";
 
 export interface CreateEmployeeInput {
   nombre: string;

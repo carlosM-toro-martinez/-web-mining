@@ -13,3 +13,6 @@ EJEMPLOS_USO.md
 FAQ_TROUBLESHOOTING.md
 IMPLEMENTACION_COMPLETADA.md
 RESUMEN_EJECUTIVO.md
+
+prisma/mining-schema.prisma
+prisma/ERD.svg

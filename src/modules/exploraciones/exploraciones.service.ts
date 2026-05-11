@@ -20,14 +20,16 @@ export const exploracionesService = {
       throw new HttpError("Elemento debe tener nombre", 400);
     }
 
-    const existing = await exploracionesRepository.findElementoByName(nombre);
+    const existing = await exploracionesRepository.findElementByName(nombre);
     if (existing) {
       return existing;
     }
 
-    return exploracionesRepository.createElemento({
-      nombre,
-      unidad: data.unidad?.trim() ?? null,
+    return exploracionesRepository.createElement({
+      name: nombre,
+      symbol: data.simbolo?.trim() ?? null,
+      unit: data.unidad?.trim() ?? null,
+      description: data.descripcion?.trim() ?? null,
     });
   },
 
@@ -36,27 +38,28 @@ export const exploracionesService = {
   },
 
   async createMuestra(payload: CreateMuestraDTO, userId?: number) {
-    const ubicacion = await exploracionesRepository.createUbicacion({
-      nivel: payload.ubicacion.nivel.trim(),
-      este: payload.ubicacion.este ?? null,
-      norte: payload.ubicacion.norte ?? null,
-      elevacion: payload.ubicacion.elevacion ?? null,
-      referenciaLugar: payload.ubicacion.referenciaLugar?.trim() ?? null,
+    const samplePoint = await exploracionesRepository.createSamplePoint({
+      miningLaborId: payload.ubicacion.miningLaborId,
+      east: payload.ubicacion.este ?? null,
+      north: payload.ubicacion.norte ?? null,
+      elevation: payload.ubicacion.elevacion ?? null,
+      reference: payload.ubicacion.referenciaLugar?.trim() ?? null,
+      station: payload.ubicacion.estacion?.trim() ?? null,
     });
 
-    const muestra = await exploracionesRepository.createMuestra({
-      nombre: payload.nombre.trim(),
-      numero: payload.numero ?? null,
-      laboratorio1: payload.laboratorio1?.trim() ?? null,
-      laboratorio2: payload.laboratorio2?.trim() ?? null,
-      laboratorio3: payload.laboratorio3?.trim() ?? null,
-      tipoMuestra: payload.tipoMuestra?.trim() ?? null,
+    const muestra = await exploracionesRepository.createSample({
+      code: payload.nombre.trim(),
+      sampleType: payload.sampleType,
+      sampleNumber: payload.numero ?? null,
+      laboratory1: payload.laboratorio1?.trim() ?? null,
+      laboratory2: payload.laboratorio2?.trim() ?? null,
+      laboratory3: payload.laboratorio3?.trim() ?? null,
       sector: payload.sector?.trim() ?? null,
-      fechaMuestreo: parseDate(payload.fechaMuestreo),
-      fechaEntrega: parseDate(payload.fechaEntrega),
-      descripcion: payload.descripcion?.trim() ?? null,
-      usuarioId: userId ?? null,
-      ubicacionId: ubicacion.id,
+      collectedAt: parseDate(payload.fechaMuestreo),
+      deliveredAt: parseDate(payload.fechaEntrega),
+      description: payload.descripcion?.trim() ?? null,
+      userId: userId ?? null,
+      samplePointId: samplePoint.id,
     });
 
     if (payload.resultados && payload.resultados.length > 0) {
@@ -64,16 +67,16 @@ export const exploracionesService = {
         const elementoNombre = resultado.elemento.trim();
         if (!elementoNombre) continue;
 
-        let elemento = await exploracionesRepository.findElementoByName(elementoNombre);
+        let elemento = await exploracionesRepository.findElementByName(elementoNombre);
         if (!elemento) {
-          elemento = await exploracionesRepository.createElemento({ nombre: elementoNombre });
+          elemento = await exploracionesRepository.createElement({ name: elementoNombre });
         }
 
-        await exploracionesRepository.upsertResultado(
+        await exploracionesRepository.upsertResult(
           muestra.id,
           elemento.id,
           resultado.valor,
-          resultado.prefijo,
+          resultado.prefijo ?? null,
         );
       }
     }
@@ -101,44 +104,45 @@ export const exploracionesService = {
   async updateMuestra(id: string, payload: CreateMuestraDTO, userId?: number) {
     const existing = await this.getMuestraById(id);
 
-    await exploracionesRepository.updateUbicacion(existing.ubicacion.id, {
-      nivel: payload.ubicacion.nivel,
-      este: payload.ubicacion.este ?? null,
-      norte: payload.ubicacion.norte ?? null,
-      elevacion: payload.ubicacion.elevacion ?? null,
-      referenciaLugar: payload.ubicacion.referenciaLugar?.trim() ?? null,
+    await exploracionesRepository.updateSamplePoint(existing.samplePoint.id, {
+      miningLaborId: payload.ubicacion.miningLaborId,
+      east: payload.ubicacion.este ?? null,
+      north: payload.ubicacion.norte ?? null,
+      elevation: payload.ubicacion.elevacion ?? null,
+      reference: payload.ubicacion.referenciaLugar?.trim() ?? null,
+      station: payload.ubicacion.estacion?.trim() ?? null,
     });
 
-    await exploracionesRepository.updateMuestra(id, {
-      nombre: payload.nombre.trim(),
-      numero: payload.numero ?? null,
-      laboratorio1: payload.laboratorio1?.trim() ?? null,
-      laboratorio2: payload.laboratorio2?.trim() ?? null,
-      laboratorio3: payload.laboratorio3?.trim() ?? null,
-      tipoMuestra: payload.tipoMuestra?.trim() ?? null,
+    await exploracionesRepository.updateSample(id, {
+      code: payload.nombre.trim(),
+      sampleType: payload.sampleType,
+      sampleNumber: payload.numero ?? null,
+      laboratory1: payload.laboratorio1?.trim() ?? null,
+      laboratory2: payload.laboratorio2?.trim() ?? null,
+      laboratory3: payload.laboratorio3?.trim() ?? null,
       sector: payload.sector?.trim() ?? null,
-      fechaMuestreo: parseDate(payload.fechaMuestreo),
-      fechaEntrega: parseDate(payload.fechaEntrega),
-      descripcion: payload.descripcion?.trim() ?? null,
+      collectedAt: parseDate(payload.fechaMuestreo),
+      deliveredAt: parseDate(payload.fechaEntrega),
+      description: payload.descripcion?.trim() ?? null,
     });
 
-    await exploracionesRepository.deleteResultadosByMuestraId(id);
+    await exploracionesRepository.deleteResultsBySampleId(id);
 
     if (payload.resultados && payload.resultados.length > 0) {
       for (const resultado of payload.resultados) {
         const elementoNombre = resultado.elemento.trim();
         if (!elementoNombre) continue;
 
-        let elemento = await exploracionesRepository.findElementoByName(elementoNombre);
+        let elemento = await exploracionesRepository.findElementByName(elementoNombre);
         if (!elemento) {
-          elemento = await exploracionesRepository.createElemento({ nombre: elementoNombre });
+          elemento = await exploracionesRepository.createElement({ name: elementoNombre });
         }
 
-        await exploracionesRepository.upsertResultado(
+        await exploracionesRepository.upsertResult(
           id,
           elemento.id,
           resultado.valor,
-          resultado.prefijo,
+          resultado.prefijo ?? null,
         );
       }
     }
