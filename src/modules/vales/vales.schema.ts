@@ -29,6 +29,7 @@ export const entregarValeSchema = z
 export const valeQuerySchema = z
   .object({
     estado: z.enum(["PENDIENTE", "APROBADO", "PARCIAL", "COMPLETADO", "RECHAZADO"]).optional(),
+    solicitanteId: z.coerce.number().int().positive().optional(),
     page: z.coerce.number().optional(),
     limit: z.coerce.number().optional(),
   })

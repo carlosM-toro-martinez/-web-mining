@@ -16,7 +16,23 @@ export const valesController = {
 
   async getVales(req: AuthRequest, res: Response) {
     try {
-      const result = await valesService.getVales(req.query as any, req.user!.id);
+      const result = await valesService.getVales(req.query as any, req.user!.id, String(req.user!.role ?? ""));
+      res.json({ success: true, data: result.vales, meta: result.meta });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getHistorialSolicitante(req: AuthRequest, res: Response) {
+    try {
+      const solicitanteId = parseInt(String(req.params.userId));
+      if (isNaN(solicitanteId)) {
+        return res.status(400).json({ success: false, error: "userId inválido" });
+      }
+      const page = req.query.page ? parseInt(String(req.query.page)) : 1;
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : 10;
+      const result = await valesService.getHistorialSolicitante(solicitanteId, page, limit);
       res.json({ success: true, data: result.vales, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
@@ -27,11 +43,7 @@ export const valesController = {
   async getValeById(req: AuthRequest, res: Response) {
     try {
       const vale = await valesService.getValeById(String(req.params.id));
-
-      if (!vale) {
-        return res.status(404).json({ success: false, error: "Vale no encontrado" });
-      }
-
+      if (!vale) return res.status(404).json({ success: false, error: "Vale no encontrado" });
       res.json({ success: true, data: vale });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

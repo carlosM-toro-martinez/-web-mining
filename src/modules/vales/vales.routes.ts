@@ -41,6 +41,13 @@ router.use(authenticate);
 // Crear vale (cualquier usuario autenticado)
 router.post("/", validate(createValeSchema), valesController.createVale);
 
+// Historial de vales de un solicitante específico (solo ADMIN y SUPERINTENDENTE)
+router.get(
+  "/solicitante/:userId",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  valesController.getHistorialSolicitante,
+);
+
 // Listar vales
 router.get("/", validateQuery(valeQuerySchema), valesController.getVales);
 

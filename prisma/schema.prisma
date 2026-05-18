@@ -103,31 +103,52 @@ model CategoriaInventario {
 }
 
 model Producto {
-  id              Int                 @id @default(autoincrement())
-  codigo          String              @unique
-  nombre          String
-  unidad          String
-  categoriaId     Int
-  esEpp           Boolean             @default(false)
-  cuentaId        Int?
-  compraItems     CompraItem[]
-  eppAsignaciones EppAsignacion[]
-  movimientos     Movimiento[]
-  pedidoItems     PedidoItem[]
-  categoria       CategoriaInventario @relation(fields: [categoriaId], references: [id])
-  cuenta          CuentaContable?     @relation(fields: [cuentaId], references: [id])
-  stock           Stock?
-  valeItems       ValeItem[]
+  id               Int                 @id @default(autoincrement())
+  codigo           String              @unique
+  nombre           String
+  unidad           String
+  categoriaId      Int
+  esEpp            Boolean             @default(false)
+  cuentaId         Int?
+  compraItems      CompraItem[]
+  eppAsignaciones  EppAsignacion[]
+  movimientos      Movimiento[]
+  pedidoItems      PedidoItem[]
+  saldosMensuales  SaldoMensual[]
+  categoria        CategoriaInventario @relation(fields: [categoriaId], references: [id])
+  cuenta           CuentaContable?     @relation(fields: [cuentaId], references: [id])
+  stock            Stock?
+  valeItems        ValeItem[]
+}
+
+model SaldoMensual {
+  id           String   @id @default(uuid())
+  productoId   Int
+  anio         Int
+  mes          Int
+  saldoInicial Decimal  @default(0) @db.Decimal(14, 4)
+  ingresoQty   Decimal  @default(0) @db.Decimal(14, 4)
+  salidaQty    Decimal  @default(0) @db.Decimal(14, 4)
+  saldoFinal   Decimal  @default(0) @db.Decimal(14, 4)
+  precioUnit   Decimal  @default(0) @db.Decimal(14, 4)
+  totalBs      Decimal  @default(0) @db.Decimal(14, 4)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  producto     Producto @relation(fields: [productoId], references: [id])
+
+  @@unique([productoId, anio, mes])
+  @@index([anio, mes])
 }
 
 model Stock {
-  id         Int      @id @default(autoincrement())
-  productoId Int      @unique
-  cantidad   Decimal  @db.Decimal(12, 2)
-  precioUnit Decimal  @db.Decimal(12, 2)
-  precioProm Decimal  @db.Decimal(12, 2)
-  updatedAt  DateTime @updatedAt
-  producto   Producto @relation(fields: [productoId], references: [id])
+  id                Int      @id @default(autoincrement())
+  productoId        Int      @unique
+  cantidad          Decimal  @db.Decimal(12, 2)
+  cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
+  precioUnit        Decimal  @db.Decimal(12, 2)
+  precioProm        Decimal  @db.Decimal(12, 2)
+  updatedAt         DateTime @updatedAt
+  producto          Producto @relation(fields: [productoId], references: [id])
 }
 
 model Movimiento {
@@ -197,6 +218,8 @@ model Compra {
   estado            EstadoCompra
   createdAt         DateTime     @default(now())
   observacion       String?
+  numeroFactura     String?
+  descuento         Decimal      @default(0) @db.Decimal(5, 2)
   recibidoAt        DateTime?
   usuarioRecibidoId Int?
   usuarioRegistroId Int
