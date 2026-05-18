@@ -6,8 +6,12 @@
 -- Drops SamplePoint (no longer used)
 -- ============================================================
 
--- CreateEnum
-CREATE TYPE IF NOT EXISTS "LaboratorySlot" AS ENUM ('L1', 'L2', 'L3');
+-- CreateEnum (compatible with older PostgreSQL versions)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'LaboratorySlot') THEN
+    CREATE TYPE "LaboratorySlot" AS ENUM ('L1', 'L2', 'L3');
+  END IF;
+END $$;
 
 -- AlterEnum Role (add new roles)
 DO $$ BEGIN
