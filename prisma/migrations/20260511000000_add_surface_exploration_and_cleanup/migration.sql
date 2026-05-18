@@ -72,12 +72,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS "SampleLaboratory_sampleId_slot_key"    ON "Sa
 CREATE        INDEX IF NOT EXISTS "SampleLaboratory_sampleId_idx"          ON "SampleLaboratory"("sampleId");
 CREATE        INDEX IF NOT EXISTS "SampleLaboratory_laboratoryId_idx"      ON "SampleLaboratory"("laboratoryId");
 
-ALTER TABLE "SampleLaboratory"
-    ADD CONSTRAINT "SampleLaboratory_sampleId_fkey"
-    FOREIGN KEY ("sampleId") REFERENCES "Sample"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-ALTER TABLE "SampleLaboratory"
-    ADD CONSTRAINT "SampleLaboratory_laboratoryId_fkey"
-    FOREIGN KEY ("laboratoryId") REFERENCES "Laboratory"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SampleLaboratory_sampleId_fkey') THEN
+    ALTER TABLE "SampleLaboratory"
+        ADD CONSTRAINT "SampleLaboratory_sampleId_fkey"
+        FOREIGN KEY ("sampleId") REFERENCES "Sample"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SampleLaboratory_laboratoryId_fkey') THEN
+    ALTER TABLE "SampleLaboratory"
+        ADD CONSTRAINT "SampleLaboratory_laboratoryId_fkey"
+        FOREIGN KEY ("laboratoryId") REFERENCES "Laboratory"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- ── CreateTable SignificantIntercept ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "SignificantIntercept" (
@@ -100,9 +108,13 @@ CREATE TABLE IF NOT EXISTS "SignificantIntercept" (
 );
 CREATE INDEX IF NOT EXISTS "SignificantIntercept_drillHoleId_idx" ON "SignificantIntercept"("drillHoleId");
 
-ALTER TABLE "SignificantIntercept"
-    ADD CONSTRAINT "SignificantIntercept_drillHoleId_fkey"
-    FOREIGN KEY ("drillHoleId") REFERENCES "DrillHole"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SignificantIntercept_drillHoleId_fkey') THEN
+    ALTER TABLE "SignificantIntercept"
+        ADD CONSTRAINT "SignificantIntercept_drillHoleId_fkey"
+        FOREIGN KEY ("drillHoleId") REFERENCES "DrillHole"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- ── AlterTable Element ────────────────────────────────────────────────────────
 -- Rename unit → defaultUnit (safe if column exists)
@@ -171,9 +183,13 @@ CREATE INDEX IF NOT EXISTS "Sample_east_north_idx"    ON "Sample"("east", "north
 CREATE INDEX IF NOT EXISTS "Sample_miningLaborId_idx" ON "Sample"("miningLaborId");
 
 -- FK to MiningLabor (nullable — existing rows won't have miningLaborId)
-ALTER TABLE "Sample"
-    ADD CONSTRAINT "Sample_miningLaborId_fkey"
-    FOREIGN KEY ("miningLaborId") REFERENCES "MiningLabor"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Sample_miningLaborId_fkey') THEN
+    ALTER TABLE "Sample"
+        ADD CONSTRAINT "Sample_miningLaborId_fkey"
+        FOREIGN KEY ("miningLaborId") REFERENCES "MiningLabor"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- ── AlterTable SampleResult ───────────────────────────────────────────────────
 DROP INDEX IF EXISTS "SampleResult_sampleId_elementId_key";
@@ -190,9 +206,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS "SampleResult_sampleId_sampleLaboratoryId_elem
     ON "SampleResult"("sampleId", "sampleLaboratoryId", "elementId", "unit", "sourceColumn");
 CREATE INDEX IF NOT EXISTS "SampleResult_sampleLaboratoryId_idx" ON "SampleResult"("sampleLaboratoryId");
 
-ALTER TABLE "SampleResult"
-    ADD CONSTRAINT "SampleResult_sampleLaboratoryId_fkey"
-    FOREIGN KEY ("sampleLaboratoryId") REFERENCES "SampleLaboratory"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SampleResult_sampleLaboratoryId_fkey') THEN
+    ALTER TABLE "SampleResult"
+        ADD CONSTRAINT "SampleResult_sampleLaboratoryId_fkey"
+        FOREIGN KEY ("sampleLaboratoryId") REFERENCES "SampleLaboratory"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- ── DropTable SamplePoint ─────────────────────────────────────────────────────
 -- Remove FK from Sample first (already done above), then drop the table
