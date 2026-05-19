@@ -8,6 +8,8 @@ import {
   processUserInfo,
   getNextCommand,
   ackCommand,
+  getDeviceStatus,
+  setRequestUserInfo,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -111,6 +113,18 @@ export const iclockController = {
     } else {
       res.send("OK");
     }
+  },
+
+  // GET /iclock/status — device connection status, no auth required
+  async status(_req: Request, res: Response) {
+    const status = getDeviceStatus();
+    res.json({ success: true, data: status });
+  },
+
+  // POST /iclock/sync-users — trigger device to send its user list, no auth required
+  async syncUsers(_req: Request, res: Response) {
+    setRequestUserInfo();
+    res.json({ success: true, message: "El dispositivo enviará sus usuarios en el próximo heartbeat (~30s)" });
   },
 
   // POST /iclock/devicecmd — explicit ack from device (not all models send this)

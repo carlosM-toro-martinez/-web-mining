@@ -10,4 +10,8 @@ router.post("/cdata", iclockController.cdataPost);
 router.get("/getrequest", iclockController.getrequest);
 router.post("/devicecmd", iclockController.devicecmd);
 
+// Public utility endpoints — no auth, for frontend status indicator and manual sync
+router.get("/status", iclockController.status);
+router.post("/sync-users", iclockController.syncUsers);
+
 export default router;
