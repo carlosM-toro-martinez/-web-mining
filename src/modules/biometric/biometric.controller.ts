@@ -15,8 +15,8 @@ const attendanceQuerySchema = z.object({
 
 export const biometricController = {
   // GET /api/biometric/status
-  deviceStatus(_req: AuthRequest, res: Response) {
-    const data = getDeviceStatus();
+  async deviceStatus(_req: AuthRequest, res: Response) {
+    const data = await getDeviceStatus();
     res.json({ success: true, data });
   },
 

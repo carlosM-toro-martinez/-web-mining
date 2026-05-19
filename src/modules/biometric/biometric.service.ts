@@ -2,27 +2,26 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { getIO } from "../../config/socket.js";
 
-// ─── Device heartbeat state (in-memory) ──────────────────────────────────────
+// ─── Device heartbeat state (persisted in DB) ────────────────────────────────
 
-interface DeviceState {
-  sn: string;
-  lastSeen: Date;
-}
-
-let deviceState: DeviceState | null = null;
 let _requestUserInfo = false;
 
-export function updateDeviceHeartbeat(sn: string): void {
-  deviceState = { sn, lastSeen: new Date() };
+export async function updateDeviceHeartbeat(sn: string): Promise<void> {
+  await prisma.deviceState.upsert({
+    where: { sn },
+    update: { lastSeen: new Date() },
+    create: { sn, lastSeen: new Date() },
+  });
 }
 
-export function getDeviceStatus(): { conectado: boolean; sn?: string; lastSeen?: Date } {
-  if (!deviceState) return { conectado: false };
-  const secAgo = (Date.now() - deviceState.lastSeen.getTime()) / 1000;
+export async function getDeviceStatus(): Promise<{ conectado: boolean; sn?: string; lastSeen?: Date }> {
+  const state = await prisma.deviceState.findFirst({ orderBy: { lastSeen: "desc" } });
+  if (!state) return { conectado: false };
+  const secAgo = (Date.now() - state.lastSeen.getTime()) / 1000;
   return {
     conectado: secAgo < 120,
-    sn: deviceState.sn,
-    lastSeen: deviceState.lastSeen,
+    sn: state.sn,
+    lastSeen: state.lastSeen,
   };
 }
 
