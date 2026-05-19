@@ -43,14 +43,14 @@ router.get("/:id", validateParams(idSchema), categoriaInventarioController.getBy
 
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validate(createCategoriaInventarioSchema),
   categoriaInventarioController.create,
 );
 
 router.put(
   "/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(updateCategoriaInventarioSchema),
   categoriaInventarioController.update,
@@ -58,7 +58,7 @@ router.put(
 
 router.delete(
   "/:id",
-  authorize("ADMIN"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validateParams(idSchema),
   categoriaInventarioController.remove,
 );

@@ -71,6 +71,30 @@ export const valesController = {
     }
   },
 
+  async getResumenSolicitantes(_req: AuthRequest, res: Response) {
+    try {
+      const data = await valesService.getResumenSolicitantes();
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getProductosUsuario(req: AuthRequest, res: Response) {
+    try {
+      const userId = parseInt(String(req.params.userId));
+      if (isNaN(userId)) {
+        return res.status(400).json({ success: false, error: "userId inválido" });
+      }
+      const data = await valesService.getProductosPorUsuario(userId);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async rechazarVale(req: AuthRequest, res: Response) {
     try {
       const vale = await valesService.rechazarVale(String(req.params.id), req.user!.id);

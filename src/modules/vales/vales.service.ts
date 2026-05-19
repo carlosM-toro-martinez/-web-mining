@@ -45,10 +45,32 @@ export const valesService = {
       throw new HttpError("Solicitante no encontrado", 404);
     }
 
+    // Verificar stock disponible antes de crear
+    const productosConStock = await prisma.producto.findMany({
+      where: { id: { in: data.items.map((item) => item.productoId) } },
+      include: { stock: true },
+    });
+
+    for (const item of data.items) {
+      const producto = productosConStock.find((p) => p.id === item.productoId);
+      const stock = producto?.stock;
+      if (!stock) throw new HttpError(`Producto ${item.productoId} no tiene stock registrado`, 400);
+
+      const disponible = new Prisma.Decimal(stock.cantidad).sub(stock.cantidadReservada);
+      if (disponible.lt(item.cantidadSolicitada)) {
+        throw new HttpError(
+          `Stock insuficiente para "${producto!.nombre}". Disponible: ${disponible}, Solicitado: ${item.cantidadSolicitada}`,
+          409,
+        );
+      }
+    }
+
+    // Crear vale directamente como APROBADO y reservar stock
     const vale = await prisma.vale.create({
       data: {
         solicitanteId: data.solicitanteId,
-        estado: "PENDIENTE",
+        estado: "APROBADO",
+        aprobadoAt: new Date(),
         items: {
           create: data.items.map((item) => ({
             productoId: item.productoId,
@@ -59,6 +81,14 @@ export const valesService = {
       include: valeIncludeCompleto,
     });
 
+    // Reservar stock para cada ítem
+    for (const item of data.items) {
+      await prisma.stock.update({
+        where: { productoId: item.productoId },
+        data: { cantidadReservada: { increment: item.cantidadSolicitada } },
+      });
+    }
+
     await prisma.log.create({
       data: {
         usuarioId: userId,
@@ -67,7 +97,7 @@ export const valesService = {
       },
     });
 
-    logger.info({ userId, valeId: vale.id, action: "CREATE_VALE" }, "Vale creado");
+    logger.info({ userId, valeId: vale.id, action: "CREATE_VALE" }, "Vale creado y auto-aprobado");
     return vale;
   },
 
@@ -209,8 +239,8 @@ export const valesService = {
     });
 
     if (!vale) throw new HttpError("Vale no encontrado", 404);
-    if (vale.estado !== "APROBADO" && vale.estado !== "PARCIAL") {
-      throw new HttpError("Solo se pueden entregar vales APROBADOS o PARCIALES", 409);
+    if (vale.estado !== "APROBADO" && vale.estado !== "PARCIAL" && vale.estado !== "PENDIENTE") {
+      throw new HttpError("No se puede entregar un vale en estado " + vale.estado, 409);
     }
 
     // Validar cantidades
@@ -243,8 +273,12 @@ export const valesService = {
       const cantidad = data.cantidadesEntregadas[item.id] ?? 0;
       if (cantidad <= 0) continue;
 
-      if (!item.producto.cuentaId) {
-        throw new HttpError(`Producto ${item.producto.nombre} no tiene cuenta contable asignada`, 400);
+      const cuentaId = data.cuentaIds?.[item.id] ?? item.producto.cuentaId;
+      if (!cuentaId) {
+        throw new HttpError(
+          `Producto "${item.producto.nombre}" no tiene cuenta contable asignada. Envíala en cuentaIds.`,
+          400,
+        );
       }
 
       const movimiento = await prisma.movimiento.create({
@@ -264,7 +298,7 @@ export const valesService = {
           usuarioId: userId,
           usuarioEntregaId: userId,
           usuarioRecibidoId: vale.solicitanteId,
-          cuentaId: item.producto.cuentaId,
+          cuentaId,
           referencia: "VALE",
           referenciaId: id,
         },
@@ -322,6 +356,104 @@ export const valesService = {
 
     logger.info({ userId, valeId: id, action: "ENTREGAR_VALE" }, "Vale entregado");
     return { vale: valeActualizado, movimientos };
+  },
+
+  async getResumenSolicitantes() {
+    // Group vales by solicitante with counts
+    const grupos = await prisma.vale.groupBy({
+      by: ["solicitanteId"],
+      _count: { id: true },
+      _max: { createdAt: true },
+    });
+
+    if (!grupos.length) return [];
+
+    const userIds = grupos.map((g) => g.solicitanteId);
+    const usuarios = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, nombre: true, email: true, role: true },
+    });
+
+    const usuarioMap = new Map(usuarios.map((u) => [u.id, u]));
+
+    return grupos
+      .map((g) => ({
+        usuario: usuarioMap.get(g.solicitanteId)!,
+        totalVales: g._count.id,
+        ultimaFecha: g._max.createdAt,
+      }))
+      .filter((r) => r.usuario)
+      .sort((a, b) => (b.ultimaFecha?.getTime() ?? 0) - (a.ultimaFecha?.getTime() ?? 0));
+  },
+
+  async getProductosPorUsuario(userId: number) {
+    const usuario = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, nombre: true, email: true, role: true },
+    });
+    if (!usuario) throw new HttpError("Usuario no encontrado", 404);
+
+    // Fetch all valeItems belonging to this user's vales
+    const items = await prisma.valeItem.findMany({
+      where: { vale: { solicitanteId: userId } },
+      select: {
+        productoId: true,
+        cantidadSolicitada: true,
+        producto: { select: { id: true, nombre: true, codigo: true, unidad: true } },
+        vale: { select: { id: true, createdAt: true, estado: true } },
+      },
+      orderBy: { vale: { createdAt: "desc" } },
+    });
+
+    // Aggregate by producto in JS
+    const map = new Map<
+      number,
+      {
+        productoId: number;
+        nombre: string;
+        codigo: string;
+        unidad: string;
+        vecessolicitado: number;
+        cantidadTotal: number;
+        ultimaFecha: Date;
+        ultimoValeId: string;
+        ultimoEstado: string;
+      }
+    >();
+
+    for (const item of items) {
+      const existing = map.get(item.productoId);
+      const fecha = item.vale.createdAt;
+      const cantidad = Number(item.cantidadSolicitada);
+
+      if (!existing) {
+        map.set(item.productoId, {
+          productoId: item.productoId,
+          nombre: item.producto.nombre,
+          codigo: item.producto.codigo,
+          unidad: item.producto.unidad,
+          vecessolicitado: 1,
+          cantidadTotal: cantidad,
+          ultimaFecha: fecha,
+          ultimoValeId: item.vale.id,
+          ultimoEstado: item.vale.estado,
+        });
+      } else {
+        existing.vecessolicitado++;
+        existing.cantidadTotal += cantidad;
+        if (fecha > existing.ultimaFecha) {
+          existing.ultimaFecha = fecha;
+          existing.ultimoValeId = item.vale.id;
+          existing.ultimoEstado = item.vale.estado;
+        }
+      }
+    }
+
+    const productos = Array.from(map.values()).sort(
+      (a, b) => b.ultimaFecha.getTime() - a.ultimaFecha.getTime(),
+    );
+
+    return { usuario, productos };
   },
 
   async rechazarVale(id: string, userId: number) {

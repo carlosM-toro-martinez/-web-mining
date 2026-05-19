@@ -33,7 +33,7 @@ router.get(
 // NO toca la tabla Stock.
 router.post(
   "/catalogo",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   upload.single("file"),
   inventarioImportController.importarCatalogo,
 );
@@ -43,7 +43,7 @@ router.post(
 // Carga batch de stock actual (como primer registro, crea Movimiento SALDO_INICIAL).
 router.post(
   "/stock-inicial",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.cargarStockInicial,
 );
 
@@ -53,7 +53,7 @@ router.post(
 // Body con producto nuevo:     { crearProducto: { codigo, nombre, unidad, grupoId, subgrupoId, centroCostoId, funcionGastoId }, cantidad, precioUnit }
 router.post(
   "/stock-inicial/item",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.cargarStockInicialItem,
 );
 
@@ -63,7 +63,7 @@ router.post(
 // Body: { "confirmacion": "REINICIAR" }
 router.post(
   "/reiniciar-stock",
-  authorize("ADMIN"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.reiniciarStock,
 );
 
@@ -73,7 +73,7 @@ router.post(
 // Body opcional: { "anio": 2025, "mes": 9 } para sincronizar desde un período específico.
 router.post(
   "/sincronizar-stock",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.sincronizarStock,
 );
 
@@ -82,7 +82,7 @@ router.post(
 // Carga masiva de saldos históricos de un mes (JSON).
 router.post(
   "/saldo-mensual",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.cargarSaldoMensual,
 );
 
@@ -99,7 +99,7 @@ router.get(
 // Body: { productoId | productoCodigo, anio, mes, saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit }
 router.post(
   "/saldo-mensual/item",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.upsertSaldoMensualItem,
 );
 
@@ -114,7 +114,7 @@ router.get(
 // Actualizar campos de un registro existente.
 router.patch(
   "/saldo-mensual/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.updateSaldoMensualItem,
 );
 
@@ -122,7 +122,7 @@ router.patch(
 // Eliminar un registro de saldo mensual.
 router.delete(
   "/saldo-mensual/:id",
-  authorize("ADMIN"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   inventarioImportController.deleteSaldoMensualItem,
 );
 

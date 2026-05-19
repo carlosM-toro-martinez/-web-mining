@@ -36,7 +36,7 @@ router.use(authenticate);
 // Crear compra (ADMIN, ALMACENERO)
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validate(createCompraSchema),
   comprasController.createCompra,
 );
@@ -50,7 +50,7 @@ router.get("/:id", validateParams(idSchema), comprasController.getCompraById);
 // Recibir compra (ADMIN, ALMACENERO)
 router.patch(
   "/:id/recibir",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(recibirCompraSchema),
   comprasController.recibirCompra,

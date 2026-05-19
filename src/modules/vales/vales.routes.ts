@@ -41,10 +41,24 @@ router.use(authenticate);
 // Crear vale (cualquier usuario autenticado)
 router.post("/", validate(createValeSchema), valesController.createVale);
 
-// Historial de vales de un solicitante específico (solo ADMIN y SUPERINTENDENTE)
+// Resumen de todos los solicitantes con conteo de vales
+router.get(
+  "/resumen-solicitantes",
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  valesController.getResumenSolicitantes,
+);
+
+// Productos pedidos por un usuario específico (con conteo y última fecha por producto)
+router.get(
+  "/usuario/:userId/productos",
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  valesController.getProductosUsuario,
+);
+
+// Historial de vales de un solicitante específico
 router.get(
   "/solicitante/:userId",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   valesController.getHistorialSolicitante,
 );
 
@@ -54,28 +68,28 @@ router.get("/", validateQuery(valeQuerySchema), valesController.getVales);
 // Obtener vale por ID
 router.get("/:id", validateParams(idSchema), valesController.getValeById);
 
-// Aprobar vale (SUPERINTENDENTE o ADMIN)
+// Aprobar vale
 router.patch(
   "/:id/aprobar",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   validateParams(idSchema),
   validate(aprobarValeSchema),
   valesController.aprobarVale,
 );
 
-// Entregar vale (ALMACENERO o ADMIN)
+// Entregar vale
 router.patch(
   "/:id/entregar",
-  authorize("ADMIN", "ALMACENERO"),
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(entregarValeSchema),
   valesController.entregarVale,
 );
 
-// Rechazar vale (SUPERINTENDENTE o ADMIN)
+// Rechazar vale
 router.patch(
   "/:id/rechazar",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   validateParams(idSchema),
   valesController.rechazarVale,
 );

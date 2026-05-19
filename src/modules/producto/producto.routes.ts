@@ -40,15 +40,26 @@ router.use(authenticate);
 router.get("/", validateQuery(productoQuerySchema), productoController.getAll);
 router.get("/:id", validateParams(idSchema), productoController.getById);
 
-router.post("/", validate(createProductoSchema), productoController.create);
+router.post(
+  "/",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  validate(createProductoSchema),
+  productoController.create,
+);
 
 router.put(
   "/:id",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(updateProductoSchema),
   productoController.update,
 );
 
-router.delete("/:id", validateParams(idSchema), authorize("ADMIN"), productoController.remove);
+router.delete(
+  "/:id",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  productoController.remove,
+);
 
 export default router;

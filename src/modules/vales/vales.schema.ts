@@ -23,6 +23,7 @@ export const aprobarValeSchema = z
 export const entregarValeSchema = z
   .object({
     cantidadesEntregadas: z.record(z.string(), z.number().nonnegative()),
+    cuentaIds: z.record(z.string(), z.number().int().positive()).optional(),
   })
   .strict();
 

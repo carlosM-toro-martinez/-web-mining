@@ -22,9 +22,9 @@ router.get("/", pedidosController.getPedidos);
 router.get("/:id", validateParams(idSchema), pedidosController.getPedidoById);
 
 // Crear pedido (ADMIN, ALMACENERO)
-router.post("/", authorize("ADMIN", "ALMACENERO"), validate(createPedidoSchema), pedidosController.createPedido);
+router.post("/", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validate(createPedidoSchema), pedidosController.createPedido);
 
-// Cancelar/cerrar pedido (ADMIN)
-router.patch("/:id/cancelar", authorize("ADMIN"), validateParams(idSchema), pedidosController.cancelarPedido);
+// Cancelar/cerrar pedido
+router.patch("/:id/cancelar", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validateParams(idSchema), pedidosController.cancelarPedido);
 
 export default router;
