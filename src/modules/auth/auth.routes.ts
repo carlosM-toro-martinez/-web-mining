@@ -21,13 +21,13 @@ router.post("/logout", authenticate, authController.logout);
 router.get(
   "/users",
   authenticate,
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   authController.listarUsuarios,
 );
 router.put(
   "/users/:id",
   authenticate,
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   validate(updateUserSchema),
   authController.actualizarUsuario,
 );
