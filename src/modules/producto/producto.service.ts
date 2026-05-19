@@ -16,10 +16,10 @@ export const productoService = {
     const where: any = {};
 
     if (query.search) {
-      where.nombre = {
-        contains: String(query.search),
-        mode: "insensitive" as const,
-      };
+      where.OR = [
+        { nombre: { contains: String(query.search), mode: "insensitive" as const } },
+        { codigo: { contains: String(query.search), mode: "insensitive" as const } },
+      ];
     }
 
     if (query.subgrupoId) {

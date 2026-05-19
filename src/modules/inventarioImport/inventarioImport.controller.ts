@@ -4,16 +4,33 @@ import { HttpError } from "../../errors/http.error.js";
 import {
   importarCatalogo,
   cargarStockInicial,
+  cargarStockInicialItem,
+  buscarProductosAutocomplete,
   cargarSaldoMensual,
   getSaldosMensualesCargados,
+  upsertSaldoMensualItem,
+  getSaldoMensualById,
+  updateSaldoMensualItem,
+  deleteSaldoMensualItem,
+  reiniciarStock,
+  sincronizarStockDesdeSaldoMensual,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
+  stockInicialConProductoSchema,
+  autocompleteQuerySchema,
   saldoMensualSchema,
   saldoMensualQuerySchema,
+  saldoMensualItemSchema,
+  saldoMensualIdParamSchema,
+  updateSaldoMensualItemSchema,
+  reiniciarStockSchema,
+  sincronizarStockSchema,
 } from "./inventarioImport.schema.js";
 
 export const inventarioImportController = {
+  // ─── Catálogo Excel ──────────────────────────────────────────────────────
+
   async importarCatalogo(req: AuthRequest, res: Response) {
     try {
       if (!req.file) {
@@ -30,6 +47,24 @@ export const inventarioImportController = {
     }
   },
 
+  // ─── Autocomplete de productos ───────────────────────────────────────────
+
+  async buscarProductos(req: AuthRequest, res: Response) {
+    try {
+      const parsed = autocompleteQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Parámetros inválidos" });
+      }
+      const data = await buscarProductosAutocomplete(parsed.data.q ?? undefined, parsed.data.limit);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Stock inicial ───────────────────────────────────────────────────────
+
   async cargarStockInicial(req: AuthRequest, res: Response) {
     try {
       const parsed = stockInicialSchema.safeParse(req.body);
@@ -43,6 +78,8 @@ export const inventarioImportController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  // ─── Saldo mensual – batch ───────────────────────────────────────────────
 
   async cargarSaldoMensual(req: AuthRequest, res: Response) {
     try {
@@ -65,6 +102,118 @@ export const inventarioImportController = {
         return res.status(400).json({ success: false, error: "Parámetros inválidos. Se requieren anio y mes." });
       }
       const data = await getSaldosMensualesCargados(parsed.data.anio, parsed.data.mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Saldo mensual – item individual ────────────────────────────────────
+
+  async upsertSaldoMensualItem(req: AuthRequest, res: Response) {
+    try {
+      const parsed = saldoMensualItemSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await upsertSaldoMensualItem(parsed.data, req.user!.id);
+      const status = data.accion === "creado" ? 201 : 200;
+      res.status(status).json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getSaldoMensualById(req: AuthRequest, res: Response) {
+    try {
+      const parsed = saldoMensualIdParamSchema.safeParse(req.params);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "ID inválido" });
+      }
+      const data = await getSaldoMensualById(parsed.data.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async updateSaldoMensualItem(req: AuthRequest, res: Response) {
+    try {
+      const paramParsed = saldoMensualIdParamSchema.safeParse(req.params);
+      if (!paramParsed.success) {
+        return res.status(400).json({ success: false, error: "ID inválido" });
+      }
+      const bodyParsed = updateSaldoMensualItemSchema.safeParse(req.body);
+      if (!bodyParsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: bodyParsed.error.flatten() });
+      }
+      const data = await updateSaldoMensualItem(paramParsed.data.id, bodyParsed.data, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async deleteSaldoMensualItem(req: AuthRequest, res: Response) {
+    try {
+      const parsed = saldoMensualIdParamSchema.safeParse(req.params);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "ID inválido" });
+      }
+      const data = await deleteSaldoMensualItem(parsed.data.id, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async cargarStockInicialItem(req: AuthRequest, res: Response) {
+    try {
+      const parsed = stockInicialConProductoSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await cargarStockInicialItem(parsed.data, req.user!.id);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Reiniciar stock ─────────────────────────────────────────────────────
+
+  async reiniciarStock(req: AuthRequest, res: Response) {
+    try {
+      const parsed = reiniciarStockSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          success: false,
+          error: 'Para confirmar envía { "confirmacion": "REINICIAR" }',
+        });
+      }
+      const data = await reiniciarStock(req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Sincronizar stock desde SaldoMensual ───────────────────────────────
+
+  async sincronizarStock(req: AuthRequest, res: Response) {
+    try {
+      const parsed = sincronizarStockSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await sincronizarStockDesdeSaldoMensual(parsed.data, req.user!.id);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

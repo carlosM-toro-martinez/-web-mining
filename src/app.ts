@@ -6,8 +6,7 @@ import swaggerUi from "swagger-ui-express";
 
 import { logger } from "./config/logger.js";
 import routes from "./routes/index.js";
-import biometricRoutes from "./modules/biometric/biometric.routes.js";
-import employeeRoutes from "./modules/employee/employee.routes.js";
+import iclockRoutes from "./modules/biometric/iclock.routes.js";
 
 const app = express();
 
@@ -18,11 +17,16 @@ app.use(
   express.text({
     type: (req) => {
       const ct = req.headers["content-type"] ?? "";
-      return !ct.startsWith("multipart/");
+      // Exclude multipart and urlencoded so express.urlencoded can parse those
+      return !ct.startsWith("multipart/") && !ct.startsWith("application/x-www-form-urlencoded");
     },
   }),
 );
+app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+
+// ADMS protocol — ZKTeco device connects here directly (no JWT, no /api prefix)
+app.use("/iclock", iclockRoutes);
 
 // Log request info for development visibility
 app.use((req, res, next) => {
@@ -167,9 +171,6 @@ const swaggerDocument = {
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 app.use("/api", routes);
-app.use("/employees", employeeRoutes);
-app.use("/iclock", biometricRoutes);
-app.use("/biometric", biometricRoutes);
 
 // Global error handler
 // eslint-disable-next-line no-unused-vars

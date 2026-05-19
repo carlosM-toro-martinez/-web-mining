@@ -1,12 +1,23 @@
 import { Router } from "express";
-import { BiometricController } from "./biometric.controller.js";
+import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { biometricController } from "./biometric.controller.js";
 
 const router = Router();
-const biometricController = new BiometricController();
+router.use(authenticate);
 
-router.get("/getrequest", biometricController.getRequest.bind(biometricController));
-router.get("/cdata", biometricController.getCData.bind(biometricController));
-router.post("/cdata", biometricController.postCData.bind(biometricController));
-router.get("/logs", biometricController.getLogs.bind(biometricController));
+// GET  /api/biometric/status           — Estado del dispositivo (última vez visto)
+router.get("/status", biometricController.deviceStatus);
+
+// GET  /api/biometric/attendance       — Listar marcas de asistencia con filtros
+router.get("/attendance", biometricController.getAttendance);
+
+// GET  /api/biometric/device-users     — Empleados confirmados en el dispositivo
+router.get("/device-users", authorize("ADMIN", "ALMACENERO"), biometricController.deviceUsers);
+
+// GET  /api/biometric/pending-commands — Ver comandos ADMS pendientes de enviar
+router.get("/pending-commands", authorize("ADMIN", "ALMACENERO"), biometricController.pendingCommands);
+
+// POST /api/biometric/request-device-users — Importar usuarios del dispositivo a la BD
+router.post("/request-device-users", authorize("ADMIN", "ALMACENERO"), biometricController.requestDeviceUsers);
 
 export default router;

@@ -11,6 +11,7 @@ import proveedoresRoutes from "../modules/proveedores/proveedores.routes.js";
 import reportesRoutes from "../modules/reportes/reportes.routes.js";
 import employeeRoutes from "../modules/employee/employee.routes.js";
 import biometricRoutes from "../modules/biometric/biometric.routes.js";
+// iclock routes are mounted at root level in app.ts (ADMS protocol, not under /api)
 import miningExplorationRoutes from "../modules/miningExploration/miningExploration.routes.js";
 import surfaceExplorationRoutes from "../modules/surfaceExploration/surfaceExploration.routes.js";
 import miningExcelRoutes from "../modules/miningExcel/miningExcel.routes.js";
@@ -41,7 +42,6 @@ router.use("/", miningExplorationRoutes);
 router.use("/surface-exploration", surfaceExplorationRoutes);
 router.use("/employees", employeeRoutes);
 router.use("/biometric", biometricRoutes);
-router.use("/iclock", biometricRoutes);
 router.use("/imports/mining-excel", miningExcelRoutes);
 router.use("/pedidos", pedidosRoutes);
 router.use("/inventario-import", inventarioImportRoutes);

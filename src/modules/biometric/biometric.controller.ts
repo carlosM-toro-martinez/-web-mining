@@ -1,50 +1,84 @@
-import type { Request, Response } from "express";
-import { BiometricService } from "./biometric.service.js";
+import type { Response } from "express";
+import type { AuthRequest } from "../../middleware/auth.middleware.js";
+import { z } from "zod";
+import { getDeviceStatus, getAttendanceLogs, setRequestUserInfo } from "./biometric.service.js";
+import { prisma } from "../../config/prisma.js";
 
-const biometricService = new BiometricService();
+const attendanceQuerySchema = z.object({
+  empleadoId: z.coerce.number().int().positive().optional(),
+  desde: z.coerce.date().optional(),
+  hasta: z.coerce.date().optional(),
+  tipo: z.string().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().min(1).max(500).default(50),
+});
 
-export class BiometricController {
-  async getRequest(req: Request, res: Response) {
+export const biometricController = {
+  // GET /api/biometric/status
+  deviceStatus(_req: AuthRequest, res: Response) {
+    const data = getDeviceStatus();
+    res.json({ success: true, data });
+  },
+
+  // GET /api/biometric/attendance
+  async getAttendance(req: AuthRequest, res: Response) {
     try {
-      // El dispositivo utiliza este endpoint para saber si hay datos que enviar
-      res.set("Content-Type", "text/plain");
-      res.send("OK");
-    } catch (error) {
-      res.status(500).send("Error");
-    }
-  }
-
-  async getCData(req: Request, res: Response) {
-    try {
-      const { commands, ids } = await biometricService.getPendingCommands();
-      if (commands.length > 0) {
-        await biometricService.markCommandsAsSynced(ids);
+      const parsed = attendanceQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Parámetros inválidos", details: parsed.error.flatten() });
       }
-
-      res.set("Content-Type", "text/plain");
-      res.send(commands);
+      const result = await getAttendanceLogs(parsed.data);
+      res.json({ success: true, data: result.logs, meta: result.meta });
     } catch (error) {
-      res.status(500).send("Error");
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
-  }
+  },
 
-  async postCData(req: Request, res: Response) {
+  // GET /api/biometric/device-users — employees confirmed synced to device
+  async deviceUsers(_req: AuthRequest, res: Response) {
     try {
-      const body = req.body; // Asumiendo que es string
-      await biometricService.parseAttendance(body);
-      res.set("Content-Type", "text/plain");
-      res.send("OK");
+      const employees = await prisma.employee.findMany({
+        where: { syncStatus: "SYNCED", activo: true },
+        select: { id: true, nombre: true, deviceUserId: true, cargo: true },
+        orderBy: { nombre: "asc" },
+      });
+      res.json({
+        success: true,
+        data: employees.map((e) => ({
+          employeeId: e.id,
+          deviceUserId: e.deviceUserId,
+          nombre: e.nombre,
+          cargo: (e as Record<string, unknown>)["cargo"] as string | null ?? null,
+        })),
+      });
     } catch (error) {
-      res.status(500).send("Error");
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
-  }
+  },
 
-  async getLogs(req: Request, res: Response) {
+  // POST /api/biometric/request-device-users — asks device to send its user list on next heartbeat
+  requestDeviceUsers(_req: AuthRequest, res: Response) {
+    setRequestUserInfo();
+    res.json({
+      success: true,
+      data: {
+        message: "El dispositivo enviará su lista de usuarios en el próximo heartbeat (~30s). Revisa GET /api/employees para ver los importados.",
+      },
+    });
+  },
+
+  // GET /api/biometric/pending-commands — see queued ADMS commands
+  async pendingCommands(_req: AuthRequest, res: Response) {
     try {
-      const logs = await biometricService.getAllLogs();
-      res.json(logs);
+      const pending = await prisma.syncQueue.findMany({
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" },
+      });
+      res.json({ success: true, data: pending });
     } catch (error) {
-      res.status(500).json({ error: "Error fetching logs" });
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
-  }
-}
+  },
+};

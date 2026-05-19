@@ -1,12 +1,22 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { parseCatalogoExcel } from "./inventarioImport.parser.js";
+import { HttpError } from "../../errors/http.error.js";
+import { productoService } from "../producto/producto.service.js";
 import type {
   CatalogoImportResult,
   SaldoMensualInput,
   SaldoMensualResult,
+  SaldoMensualItemInput,
+  SaldoMensualItemResult,
+  UpdateSaldoMensualItemInput,
   StockInicialItem,
   StockInicialResult,
+  StockInicialItemInput,
+  StockInicialItemResult,
+  ProductoAutocompleteItem,
+  ReiniciarStockResult,
+  SincronizarStockResult,
 } from "./inventarioImport.types.js";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -34,7 +44,55 @@ async function findOrCreateCategoria(
   return { id: created.id, created: true };
 }
 
+async function resolveProductoId(
+  productoId?: number,
+  productoCodigo?: string,
+): Promise<number> {
+  if (productoId) {
+    const p = await prisma.producto.findUnique({ where: { id: productoId }, select: { id: true } });
+    if (!p) throw new HttpError(`Producto con id ${productoId} no encontrado`, 404);
+    return p.id;
+  }
+  if (productoCodigo) {
+    const p = await prisma.producto.findUnique({ where: { codigo: productoCodigo }, select: { id: true } });
+    if (!p) throw new HttpError(`Producto con código "${productoCodigo}" no encontrado`, 404);
+    return p.id;
+  }
+  throw new HttpError("Se requiere productoId o productoCodigo", 400);
+}
+
+function formatSaldoMensual(r: {
+  id: string;
+  productoId: number;
+  anio: number;
+  mes: number;
+  saldoInicial: unknown;
+  ingresoQty: unknown;
+  salidaQty: unknown;
+  saldoFinal: unknown;
+  precioUnit: unknown;
+  totalBs: unknown;
+  producto: { codigo: string; nombre: string };
+}): Omit<SaldoMensualItemResult, "accion"> {
+  return {
+    id: r.id,
+    productoId: r.productoId,
+    productoCodigo: r.producto.codigo,
+    productoNombre: r.producto.nombre,
+    anio: r.anio,
+    mes: r.mes,
+    saldoInicial: Number(r.saldoInicial),
+    ingresoQty: Number(r.ingresoQty),
+    salidaQty: Number(r.salidaQty),
+    saldoFinal: Number(r.saldoFinal),
+    precioUnit: Number(r.precioUnit),
+    totalBs: Number(r.totalBs),
+  };
+}
+
 // ─── Importar catálogo desde Excel ───────────────────────────────────────────
+// Solo crea/actualiza Producto y categorías. Stock NO se toca.
+// Si se pasan anio+mes, también graba SaldoMensual para ese período.
 
 export async function importarCatalogo(
   buffer: Buffer,
@@ -47,7 +105,6 @@ export async function importarCatalogo(
     subGruposCreados: 0,
     productosCreados: 0,
     productosActualizados: 0,
-    stockActualizados: 0,
     saldosMensualesCreados: 0,
     saldosMensualesActualizados: 0,
     warnings: [],
@@ -67,7 +124,7 @@ export async function importarCatalogo(
 
     const grupoId = grupoIndex.get(row.groupCode)!;
 
-    // 2. Sub-grupo (solo si el Excel tiene nombre real para él)
+    // 2. Sub-grupo
     let categoriaId: number;
     if (row.subGroupName) {
       if (!subGrupoIndex.has(row.subGroupCode)) {
@@ -77,7 +134,6 @@ export async function importarCatalogo(
       }
       categoriaId = subGrupoIndex.get(row.subGroupCode)!;
     } else {
-      // Sin sub-grupo → el producto va directo al grupo
       categoriaId = grupoId;
     }
 
@@ -111,19 +167,7 @@ export async function importarCatalogo(
       productoId = nuevo.id;
     }
 
-    // 4. Upsert Stock (siempre que el Excel traiga cantidad o precio)
-    if (row.cantidad !== undefined || row.precioUnit !== undefined) {
-      const cantidad = row.cantidad ?? 0;
-      const precio = row.precioUnit ?? 0;
-      await prisma.stock.upsert({
-        where: { productoId },
-        update: { cantidad, precioUnit: precio, precioProm: precio },
-        create: { productoId, cantidad, precioUnit: precio, precioProm: precio, cantidadReservada: 0 },
-      });
-      result.stockActualizados++;
-    }
-
-    // 5. Upsert SaldoMensual si se proporcionó anio+mes
+    // 4. Upsert SaldoMensual si se proporcionó anio+mes
     if (cargarSaldo && row.cantidad !== undefined) {
       const { anio, mes } = opciones!;
       const precio = row.precioUnit ?? 0;
@@ -137,12 +181,29 @@ export async function importarCatalogo(
       if (saldoExistente) {
         await prisma.saldoMensual.update({
           where: { id: saldoExistente.id },
-          data: { saldoInicial: row.cantidad, ingresoQty: 0, salidaQty: 0, saldoFinal: row.cantidad, precioUnit: precio, totalBs },
+          data: {
+            saldoInicial: row.cantidad,
+            ingresoQty: 0,
+            salidaQty: 0,
+            saldoFinal: row.cantidad,
+            precioUnit: precio,
+            totalBs,
+          },
         });
         result.saldosMensualesActualizados++;
       } else {
         await prisma.saldoMensual.create({
-          data: { productoId, anio: anio!, mes: mes!, saldoInicial: row.cantidad, ingresoQty: 0, salidaQty: 0, saldoFinal: row.cantidad, precioUnit: precio, totalBs },
+          data: {
+            productoId,
+            anio: anio!,
+            mes: mes!,
+            saldoInicial: row.cantidad,
+            ingresoQty: 0,
+            salidaQty: 0,
+            saldoFinal: row.cantidad,
+            precioUnit: precio,
+            totalBs,
+          },
         });
         result.saldosMensualesCreados++;
       }
@@ -158,6 +219,7 @@ export async function importarCatalogo(
 }
 
 // ─── Carga de stock inicial ───────────────────────────────────────────────────
+// Primer registro de stock actual. Crea Movimiento tipo ENTRADA / SALDO_INICIAL.
 
 export async function cargarStockInicial(
   items: StockInicialItem[],
@@ -176,7 +238,6 @@ export async function cargarStockInicial(
       continue;
     }
 
-    // Actualizar o crear Stock
     if (producto.stock) {
       await prisma.stock.update({
         where: { productoId: producto.id },
@@ -199,7 +260,6 @@ export async function cargarStockInicial(
       });
     }
 
-    // Registrar movimiento de apertura para trazabilidad
     await prisma.movimiento.create({
       data: {
         operationId: `SALDO_INICIAL_${producto.id}_${Date.now()}`,
@@ -224,7 +284,7 @@ export async function cargarStockInicial(
   return result;
 }
 
-// ─── Carga de saldo mensual histórico ────────────────────────────────────────
+// ─── Carga de saldo mensual histórico – batch ─────────────────────────────────
 
 export async function cargarSaldoMensual(
   input: SaldoMensualInput,
@@ -290,11 +350,178 @@ export async function cargarSaldoMensual(
     },
   });
 
-  logger.info({ anio, mes, ...result }, "Saldo mensual cargado");
+  logger.info({ anio, mes, ...result }, "Saldo mensual cargado (batch)");
   return result;
 }
 
-// ─── Consultar saldos mensuales cargados ────────────────────────────────────
+// ─── Saldo mensual – item individual (upsert) ────────────────────────────────
+
+export async function upsertSaldoMensualItem(
+  input: SaldoMensualItemInput,
+  userId: number,
+): Promise<SaldoMensualItemResult> {
+  const productoId = await resolveProductoId(input.productoId, input.productoCodigo);
+  const totalBs = input.saldoFinal * input.precioUnit;
+
+  const existing = await prisma.saldoMensual.findUnique({
+    where: { productoId_anio_mes: { productoId, anio: input.anio, mes: input.mes } },
+    select: { id: true },
+  });
+
+  let record;
+  let accion: "creado" | "actualizado";
+
+  if (existing) {
+    record = await prisma.saldoMensual.update({
+      where: { id: existing.id },
+      data: {
+        saldoInicial: input.saldoInicial,
+        ingresoQty: input.ingresoQty,
+        salidaQty: input.salidaQty,
+        saldoFinal: input.saldoFinal,
+        precioUnit: input.precioUnit,
+        totalBs,
+      },
+      include: { producto: { select: { codigo: true, nombre: true } } },
+    });
+    accion = "actualizado";
+  } else {
+    record = await prisma.saldoMensual.create({
+      data: {
+        productoId,
+        anio: input.anio,
+        mes: input.mes,
+        saldoInicial: input.saldoInicial,
+        ingresoQty: input.ingresoQty,
+        salidaQty: input.salidaQty,
+        saldoFinal: input.saldoFinal,
+        precioUnit: input.precioUnit,
+        totalBs,
+      },
+      include: { producto: { select: { codigo: true, nombre: true } } },
+    });
+    accion = "creado";
+  }
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "UPSERT_SALDO_MENSUAL_ITEM",
+      data: { productoId, anio: input.anio, mes: input.mes, accion },
+    },
+  });
+
+  return { ...formatSaldoMensual(record), accion };
+}
+
+// ─── Saldo mensual – obtener por id ──────────────────────────────────────────
+
+export async function getSaldoMensualById(id: string) {
+  const record = await prisma.saldoMensual.findUnique({
+    where: { id },
+    include: {
+      producto: {
+        include: { categoria: { include: { parent: true } } },
+      },
+    },
+  });
+
+  if (!record) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+
+  return {
+    id: record.id,
+    productoId: record.productoId,
+    productoCodigo: record.producto.codigo,
+    productoNombre: record.producto.nombre,
+    unidad: record.producto.unidad,
+    grupo: record.producto.categoria.parent?.nombre ?? record.producto.categoria.nombre,
+    subGrupo: record.producto.categoria.parent ? record.producto.categoria.nombre : null,
+    anio: record.anio,
+    mes: record.mes,
+    saldoInicial: Number(record.saldoInicial),
+    ingresoQty: Number(record.ingresoQty),
+    salidaQty: Number(record.salidaQty),
+    saldoFinal: Number(record.saldoFinal),
+    precioUnit: Number(record.precioUnit),
+    totalBs: Number(record.totalBs),
+  };
+}
+
+// ─── Saldo mensual – actualizar por id ───────────────────────────────────────
+
+export async function updateSaldoMensualItem(
+  id: string,
+  data: UpdateSaldoMensualItemInput,
+  userId: number,
+): Promise<SaldoMensualItemResult> {
+  const existing = await prisma.saldoMensual.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      saldoInicial: true,
+      ingresoQty: true,
+      salidaQty: true,
+      saldoFinal: true,
+      precioUnit: true,
+    },
+  });
+  if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+
+  const saldoFinal = data.saldoFinal ?? Number(existing.saldoFinal);
+  const precioUnit = data.precioUnit ?? Number(existing.precioUnit);
+  const totalBs = saldoFinal * precioUnit;
+
+  const record = await prisma.saldoMensual.update({
+    where: { id },
+    data: {
+      ...(data.saldoInicial !== undefined && { saldoInicial: data.saldoInicial }),
+      ...(data.ingresoQty !== undefined && { ingresoQty: data.ingresoQty }),
+      ...(data.salidaQty !== undefined && { salidaQty: data.salidaQty }),
+      ...(data.saldoFinal !== undefined && { saldoFinal: data.saldoFinal }),
+      ...(data.precioUnit !== undefined && { precioUnit: data.precioUnit }),
+      totalBs,
+    },
+    include: { producto: { select: { codigo: true, nombre: true } } },
+  });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "UPDATE_SALDO_MENSUAL_ITEM",
+      data: JSON.parse(JSON.stringify({ id, cambios: data })),
+    },
+  });
+
+  return { ...formatSaldoMensual(record), accion: "actualizado" };
+}
+
+// ─── Saldo mensual – eliminar por id ─────────────────────────────────────────
+
+export async function deleteSaldoMensualItem(
+  id: string,
+  userId: number,
+): Promise<{ id: string }> {
+  const existing = await prisma.saldoMensual.findUnique({
+    where: { id },
+    select: { id: true, productoId: true, anio: true, mes: true },
+  });
+  if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+
+  await prisma.saldoMensual.delete({ where: { id } });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "DELETE_SALDO_MENSUAL_ITEM",
+      data: { id, productoId: existing.productoId, anio: existing.anio, mes: existing.mes },
+    },
+  });
+
+  logger.info({ id }, "Saldo mensual eliminado");
+  return { id };
+}
+
+// ─── Consultar saldos mensuales cargados ─────────────────────────────────────
 
 export async function getSaldosMensualesCargados(anio: number, mes: number) {
   const registros = await prisma.saldoMensual.findMany({
@@ -325,4 +552,237 @@ export async function getSaldosMensualesCargados(anio: number, mes: number) {
     precioUnit: Number(r.precioUnit),
     totalBs: Number(r.totalBs),
   }));
+}
+
+// ─── Autocomplete de productos ────────────────────────────────────────────────
+// Busca por nombre O código (case-insensitive). Devuelve lista ligera para formularios.
+
+export async function buscarProductosAutocomplete(
+  q: string | undefined,
+  limit: number,
+): Promise<ProductoAutocompleteItem[]> {
+  const where = q
+    ? {
+        OR: [
+          { nombre: { contains: q, mode: "insensitive" as const } },
+          { codigo: { contains: q, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+
+  const productos = await prisma.producto.findMany({
+    where,
+    take: limit,
+    orderBy: { nombre: "asc" },
+    select: {
+      id: true,
+      codigo: true,
+      nombre: true,
+      unidad: true,
+      categoria: { select: { nombre: true, parent: { select: { nombre: true } } } },
+      stock: { select: { cantidad: true, precioUnit: true } },
+    },
+  });
+
+  return productos.map((p) => ({
+    id: p.id,
+    codigo: p.codigo,
+    nombre: p.nombre,
+    unidad: p.unidad,
+    grupo: p.categoria.parent?.nombre ?? p.categoria.nombre,
+    subGrupo: p.categoria.parent ? p.categoria.nombre : null,
+    stockActual: Number(p.stock?.cantidad ?? 0),
+    precioUnit: Number(p.stock?.precioUnit ?? 0),
+  }));
+}
+
+// ─── Stock inicial – item individual con creación opcional ────────────────────
+// Si se envía productoId → usa ese producto.
+// Si se envía crearProducto → crea el producto y luego le asigna el stock.
+
+export async function cargarStockInicialItem(
+  item: StockInicialItemInput,
+  userId: number,
+): Promise<StockInicialItemResult> {
+  let productoId: number;
+  let productoCreado = false;
+
+  if (item.productoId) {
+    const p = await prisma.producto.findUnique({
+      where: { id: item.productoId },
+      select: { id: true },
+    });
+    if (!p) throw new HttpError(`Producto con id ${item.productoId} no encontrado`, 404);
+    productoId = p.id;
+  } else {
+    // crearProducto is guaranteed by schema validation
+    const datos = item.crearProducto!;
+    const nuevo = await productoService.create(
+      {
+        codigo: datos.codigo,
+        nombre: datos.nombre,
+        unidad: datos.unidad,
+        grupoId: datos.grupoId,
+        subgrupoId: datos.subgrupoId,
+        centroCostoId: datos.centroCostoId,
+        funcionGastoId: datos.funcionGastoId,
+        esEpp: datos.esEpp,
+      },
+      userId,
+    );
+    productoId = nuevo!.id;
+    productoCreado = true;
+  }
+
+  const stockExistente = await prisma.stock.findUnique({
+    where: { productoId },
+    select: { id: true },
+  });
+
+  let stockAccion: "creado" | "actualizado";
+
+  if (stockExistente) {
+    await prisma.stock.update({
+      where: { productoId },
+      data: {
+        cantidad: item.cantidad,
+        precioUnit: item.precioUnit,
+        precioProm: item.precioUnit,
+        cantidadReservada: 0,
+      },
+    });
+    stockAccion = "actualizado";
+  } else {
+    await prisma.stock.create({
+      data: {
+        productoId,
+        cantidad: item.cantidad,
+        precioUnit: item.precioUnit,
+        precioProm: item.precioUnit,
+        cantidadReservada: 0,
+      },
+    });
+    stockAccion = "creado";
+  }
+
+  await prisma.movimiento.create({
+    data: {
+      operationId: `SALDO_INICIAL_${productoId}_${Date.now()}`,
+      productoId,
+      tipo: "ENTRADA",
+      cantidad: item.cantidad,
+      precioUnit: item.precioUnit,
+      entradaBs: item.cantidad * item.precioUnit,
+      salidaBs: 0,
+      saldoBs: item.cantidad * item.precioUnit,
+      stockAntes: 0,
+      stockDespues: item.cantidad,
+      usuarioId: userId,
+      referencia: "SALDO_INICIAL",
+    },
+  });
+
+  const producto = await prisma.producto.findUnique({
+    where: { id: productoId },
+    select: { codigo: true, nombre: true },
+  });
+
+  logger.info({ productoId, productoCreado, stockAccion }, "Stock inicial item cargado");
+
+  return {
+    productoId,
+    productoCodigo: producto!.codigo,
+    productoNombre: producto!.nombre,
+    cantidad: item.cantidad,
+    precioUnit: item.precioUnit,
+    stockAccion,
+    productoCreado,
+  };
+}
+
+// ─── Reiniciar stock ──────────────────────────────────────────────────────────
+// Elimina todos los registros de Stock. Usar antes de cargarStockInicial.
+
+export async function reiniciarStock(userId: number): Promise<ReiniciarStockResult> {
+  const { count } = await prisma.stock.deleteMany({});
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "REINICIAR_STOCK",
+      data: { eliminados: count },
+    },
+  });
+
+  logger.warn({ eliminados: count, usuarioId: userId }, "Stock reiniciado");
+  return { eliminados: count };
+}
+
+// ─── Sincronizar stock desde SaldoMensual ────────────────────────────────────
+// Calcula Stock.cantidad y Stock.precioUnit a partir del SaldoMensual más
+// reciente de cada producto (o del período específico si se indica).
+
+export async function sincronizarStockDesdeSaldoMensual(
+  opciones: { anio?: number | undefined; mes?: number | undefined },
+  userId: number,
+): Promise<SincronizarStockResult> {
+  const result: SincronizarStockResult = { actualizados: 0, creados: 0, sinSaldo: 0 };
+
+  const productos = await prisma.producto.findMany({
+    select: { id: true },
+  });
+
+  for (const { id: productoId } of productos) {
+    let saldo;
+
+    if (opciones.anio && opciones.mes) {
+      saldo = await prisma.saldoMensual.findUnique({
+        where: { productoId_anio_mes: { productoId, anio: opciones.anio, mes: opciones.mes } },
+        select: { saldoFinal: true, precioUnit: true },
+      });
+    } else {
+      saldo = await prisma.saldoMensual.findFirst({
+        where: { productoId },
+        orderBy: [{ anio: "desc" }, { mes: "desc" }],
+        select: { saldoFinal: true, precioUnit: true },
+      });
+    }
+
+    if (!saldo) {
+      result.sinSaldo++;
+      continue;
+    }
+
+    const cantidad = Number(saldo.saldoFinal);
+    const precioUnit = Number(saldo.precioUnit);
+
+    const stockExistente = await prisma.stock.findUnique({
+      where: { productoId },
+      select: { id: true },
+    });
+
+    if (stockExistente) {
+      await prisma.stock.update({
+        where: { productoId },
+        data: { cantidad, precioUnit, precioProm: precioUnit },
+      });
+      result.actualizados++;
+    } else {
+      await prisma.stock.create({
+        data: { productoId, cantidad, precioUnit, precioProm: precioUnit, cantidadReservada: 0 },
+      });
+      result.creados++;
+    }
+  }
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "SINCRONIZAR_STOCK_DESDE_SALDO",
+      data: { opciones, ...result },
+    },
+  });
+
+  logger.info({ opciones, ...result }, "Stock sincronizado desde SaldoMensual");
+  return result;
 }

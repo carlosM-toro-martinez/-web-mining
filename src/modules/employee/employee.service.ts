@@ -1,106 +1,206 @@
-import { PrismaClient, SyncAction } from "@prisma/client";
+import { prisma } from "../../config/prisma.js";
+import { logger } from "../../config/logger.js";
+import { HttpError } from "../../errors/http.error.js";
 import type {
   CreateEmployeeInput,
   UpdateEmployeeInput,
   EmployeeResponse,
+  EmployeeQuery,
 } from "./employee.types.js";
 
-const prisma = new PrismaClient();
+const ZK_IP = process.env.ZK_IP ?? "";
 
-export class EmployeeService {
-  async createEmployee(data: CreateEmployeeInput): Promise<EmployeeResponse> {
-    const employee = await prisma.employee.create({
-      data: {
-        nombre: data.nombre,
-        documento: data.documento ?? null,
-        deviceUserId: data.deviceUserId,
-      },
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function toResponse(emp: {
+  id: number;
+  nombre: string;
+  documento: string | null;
+  cargo?: string | null | undefined;
+  deviceUserId: string;
+  activo: boolean;
+  syncStatus: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): EmployeeResponse {
+  return {
+    id: emp.id,
+    nombre: emp.nombre,
+    documento: emp.documento,
+    cargo: emp.cargo ?? null,
+    deviceUserId: emp.deviceUserId,
+    activo: emp.activo,
+    syncStatus: emp.syncStatus as EmployeeResponse["syncStatus"],
+    createdAt: emp.createdAt,
+    updatedAt: emp.updatedAt,
+  };
+}
+
+async function nextDeviceUserId(): Promise<string> {
+  const last = await prisma.employee.findFirst({
+    orderBy: { id: "desc" },
+    select: { id: true },
+  });
+  return String((last?.id ?? 0) + 1);
+}
+
+async function queueCommand(
+  action: "CREATE" | "UPDATE" | "DELETE",
+  deviceUserId: string,
+  nombre?: string,
+): Promise<void> {
+  await prisma.syncQueue.create({
+    data: {
+      action,
+      payload: action === "DELETE" ? { pin: deviceUserId } : { pin: deviceUserId, name: nombre ?? "" },
+      status: "PENDING",
+      deviceIp: ZK_IP,
+    },
+  });
+}
+
+// ─── CRUD ─────────────────────────────────────────────────────────────────────
+
+export async function createEmployee(data: CreateEmployeeInput): Promise<EmployeeResponse> {
+  const deviceUserId = data.deviceUserId ?? (await nextDeviceUserId());
+
+  const exists = await prisma.employee.findUnique({
+    where: { deviceUserId },
+    select: { id: true },
+  });
+  if (exists) throw new HttpError(`Ya existe un empleado con deviceUserId "${deviceUserId}"`, 409);
+
+  if (data.documento) {
+    const docExists = await prisma.employee.findUnique({
+      where: { documento: data.documento },
+      select: { id: true },
     });
+    if (docExists) throw new HttpError(`Ya existe un empleado con documento "${data.documento}"`, 409);
+  }
 
-    // Insertar en SyncQueue
-    await prisma.syncQueue.create({
-      data: {
-        action: SyncAction.CREATE,
-        payload: {
-          deviceUserId: data.deviceUserId,
-          nombre: data.nombre,
-        },
-        deviceIp: "192.168.137.201", // IP del dispositivo biométrico
-      },
+  const employee = await prisma.employee.create({
+    data: {
+      nombre: data.nombre,
+      documento: data.documento ?? null,
+      cargo: data.cargo ?? null,
+      deviceUserId,
+      syncStatus: "PENDING",
+    },
+  });
+
+  // Queue ADMS command — device will pick it up on next poll
+  await queueCommand("CREATE", employee.deviceUserId, employee.nombre);
+  logger.info({ id: employee.id, deviceUserId }, "Empleado creado, comando ADMS encolado");
+
+  return toResponse(employee);
+}
+
+export async function getAllEmployees(query: EmployeeQuery): Promise<{
+  empleados: EmployeeResponse[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}> {
+  const page = query.page ?? 1;
+  const limit = query.limit ?? 50;
+  const skip = (page - 1) * limit;
+
+  const where: Record<string, unknown> = {};
+  if (query.search) {
+    where["OR"] = [
+      { nombre: { contains: query.search, mode: "insensitive" } },
+      { documento: { contains: query.search, mode: "insensitive" } },
+      { cargo: { contains: query.search, mode: "insensitive" } },
+    ];
+  }
+  if (query.activo !== undefined) {
+    where["activo"] = query.activo;
+  }
+
+  const [employees, total] = await Promise.all([
+    prisma.employee.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { nombre: "asc" },
+    }),
+    prisma.employee.count({ where }),
+  ]);
+
+  return {
+    empleados: employees.map(toResponse),
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+export async function getEmployeeById(id: number): Promise<EmployeeResponse> {
+  const employee = await prisma.employee.findUnique({ where: { id } });
+  if (!employee) throw new HttpError("Empleado no encontrado", 404);
+  return toResponse(employee);
+}
+
+export async function updateEmployee(
+  id: number,
+  data: UpdateEmployeeInput,
+): Promise<EmployeeResponse> {
+  const existing = await prisma.employee.findUnique({ where: { id }, select: { id: true } });
+  if (!existing) throw new HttpError("Empleado no encontrado", 404);
+
+  if (data.documento) {
+    const docExists = await prisma.employee.findFirst({
+      where: { documento: data.documento, id: { not: id } },
+      select: { id: true },
     });
-
-    return {
-      id: employee.id,
-      nombre: employee.nombre,
-      documento: employee.documento,
-      deviceUserId: employee.deviceUserId,
-      activo: employee.activo,
-      syncStatus: employee.syncStatus,
-      createdAt: employee.createdAt,
-      updatedAt: employee.updatedAt,
-    };
+    if (docExists) throw new HttpError(`Ya existe otro empleado con documento "${data.documento}"`, 409);
   }
 
-  async getAllEmployees(): Promise<EmployeeResponse[]> {
-    const employees = await prisma.employee.findMany();
-    return employees.map((emp) => ({
-      id: emp.id,
-      nombre: emp.nombre,
-      documento: emp.documento,
-      deviceUserId: emp.deviceUserId,
-      activo: emp.activo,
-      syncStatus: emp.syncStatus,
-      createdAt: emp.createdAt,
-      updatedAt: emp.updatedAt,
-    }));
+  const employee = await prisma.employee.update({
+    where: { id },
+    data: {
+      ...(data.nombre !== undefined && { nombre: data.nombre }),
+      ...(data.documento !== undefined && { documento: data.documento }),
+      ...(data.cargo !== undefined && { cargo: data.cargo }),
+      ...(data.activo !== undefined && { activo: data.activo }),
+    },
+  });
+
+  // If name changed, queue UPDATE command so the device reflects the new name
+  if (data.nombre) {
+    await queueCommand("UPDATE", employee.deviceUserId, employee.nombre);
   }
 
-  async getEmployeeById(id: number): Promise<EmployeeResponse | null> {
-    const employee = await prisma.employee.findUnique({
-      where: { id },
-    });
-    if (!employee) return null;
-    return {
-      id: employee.id,
-      nombre: employee.nombre,
-      documento: employee.documento,
-      deviceUserId: employee.deviceUserId,
-      activo: employee.activo,
-      syncStatus: employee.syncStatus,
-      createdAt: employee.createdAt,
-      updatedAt: employee.updatedAt,
-    };
+  logger.info({ id }, "Empleado actualizado");
+  return toResponse(employee);
+}
+
+export async function deleteEmployee(id: number): Promise<void> {
+  const employee = await prisma.employee.findUnique({
+    where: { id },
+    select: { id: true, deviceUserId: true },
+  });
+  if (!employee) throw new HttpError("Empleado no encontrado", 404);
+
+  // Queue DELETE command before removing from DB
+  await queueCommand("DELETE", employee.deviceUserId);
+
+  // Preserve attendance history by unlinking the employee reference
+  await prisma.asistenciaLog.updateMany({
+    where: { employeeId: id },
+    data: { employeeId: null },
+  });
+
+  await prisma.employee.delete({ where: { id } });
+  logger.info({ id }, "Empleado eliminado, comando ADMS encolado");
+}
+
+export async function syncPendingEmployees(): Promise<{ sincronizados: number; pendientes: number }> {
+  const pending = await prisma.employee.findMany({
+    where: { syncStatus: "PENDING", activo: true },
+    select: { id: true, nombre: true, deviceUserId: true },
+  });
+
+  for (const emp of pending) {
+    await queueCommand("CREATE", emp.deviceUserId, emp.nombre);
   }
 
-  async updateEmployee(id: number, data: UpdateEmployeeInput): Promise<EmployeeResponse | null> {
-    try {
-      const employee = await prisma.employee.update({
-        where: { id },
-        data,
-      });
-      return {
-        id: employee.id,
-        nombre: employee.nombre,
-        documento: employee.documento,
-        deviceUserId: employee.deviceUserId,
-        activo: employee.activo,
-        syncStatus: employee.syncStatus,
-        createdAt: employee.createdAt,
-        updatedAt: employee.updatedAt,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  async deleteEmployee(id: number): Promise<boolean> {
-    try {
-      await prisma.employee.delete({
-        where: { id },
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  logger.info({ encolados: pending.length }, "Re-encolados empleados pendientes para ADMS");
+  return { sincronizados: pending.length, pendientes: pending.length };
 }
