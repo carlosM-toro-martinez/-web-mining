@@ -456,6 +456,107 @@ export const valesService = {
     return { usuario, productos };
   },
 
+  async anularVale(id: string, motivo: string, userId: number) {
+    const vale = await prisma.vale.findUnique({
+      where: { id },
+      include: {
+        items: { include: { producto: { include: { stock: true } } } },
+        anulacion: true,
+      },
+    });
+
+    if (!vale) throw new HttpError("Vale no encontrado", 404);
+    if (vale.estado === "ANULADO") throw new HttpError("El vale ya está anulado", 409);
+    if (vale.estado === "RECHAZADO") throw new HttpError("No se puede anular un vale rechazado", 409);
+    if (vale.anulacion) throw new HttpError("El vale ya tiene una anulación registrada", 409);
+
+    // Crear contra-asientos para ítems que tuvieron entrega real
+    let contraAsientos = 0;
+    for (const item of vale.items) {
+      const entregado = new Prisma.Decimal(item.cantidadEntregada ?? 0);
+      if (entregado.lte(0)) continue;
+
+      const stock = item.producto.stock;
+      if (!stock) continue;
+
+      // Contra-asiento ENTRADA devuelve el stock físico
+      await prisma.movimiento.create({
+        data: {
+          operationId: randomUUID(),
+          productoId: item.productoId,
+          tipo: "ENTRADA",
+          cantidad: entregado,
+          precioUnit: stock.precioUnit,
+          entradaBs: new Prisma.Decimal(stock.precioUnit).mul(entregado),
+          salidaBs: 0,
+          saldoBs: new Prisma.Decimal(stock.cantidad).add(entregado).mul(stock.precioUnit),
+          stockAntes: stock.cantidad,
+          stockDespues: new Prisma.Decimal(stock.cantidad).add(entregado),
+          usuarioId: userId,
+          referencia: "ANULACION_VALE",
+          referenciaId: id,
+        },
+      });
+
+      await prisma.stock.update({
+        where: { productoId: item.productoId },
+        data: { cantidad: { increment: entregado } },
+      });
+
+      contraAsientos++;
+    }
+
+    // Si estaba APROBADO (sin entregar), liberar reservas
+    if (vale.estado === "APROBADO") {
+      for (const item of vale.items) {
+        const stock = item.producto.stock;
+        if (!stock) continue;
+        await prisma.stock.update({
+          where: { productoId: item.productoId },
+          data: {
+            cantidadReservada: {
+              decrement: Prisma.Decimal.min(
+                new Prisma.Decimal(item.cantidadSolicitada),
+                stock.cantidadReservada,
+              ),
+            },
+          },
+        });
+      }
+    }
+
+    const [valeAnulado, anulacion] = await prisma.$transaction([
+      prisma.vale.update({ where: { id }, data: { estado: "ANULADO" }, include: valeIncludeCompleto }),
+      prisma.anulacionVale.create({
+        data: { valeId: id, usuarioId: userId, motivo },
+        include: { usuario: { select: { id: true, nombre: true, email: true } } },
+      }),
+    ]);
+
+    await prisma.log.create({
+      data: { usuarioId: userId, accion: "ANULAR_VALE", data: { valeId: id, motivo, contraAsientos } },
+    });
+
+    logger.info({ userId, valeId: id, contraAsientos }, "Vale anulado");
+    return { vale: valeAnulado, anulacion, contraAsientos };
+  },
+
+  async getAnulaciones() {
+    return prisma.anulacionVale.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        usuario: { select: { id: true, nombre: true, email: true } },
+        vale: {
+          select: {
+            id: true,
+            createdAt: true,
+            solicitante: { select: { id: true, nombre: true, email: true } },
+          },
+        },
+      },
+    });
+  },
+
   async rechazarVale(id: string, userId: number) {
     const vale = await prisma.vale.findUnique({
       where: { id },

@@ -19,7 +19,7 @@ export async function getDeviceStatus(): Promise<{ conectado: boolean; sn?: stri
   if (!state) return { conectado: false };
   const secAgo = (Date.now() - state.lastSeen.getTime()) / 1000;
   return {
-    conectado: secAgo < 120,
+    conectado: secAgo < 180,
     sn: state.sn,
     lastSeen: state.lastSeen,
   };

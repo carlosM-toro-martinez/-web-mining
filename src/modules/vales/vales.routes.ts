@@ -41,6 +41,13 @@ router.use(authenticate);
 // Crear vale (cualquier usuario autenticado)
 router.post("/", validate(createValeSchema), valesController.createVale);
 
+// Auditoría de anulaciones
+router.get(
+  "/anulaciones",
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  valesController.getAnulaciones,
+);
+
 // Resumen de todos los solicitantes con conteo de vales
 router.get(
   "/resumen-solicitantes",
@@ -92,6 +99,14 @@ router.patch(
   authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   validateParams(idSchema),
   valesController.rechazarVale,
+);
+
+// Anular vale
+router.patch(
+  "/:id/anular",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  valesController.anularVale,
 );
 
 export default router;

@@ -126,4 +126,21 @@ router.delete(
   inventarioImportController.deleteSaldoMensualItem,
 );
 
+// ─── Recalcular stock histórico ───────────────────────────────────────────────
+// POST /api/inventario-import/recalcular-stock
+// Body: { productoId, stockInicial, eliminarValeIds?: string[] }
+router.post(
+  "/recalcular-stock",
+  authorize("ADMIN"),
+  inventarioImportController.recalcularStock,
+);
+
+// GET /api/inventario-import/movimientos/:productoId
+// Ver todos los movimientos de un producto (para identificar IDs a eliminar)
+router.get(
+  "/movimientos/:productoId",
+  authorize("ADMIN"),
+  inventarioImportController.getMovimientosProducto,
+);
+
 export default router;

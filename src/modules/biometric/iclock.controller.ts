@@ -45,7 +45,8 @@ export const iclockController = {
   // so this is the only reliable delivery channel.
   async cdata(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
-    if (sn) await updateDeviceHeartbeat(sn);
+    const isRealDevice = sn && sn !== "TEST" && sn.length > 4;
+    if (isRealDevice) await updateDeviceHeartbeat(sn);
 
     const wantsUserInfo = consumeRequestUserInfo();
     const cmd = await getNextCommand();
@@ -79,7 +80,8 @@ export const iclockController = {
   async cdataPost(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const table = String(req.query["table"] ?? "");
-    if (sn) await updateDeviceHeartbeat(sn);
+    const isRealDevice = sn && sn !== "TEST" && sn.length > 4;
+    if (isRealDevice) await updateDeviceHeartbeat(sn);
 
     if (table === "ATTLOG") {
       const body = typeof req.body === "string" ? req.body : "";
@@ -101,7 +103,7 @@ export const iclockController = {
   // GET /iclock/getrequest — fallback for devices that do call this endpoint
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
-    if (sn) await updateDeviceHeartbeat(sn);
+    if (sn && sn !== "TEST" && sn.length > 4) await updateDeviceHeartbeat(sn);
 
     const cmd = await getNextCommand();
     res.setHeader("Content-Type", "text/plain");

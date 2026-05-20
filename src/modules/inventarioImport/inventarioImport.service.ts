@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { parseCatalogoExcel } from "./inventarioImport.parser.js";
@@ -785,4 +786,99 @@ export async function sincronizarStockDesdeSaldoMensual(
 
   logger.info({ opciones, ...result }, "Stock sincronizado desde SaldoMensual");
   return result;
+}
+
+// ─── Recalcular stock histórico ───────────────────────────────────────────────
+
+export interface RecalcularStockInput {
+  productoId: number;
+  stockInicial: number;
+  eliminarValeIds?: string[];
+}
+
+export interface RecalcularStockResult {
+  productoId: number;
+  stockInicial: number;
+  stockFinal: number;
+  movimientosRecalculados: number;
+  valesEliminados: number;
+  correccionesLimpiadas: number;
+}
+
+export async function recalcularStock(
+  input: RecalcularStockInput,
+  userId: number,
+): Promise<RecalcularStockResult> {
+  const { productoId, stockInicial, eliminarValeIds = [] } = input;
+
+  const producto = await prisma.producto.findUnique({ where: { id: productoId }, select: { id: true, nombre: true } });
+  if (!producto) throw new HttpError("Producto no encontrado", 404);
+
+  // 1. Eliminar vales de prueba indicados y sus movimientos
+  let valesEliminados = 0;
+  for (const valeId of eliminarValeIds) {
+    const vale = await prisma.vale.findUnique({ where: { id: valeId } });
+    if (!vale) continue;
+    await prisma.movimiento.deleteMany({ where: { referenciaId: valeId } });
+    await prisma.valeItem.deleteMany({ where: { valeId } });
+    await prisma.vale.delete({ where: { id: valeId } });
+    valesEliminados++;
+  }
+
+  // 2. Limpiar automáticamente correcciones de stock huérfanas:
+  //    ENTRADA sin referencia a una compra real (SALDO_INICIAL, ajustes manuales, etc.)
+  //    Estas son reemplazadas por el stockInicial que se pasa como parámetro.
+  const { count: correccionesLimpiadas } = await prisma.movimiento.deleteMany({
+    where: {
+      productoId,
+      tipo: "ENTRADA",
+      NOT: { referencia: "COMPRA" },
+    },
+  });
+
+  // 3. Obtener todos los movimientos reales restantes ordenados por fecha
+  const movimientos = await prisma.movimiento.findMany({
+    where: { productoId },
+    orderBy: { createdAt: "asc" },
+  });
+
+  // 4. Recalcular stockAntes/stockDespues en cascada desde el stockInicial correcto
+  let stockActual = new Prisma.Decimal(stockInicial);
+  for (const mov of movimientos) {
+    const antes = stockActual;
+    if (mov.tipo === "ENTRADA") {
+      stockActual = stockActual.add(mov.cantidad);
+    } else {
+      stockActual = stockActual.sub(mov.cantidad);
+    }
+    await prisma.movimiento.update({
+      where: { id: mov.id },
+      data: { stockAntes: antes, stockDespues: stockActual },
+    });
+  }
+
+  // 5. Actualizar el stock actual del producto
+  await prisma.stock.update({
+    where: { productoId },
+    data: { cantidad: stockActual },
+  });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "RECALCULAR_STOCK",
+      data: { productoId, stockInicial, stockFinal: stockActual, valesEliminados, correccionesLimpiadas },
+    },
+  });
+
+  logger.info({ productoId, stockInicial, stockFinal: stockActual.toNumber(), valesEliminados, correccionesLimpiadas }, "Stock recalculado");
+
+  return {
+    productoId,
+    stockInicial,
+    stockFinal: stockActual.toNumber(),
+    movimientosRecalculados: movimientos.length,
+    valesEliminados,
+    correccionesLimpiadas,
+  };
 }

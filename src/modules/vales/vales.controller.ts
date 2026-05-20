@@ -104,4 +104,28 @@ export const valesController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async anularVale(req: AuthRequest, res: Response) {
+    try {
+      const { motivo } = req.body ?? {};
+      if (!motivo || String(motivo).trim().length < 5) {
+        return res.status(400).json({ success: false, error: "El motivo es obligatorio (mínimo 5 caracteres)" });
+      }
+      const result = await valesService.anularVale(String(req.params.id), String(motivo).trim(), req.user!.id);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getAnulaciones(_req: AuthRequest, res: Response) {
+    try {
+      const data = await valesService.getAnulaciones();
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
+import { prisma } from "../../config/prisma.js";
 import {
   importarCatalogo,
   cargarStockInicial,
@@ -14,6 +15,7 @@ import {
   deleteSaldoMensualItem,
   reiniciarStock,
   sincronizarStockDesdeSaldoMensual,
+  recalcularStock,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -218,6 +220,40 @@ export const inventarioImportController = {
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
       res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Recalcular stock histórico ──────────────────────────────────────────
+
+  async recalcularStock(req: AuthRequest, res: Response) {
+    try {
+      const { productoId, stockInicial, eliminarValeIds } = req.body ?? {};
+      if (!productoId || stockInicial === undefined) {
+        return res.status(400).json({ success: false, error: "productoId y stockInicial son requeridos" });
+      }
+      const data = await recalcularStock(
+        { productoId: Number(productoId), stockInicial: Number(stockInicial), eliminarValeIds },
+        req.user!.id,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getMovimientosProducto(req: AuthRequest, res: Response) {
+    try {
+      const productoId = parseInt(String(req.params.productoId));
+      if (isNaN(productoId)) return res.status(400).json({ success: false, error: "productoId inválido" });
+      const movimientos = await prisma.movimiento.findMany({
+        where: { productoId },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, tipo: true, cantidad: true, stockAntes: true, stockDespues: true, referencia: true, referenciaId: true, createdAt: true },
+      });
+      res.json({ success: true, data: movimientos });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
   },
 };

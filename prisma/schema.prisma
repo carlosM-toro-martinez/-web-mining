@@ -39,6 +39,7 @@ model User {
   valesEntregadosPor    Vale[]          @relation("Almacenero")
   valesSolicitados      Vale[]          @relation("Solicitante")
   valesAprobados        Vale[]          @relation("Supervisor")
+  anulaciones           AnulacionVale[]
 }
 
 model Log {
@@ -245,18 +246,29 @@ model CompraItem {
 ////////////////////////////////
 
 model Vale {
-  id                String     @id @default(uuid())
+  id                String          @id @default(uuid())
   solicitanteId     Int
   superintendenteId Int?
   estado            EstadoVale
   aprobadoAt        DateTime?
   entregadoAt       DateTime?
-  createdAt         DateTime   @default(now())
+  createdAt         DateTime        @default(now())
   almaceneroId      Int?
-  almacenero        User?      @relation("Almacenero", fields: [almaceneroId], references: [id])
-  solicitante       User       @relation("Solicitante", fields: [solicitanteId], references: [id])
-  superintendente   User?      @relation("Supervisor", fields: [superintendenteId], references: [id])
+  almacenero        User?           @relation("Almacenero", fields: [almaceneroId], references: [id])
+  solicitante       User            @relation("Solicitante", fields: [solicitanteId], references: [id])
+  superintendente   User?           @relation("Supervisor", fields: [superintendenteId], references: [id])
   items             ValeItem[]
+  anulacion         AnulacionVale?
+}
+
+model AnulacionVale {
+  id         String   @id @default(uuid())
+  valeId     String   @unique
+  usuarioId  Int
+  motivo     String
+  createdAt  DateTime @default(now())
+  vale       Vale     @relation(fields: [valeId], references: [id])
+  usuario    User     @relation(fields: [usuarioId], references: [id])
 }
 
 model ValeItem {
@@ -846,6 +858,7 @@ enum EstadoVale {
   PARCIAL
   COMPLETADO
   RECHAZADO
+  ANULADO
 }
 
 enum SyncStatus {
