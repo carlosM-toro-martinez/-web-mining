@@ -168,6 +168,9 @@ model Movimiento {
   cuentaId          Int?
   referencia        String?
   referenciaId      String?
+  esRetroactivo     Boolean         @default(false)
+  periodoAnio       Int?
+  periodoMes        Int?
   createdAt         DateTime        @default(now())
   usuarioEntregaId  Int?
   usuarioRecibidoId Int?
@@ -222,6 +225,7 @@ model Compra {
   numeroFactura     String?
   descuento         Decimal      @default(0) @db.Decimal(5, 2)
   recibidoAt        DateTime?
+  fechaOperacion    DateTime?
   usuarioRecibidoId Int?
   usuarioRegistroId Int
   proveedor         Proveedor    @relation(fields: [proveedorId], references: [id])
@@ -252,6 +256,7 @@ model Vale {
   estado            EstadoVale
   aprobadoAt        DateTime?
   entregadoAt       DateTime?
+  fechaOperacion    DateTime?
   createdAt         DateTime        @default(now())
   almaceneroId      Int?
   almacenero        User?           @relation("Almacenero", fields: [almaceneroId], references: [id])
@@ -322,6 +327,16 @@ model DeviceState {
   sn        String   @id
   lastSeen  DateTime
   updatedAt DateTime @updatedAt
+}
+
+model CierreMes {
+  id        Int      @id @default(autoincrement())
+  anio      Int
+  mes       Int
+  usuarioId Int
+  creadoAt  DateTime @default(now())
+
+  @@unique([anio, mes])
 }
 
 model AsistenciaLog {

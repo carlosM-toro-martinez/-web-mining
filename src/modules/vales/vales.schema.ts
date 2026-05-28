@@ -11,6 +11,7 @@ export const createValeSchema = z
         }),
       )
       .min(1),
+    fechaOperacion: z.coerce.date().optional(),
   })
   .strict();
 

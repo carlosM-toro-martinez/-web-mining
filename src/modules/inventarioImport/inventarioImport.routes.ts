@@ -103,6 +103,17 @@ router.post(
   inventarioImportController.upsertSaldoMensualItem,
 );
 
+// POST /api/inventario-import/saldo-mensual/inicializar
+// Siembra SaldoMensual de todos los productos para un período.
+// Usa saldoFinal del mes anterior como saldoInicial; si no hay anterior, usa Stock actual.
+// Solo crea registros que no existan (no sobreescribe).
+// Body: { anio, mes }
+router.post(
+  "/saldo-mensual/inicializar",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  inventarioImportController.inicializarPeriodo,
+);
+
 // GET  /api/inventario-import/saldo-mensual/:id
 // Obtener un registro por UUID.
 router.get(
@@ -141,6 +152,23 @@ router.get(
   "/movimientos/:productoId",
   authorize("ADMIN"),
   inventarioImportController.getMovimientosProducto,
+);
+
+// ─── Cierre de mes ────────────────────────────────────────────────────────────
+// POST /api/inventario-import/cierre-mes
+// Body: { anio, mes }
+// Consolida movimientos del mes en SaldoMensual y bloquea el período.
+router.post(
+  "/cierre-mes",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.cerrarMes,
+);
+
+// GET /api/inventario-import/cierre-mes
+// Lista todos los períodos cerrados.
+router.get(
+  "/cierre-mes",
+  inventarioImportController.getCierres,
 );
 
 export default router;

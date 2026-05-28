@@ -76,6 +76,13 @@ router.get("/", validateQuery(valeQuerySchema), valesController.getVales);
 router.get("/:id", validateParams(idSchema), valesController.getValeById);
 
 // Aprobar vale
+router.post(
+  "/:id/aprobar",
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  validateParams(idSchema),
+  validate(aprobarValeSchema),
+  valesController.aprobarVale,
+);
 router.patch(
   "/:id/aprobar",
   authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
@@ -85,6 +92,14 @@ router.patch(
 );
 
 // Entregar vale
+router.post(
+  "/:id/entregar",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  validate(entregarValeSchema),
+  valesController.entregarVale,
+);
+// También acepta PATCH para retrocompatibilidad
 router.patch(
   "/:id/entregar",
   authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
@@ -94,19 +109,11 @@ router.patch(
 );
 
 // Rechazar vale
-router.patch(
-  "/:id/rechazar",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
-  validateParams(idSchema),
-  valesController.rechazarVale,
-);
+router.post("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
+router.patch("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
 
 // Anular vale
-router.patch(
-  "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
-  validateParams(idSchema),
-  valesController.anularVale,
-);
+router.post("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE"), validateParams(idSchema), valesController.anularVale);
+router.patch("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE"), validateParams(idSchema), valesController.anularVale);
 
 export default router;

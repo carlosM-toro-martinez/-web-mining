@@ -63,7 +63,15 @@ app.use((req, res, next) => {
     };
 
     if (responseBody !== undefined) {
-      logData.response = responseBody;
+      if (typeof responseBody === "object" && responseBody !== null) {
+        const summary: any = { success: responseBody.success };
+        if (responseBody.error) summary.error = responseBody.error;
+        if (responseBody.meta) summary.meta = responseBody.meta;
+        if (Array.isArray(responseBody.data)) summary.dataCount = responseBody.data.length;
+        logData.response = summary;
+      } else {
+        logData.response = String(responseBody).slice(0, 120);
+      }
     }
 
     logger.info(logData, "Request completed");

@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { detectarPeriodo } from "../../utils/periodoRetroactivo.js";
 import type {
   CreateValeDTO,
   AprobarValeDTO,
@@ -45,32 +46,38 @@ export const valesService = {
       throw new HttpError("Solicitante no encontrado", 404);
     }
 
-    // Verificar stock disponible antes de crear
-    const productosConStock = await prisma.producto.findMany({
-      where: { id: { in: data.items.map((item) => item.productoId) } },
-      include: { stock: true },
-    });
+    // Detectar si es retroactivo ANTES de verificar/reservar stock
+    const periodoCreacion = await detectarPeriodo(data.fechaOperacion);
+    const esRetroactivoCreacion = periodoCreacion.esRetroactivo;
 
-    for (const item of data.items) {
-      const producto = productosConStock.find((p) => p.id === item.productoId);
-      const stock = producto?.stock;
-      if (!stock) throw new HttpError(`Producto ${item.productoId} no tiene stock registrado`, 400);
+    if (!esRetroactivoCreacion) {
+      // Solo verificar stock disponible para vales normales (no retroactivos)
+      const productosConStock = await prisma.producto.findMany({
+        where: { id: { in: data.items.map((item) => item.productoId) } },
+        include: { stock: true },
+      });
 
-      const disponible = new Prisma.Decimal(stock.cantidad).sub(stock.cantidadReservada);
-      if (disponible.lt(item.cantidadSolicitada)) {
-        throw new HttpError(
-          `Stock insuficiente para "${producto!.nombre}". Disponible: ${disponible}, Solicitado: ${item.cantidadSolicitada}`,
-          409,
-        );
+      for (const item of data.items) {
+        const producto = productosConStock.find((p) => p.id === item.productoId);
+        const stock = producto?.stock;
+        if (!stock) throw new HttpError(`Producto ${item.productoId} no tiene stock registrado`, 400);
+
+        const disponible = new Prisma.Decimal(stock.cantidad).sub(stock.cantidadReservada);
+        if (disponible.lt(item.cantidadSolicitada)) {
+          throw new HttpError(
+            `Stock insuficiente para "${producto!.nombre}". Disponible: ${disponible}, Solicitado: ${item.cantidadSolicitada}`,
+            409,
+          );
+        }
       }
     }
 
-    // Crear vale directamente como APROBADO y reservar stock
     const vale = await prisma.vale.create({
       data: {
         solicitanteId: data.solicitanteId,
         estado: "APROBADO",
         aprobadoAt: new Date(),
+        fechaOperacion: data.fechaOperacion ?? null,
         items: {
           create: data.items.map((item) => ({
             productoId: item.productoId,
@@ -81,23 +88,25 @@ export const valesService = {
       include: valeIncludeCompleto,
     });
 
-    // Reservar stock para cada ítem
-    for (const item of data.items) {
-      await prisma.stock.update({
-        where: { productoId: item.productoId },
-        data: { cantidadReservada: { increment: item.cantidadSolicitada } },
-      });
+    if (!esRetroactivoCreacion) {
+      // Reservar stock solo para vales normales
+      for (const item of data.items) {
+        await prisma.stock.update({
+          where: { productoId: item.productoId },
+          data: { cantidadReservada: { increment: item.cantidadSolicitada } },
+        });
+      }
     }
 
     await prisma.log.create({
       data: {
         usuarioId: userId,
         accion: "CREATE_VALE",
-        data: { valeId: vale.id, items: data.items },
+        data: { valeId: vale.id, items: data.items, esRetroactivo: esRetroactivoCreacion },
       },
     });
 
-    logger.info({ userId, valeId: vale.id, action: "CREATE_VALE" }, "Vale creado y auto-aprobado");
+    logger.info({ userId, valeId: vale.id, esRetroactivo: esRetroactivoCreacion, action: "CREATE_VALE" }, "Vale creado y auto-aprobado");
     return vale;
   },
 
@@ -243,6 +252,12 @@ export const valesService = {
       throw new HttpError("No se puede entregar un vale en estado " + vale.estado, 409);
     }
 
+    // Detectar retroactividad ANTES de validar stock (retroactivos no tocan Stock)
+    const periodoEntrega = await detectarPeriodo(vale.fechaOperacion);
+    const esRetroactivo = periodoEntrega.esRetroactivo;
+    const periodoAnio = periodoEntrega.esRetroactivo ? periodoEntrega.periodoAnio : undefined;
+    const periodoMes = periodoEntrega.esRetroactivo ? periodoEntrega.periodoMes : undefined;
+
     // Validar cantidades
     const entregaIds = Object.keys(data.cantidadesEntregadas);
     for (const itemId of entregaIds) {
@@ -262,8 +277,11 @@ export const valesService = {
         );
       }
 
-      if (!item.producto.stock || new Prisma.Decimal(item.producto.stock.cantidad).lt(cantidad)) {
-        throw new HttpError(`Stock insuficiente para ${item.producto.nombre}`, 409);
+      // Solo verificar stock físico para entregas normales (no retroactivas)
+      if (!esRetroactivo) {
+        if (!item.producto.stock || new Prisma.Decimal(item.producto.stock.cantidad).lt(cantidad)) {
+          throw new HttpError(`Stock insuficiente para ${item.producto.nombre}`, 409);
+        }
       }
     }
 
@@ -281,51 +299,106 @@ export const valesService = {
         );
       }
 
-      const movimiento = await prisma.movimiento.create({
-        data: {
-          operationId: randomUUID(),
-          productoId: item.productoId,
-          tipo: "SALIDA",
-          cantidad,
-          precioUnit: item.producto.stock!.precioUnit,
-          entradaBs: 0,
-          salidaBs: new Prisma.Decimal(item.producto.stock!.precioUnit).mul(cantidad),
-          saldoBs: new Prisma.Decimal(item.producto.stock!.cantidad)
-            .sub(cantidad)
-            .mul(item.producto.stock!.precioUnit),
-          stockAntes: item.producto.stock!.cantidad,
-          stockDespues: new Prisma.Decimal(item.producto.stock!.cantidad).sub(cantidad),
-          usuarioId: userId,
-          usuarioEntregaId: userId,
-          usuarioRecibidoId: vale.solicitanteId,
-          cuentaId,
-          referencia: "VALE",
-          referenciaId: id,
-        },
-      });
+      if (esRetroactivo) {
+        // Movimiento retroactivo: actualiza SaldoMensual, NO toca Stock
+        const saldo = await prisma.saldoMensual.findUnique({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+        });
 
-      await prisma.valeItem.update({
-        where: { id: item.id },
-        data: {
-          cantidadEntregada: new Prisma.Decimal(item.cantidadEntregada ?? 0).add(cantidad),
-        },
-      });
+        const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
+        const stockDespuesRetro = stockAntesRetro.sub(cantidad);
+        const precioUnitRetro = saldo ? new Prisma.Decimal(saldo.precioUnit) : item.producto.stock?.precioUnit ?? new Prisma.Decimal(0);
 
-      // Descontar cantidad física y liberar reserva
-      await prisma.stock.update({
-        where: { productoId: item.productoId },
-        data: {
-          cantidad: { decrement: cantidad },
-          cantidadReservada: {
-            decrement: Prisma.Decimal.min(
-              new Prisma.Decimal(cantidad),
-              item.producto.stock!.cantidadReservada,
-            ),
+        const movimiento = await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "SALIDA",
+            cantidad,
+            precioUnit: precioUnitRetro,
+            entradaBs: 0,
+            salidaBs: new Prisma.Decimal(precioUnitRetro).mul(cantidad),
+            saldoBs: stockDespuesRetro.mul(precioUnitRetro),
+            stockAntes: stockAntesRetro,
+            stockDespues: stockDespuesRetro,
+            usuarioId: userId,
+            usuarioEntregaId: userId,
+            usuarioRecibidoId: vale.solicitanteId,
+            cuentaId,
+            referencia: "VALE",
+            referenciaId: id,
+            esRetroactivo: true,
+            periodoAnio: periodoAnio ?? null,
+            periodoMes: periodoMes ?? null,
+            createdAt: vale.fechaOperacion!,
           },
-        },
-      });
+        });
 
-      movimientos.push(movimiento);
+        const nuevaSalida = new Prisma.Decimal(saldo?.salidaQty ?? 0).add(cantidad);
+        const nuevoFinal = new Prisma.Decimal(saldo?.saldoFinal ?? 0).sub(cantidad);
+        const precioSaldo = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnitRetro);
+        await prisma.saldoMensual.upsert({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+          update: { salidaQty: nuevaSalida, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+          create: {
+            productoId: item.productoId, anio: periodoAnio!, mes: periodoMes!,
+            saldoInicial: 0, ingresoQty: 0,
+            salidaQty: cantidad, saldoFinal: nuevoFinal,
+            precioUnit: precioSaldo, totalBs: nuevoFinal.mul(precioSaldo),
+          },
+        });
+
+        await prisma.valeItem.update({
+          where: { id: item.id },
+          data: { cantidadEntregada: new Prisma.Decimal(item.cantidadEntregada ?? 0).add(cantidad) },
+        });
+
+        movimientos.push(movimiento);
+      } else {
+        const movimiento = await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "SALIDA",
+            cantidad,
+            precioUnit: item.producto.stock!.precioUnit,
+            entradaBs: 0,
+            salidaBs: new Prisma.Decimal(item.producto.stock!.precioUnit).mul(cantidad),
+            saldoBs: new Prisma.Decimal(item.producto.stock!.cantidad)
+              .sub(cantidad)
+              .mul(item.producto.stock!.precioUnit),
+            stockAntes: item.producto.stock!.cantidad,
+            stockDespues: new Prisma.Decimal(item.producto.stock!.cantidad).sub(cantidad),
+            usuarioId: userId,
+            usuarioEntregaId: userId,
+            usuarioRecibidoId: vale.solicitanteId,
+            cuentaId,
+            referencia: "VALE",
+            referenciaId: id,
+          },
+        });
+
+        await prisma.valeItem.update({
+          where: { id: item.id },
+          data: { cantidadEntregada: new Prisma.Decimal(item.cantidadEntregada ?? 0).add(cantidad) },
+        });
+
+        // Descontar cantidad física y liberar reserva
+        await prisma.stock.update({
+          where: { productoId: item.productoId },
+          data: {
+            cantidad: { decrement: cantidad },
+            cantidadReservada: {
+              decrement: Prisma.Decimal.min(
+                new Prisma.Decimal(cantidad),
+                item.producto.stock!.cantidadReservada,
+              ),
+            },
+          },
+        });
+
+        movimientos.push(movimiento);
+      }
     }
 
     // Determinar nuevo estado

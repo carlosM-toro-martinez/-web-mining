@@ -16,6 +16,9 @@ import {
   reiniciarStock,
   sincronizarStockDesdeSaldoMensual,
   recalcularStock,
+  inicializarPeriodo,
+  cerrarMes,
+  getCierres,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -28,6 +31,8 @@ import {
   updateSaldoMensualItemSchema,
   reiniciarStockSchema,
   sincronizarStockSchema,
+  inicializarPeriodoSchema,
+  cerrarMesSchema,
 } from "./inventarioImport.schema.js";
 
 export const inventarioImportController = {
@@ -249,9 +254,50 @@ export const inventarioImportController = {
       const movimientos = await prisma.movimiento.findMany({
         where: { productoId },
         orderBy: { createdAt: "asc" },
-        select: { id: true, tipo: true, cantidad: true, stockAntes: true, stockDespues: true, referencia: true, referenciaId: true, createdAt: true },
+        select: { id: true, tipo: true, cantidad: true, stockAntes: true, stockDespues: true, referencia: true, referenciaId: true, createdAt: true, esRetroactivo: true, periodoAnio: true, periodoMes: true },
       });
       res.json({ success: true, data: movimientos });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Inicializar período ─────────────────────────────────────────────────────
+
+  async inicializarPeriodo(req: AuthRequest, res: Response) {
+    try {
+      const parsed = inicializarPeriodoSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await inicializarPeriodo(parsed.data.anio, parsed.data.mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Cierre de mes ───────────────────────────────────────────────────────────
+
+  async cerrarMes(req: AuthRequest, res: Response) {
+    try {
+      const parsed = cerrarMesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await cerrarMes(parsed.data.anio, parsed.data.mes, req.user!.id);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getCierres(_req: AuthRequest, res: Response) {
+    try {
+      const data = await getCierres();
+      res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
     }

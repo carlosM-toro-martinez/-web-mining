@@ -1,8 +1,9 @@
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { detectarPeriodo } from "../../utils/periodoRetroactivo.js";
 import type { CreateCompraDTO, RecibirCompraDTO, CompraQueryDTO } from "./compras.types.js";
 
 export const comprasService = {
@@ -40,6 +41,7 @@ export const comprasService = {
         usuarioRegistroId: userId,
         estado: "PENDIENTE",
         observacion: data.observacion ?? null,
+        fechaOperacion: data.fechaOperacion ?? null,
         items: {
           create: data.items.map((item) => ({
             productoId: item.productoId,
@@ -194,52 +196,108 @@ export const comprasService = {
       }
     }
 
+    // Detectar si la operación es retroactiva
+    const periodoRecibo = await detectarPeriodo(compra.fechaOperacion);
+    const esRetroactivo = periodoRecibo.esRetroactivo;
+    const periodoAnio = periodoRecibo.esRetroactivo ? periodoRecibo.periodoAnio : undefined;
+    const periodoMes = periodoRecibo.esRetroactivo ? periodoRecibo.periodoMes : undefined;
+
     // Crear movimientos de entrada para cada item y actualizar stock
     const movimientos = [];
     for (const item of compra.items) {
       const cantidadRecibidaAhora = data.cantidadesRecibidas[item.id] ?? 0;
       if (cantidadRecibidaAhora > 0) {
-        const stockAntes = item.producto.stock!.cantidad;
-        const stockDespues = new Prisma.Decimal(stockAntes).add(cantidadRecibidaAhora);
         const precioUnit = item.precioUnit;
 
-        const movimiento = await prisma.movimiento.create({
-          data: {
-            operationId: randomUUID(),
-            productoId: item.productoId,
-            tipo: "ENTRADA",
-            cantidad: cantidadRecibidaAhora,
-            precioUnit,
-            entradaBs: new Prisma.Decimal(precioUnit).mul(cantidadRecibidaAhora),
-            salidaBs: 0,
-            saldoBs: stockDespues.mul(precioUnit),
-            stockAntes,
-            stockDespues,
-            usuarioId: userId,
-            usuarioEntregaId: userId,
-            cuentaId: item.producto.cuentaId,
-            referencia: "COMPRA",
-            referenciaId: id,
-          },
-        });
+        if (esRetroactivo) {
+          // Movimiento retroactivo: actualiza SaldoMensual, NO toca Stock
+          const saldo = await prisma.saldoMensual.findUnique({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+          });
 
-        await prisma.compraItem.update({
-          where: { id: item.id },
-          data: {
-            cantidadRecibida: new Prisma.Decimal(item.cantidadRecibida).add(cantidadRecibidaAhora),
-          },
-        });
+          const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
+          const stockDespuesRetro = stockAntesRetro.add(cantidadRecibidaAhora);
 
-        // Actualizar stock
-        await prisma.stock.update({
-          where: { productoId: item.productoId },
-          data: {
-            cantidad: stockDespues,
-            precioUnit: precioUnit,
-          },
-        });
+          const movimiento = await prisma.movimiento.create({
+            data: {
+              operationId: randomUUID(),
+              productoId: item.productoId,
+              tipo: "ENTRADA",
+              cantidad: cantidadRecibidaAhora,
+              precioUnit,
+              entradaBs: new Prisma.Decimal(precioUnit).mul(cantidadRecibidaAhora),
+              salidaBs: 0,
+              saldoBs: stockDespuesRetro.mul(precioUnit),
+              stockAntes: stockAntesRetro,
+              stockDespues: stockDespuesRetro,
+              usuarioId: userId,
+              usuarioEntregaId: userId,
+              cuentaId: item.producto.cuentaId,
+              referencia: "COMPRA",
+              referenciaId: id,
+              esRetroactivo: true,
+              periodoAnio: periodoAnio ?? null,
+              periodoMes: periodoMes ?? null,
+              createdAt: compra.fechaOperacion!,
+            },
+          });
 
-        movimientos.push(movimiento);
+          const nuevoIngreso = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
+          const nuevoFinal = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
+          const precioSaldo = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnit);
+          await prisma.saldoMensual.upsert({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+            update: { ingresoQty: nuevoIngreso, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+            create: {
+              productoId: item.productoId, anio: periodoAnio!, mes: periodoMes!,
+              saldoInicial: 0, salidaQty: 0,
+              ingresoQty: cantidadRecibidaAhora, saldoFinal: nuevoFinal,
+              precioUnit: precioSaldo, totalBs: nuevoFinal.mul(precioSaldo),
+            },
+          });
+
+          await prisma.compraItem.update({
+            where: { id: item.id },
+            data: { cantidadRecibida: new Prisma.Decimal(item.cantidadRecibida).add(cantidadRecibidaAhora) },
+          });
+
+          movimientos.push(movimiento);
+        } else {
+          const stockAntes = item.producto.stock!.cantidad;
+          const stockDespues = new Prisma.Decimal(stockAntes).add(cantidadRecibidaAhora);
+
+          const movimiento = await prisma.movimiento.create({
+            data: {
+              operationId: randomUUID(),
+              productoId: item.productoId,
+              tipo: "ENTRADA",
+              cantidad: cantidadRecibidaAhora,
+              precioUnit,
+              entradaBs: new Prisma.Decimal(precioUnit).mul(cantidadRecibidaAhora),
+              salidaBs: 0,
+              saldoBs: stockDespues.mul(precioUnit),
+              stockAntes,
+              stockDespues,
+              usuarioId: userId,
+              usuarioEntregaId: userId,
+              cuentaId: item.producto.cuentaId,
+              referencia: "COMPRA",
+              referenciaId: id,
+            },
+          });
+
+          await prisma.compraItem.update({
+            where: { id: item.id },
+            data: { cantidadRecibida: new Prisma.Decimal(item.cantidadRecibida).add(cantidadRecibidaAhora) },
+          });
+
+          await prisma.stock.update({
+            where: { productoId: item.productoId },
+            data: { cantidad: stockDespues, precioUnit },
+          });
+
+          movimientos.push(movimiento);
+        }
       }
     }
 

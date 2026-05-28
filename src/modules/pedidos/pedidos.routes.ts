@@ -25,6 +25,7 @@ router.get("/:id", validateParams(idSchema), pedidosController.getPedidoById);
 router.post("/", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validate(createPedidoSchema), pedidosController.createPedido);
 
 // Cancelar/cerrar pedido
+router.post("/:id/cancelar", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validateParams(idSchema), pedidosController.cancelarPedido);
 router.patch("/:id/cancelar", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validateParams(idSchema), pedidosController.cancelarPedido);
 
 export default router;

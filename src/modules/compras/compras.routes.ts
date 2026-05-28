@@ -48,6 +48,14 @@ router.get("/", validateQuery(compraQuerySchema), comprasController.getCompras);
 router.get("/:id", validateParams(idSchema), comprasController.getCompraById);
 
 // Recibir compra (ADMIN, ALMACENERO)
+router.post(
+  "/:id/recibir",
+  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  validate(recibirCompraSchema),
+  comprasController.recibirCompra,
+);
+// También acepta PATCH para retrocompatibilidad
 router.patch(
   "/:id/recibir",
   authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),

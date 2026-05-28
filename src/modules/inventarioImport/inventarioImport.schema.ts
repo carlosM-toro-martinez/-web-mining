@@ -108,6 +108,20 @@ export const reiniciarStockSchema = z.object({
   confirmacion: z.literal("REINICIAR"),
 });
 
+// ─── Inicializar período ──────────────────────────────────────────────────────
+
+export const inicializarPeriodoSchema = z.object({
+  anio: z.number().int().min(2000).max(2100),
+  mes: z.number().int().min(1).max(12),
+});
+
+// ─── Cierre de mes ───────────────────────────────────────────────────────────
+
+export const cerrarMesSchema = z.object({
+  anio: z.number().int().min(2000).max(2100),
+  mes: z.number().int().min(1).max(12),
+});
+
 // ─── Sincronizar stock ────────────────────────────────────────────────────────
 
 export const sincronizarStockSchema = z
