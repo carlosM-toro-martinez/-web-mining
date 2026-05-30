@@ -125,7 +125,7 @@ export const iclockController = {
 
   // POST /iclock/sync-users — trigger device to send its user list, no auth required
   async syncUsers(_req: Request, res: Response) {
-    setRequestUserInfo();
+    await setRequestUserInfo();
     res.json({ success: true, message: "El dispositivo enviará sus usuarios en el próximo heartbeat (~30s)" });
   },
 

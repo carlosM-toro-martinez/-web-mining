@@ -59,8 +59,8 @@ export const biometricController = {
   },
 
   // POST /api/biometric/request-device-users — asks device to send its user list on next heartbeat
-  requestDeviceUsers(_req: AuthRequest, res: Response) {
-    setRequestUserInfo();
+  async requestDeviceUsers(_req: AuthRequest, res: Response) {
+    await setRequestUserInfo();
     res.json({
       success: true,
       data: {

@@ -25,8 +25,18 @@ export async function getDeviceStatus(): Promise<{ conectado: boolean; sn?: stri
   };
 }
 
-export function setRequestUserInfo(): void {
+export async function setRequestUserInfo(): Promise<void> {
   _requestUserInfo = true;
+  // Also enqueue an explicit DATA QUERY USERINFO command for devices
+  // that do not respond to USERINFOSTAMP:0 alone (e.g. SenseFace 2A)
+  await prisma.syncQueue.create({
+    data: {
+      action: "CREATE",
+      payload: { command: "DATA QUERY USERINFO" },
+      status: "PENDING",
+      deviceIp: "",
+    },
+  });
 }
 
 export function consumeRequestUserInfo(): boolean {
@@ -204,7 +214,10 @@ export async function getNextCommand(): Promise<{ id: number; command: string } 
   const p = item.payload as Record<string, unknown>;
   let command: string;
 
-  if (item.action === "CREATE" || item.action === "UPDATE") {
+  // Direct command string in payload (e.g. DATA QUERY USERINFO)
+  if (typeof p["command"] === "string") {
+    command = p["command"];
+  } else if (item.action === "CREATE" || item.action === "UPDATE") {
     command = `DATA UPDATE USERINFO PIN=${p["pin"]}\tName=${p["name"]}\tPri=0\tCard=\tPwd=`;
   } else if (item.action === "DELETE") {
     command = `DATA DELETE USERINFO PIN=${p["pin"]}`;
