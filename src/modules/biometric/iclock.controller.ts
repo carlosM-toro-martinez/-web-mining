@@ -39,10 +39,7 @@ function parseUrlEncoded(raw: string): Record<string, string> {
 }
 
 export const iclockController = {
-  // GET /iclock/cdata — device heartbeat / initial check-in
-  // Embeds any pending command directly in the response body.
-  // The SenseFace 2A (pushver 2.4.1) never calls getrequest as a separate step,
-  // so this is the only reliable delivery channel.
+  // GET /iclock/cdata — device initial registration / heartbeat
   async cdata(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const isRealDevice = sn && sn !== "TEST" && sn.length > 4;
@@ -56,38 +53,32 @@ export const iclockController = {
       "ADMS device check-in",
     );
 
-    // ADMS push protocol handshake.
-    // The device sends options=all on every request expecting RegistryCode=1
-    // and Realtime=1 in Key=Value format to activate real-time ATTLOG push.
-    // Without RegistryCode=1 the device loops in registration mode and never
-    // sends attendance records.
     const pushver = String(req.query["pushver"] ?? "");
     const isPushVer241 = pushver === "2.4.1";
 
+    // ZKTeco ADMS requires \n (LF only), NOT \r\n (CRLF).
+    // The cdata GET response starts with GET DATETIME + stamps, then key=value config.
     let body =
-      `GET DATETIME:${nowDateTimeStr()}\r\n` +
-      `STAMP:0\r\n` +
-      `ATTLOGSTAMP:0\r\n` +
-      `OPCLOGSTAMP:9999999\r\n` +
-      `TRANSACTIONSTAMP:0\r\n` +
-      `ERRORLOGSTAMP:9999999\r\n` +
-      `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
-      `RegistryCode=1\r\n` +
-      `Delay=30\r\n` +
-      `ErrorDelay=60\r\n` +
-      `TransTimes=00:00;14:00\r\n` +
-      `TransInterval=10\r\n` +
-      `TransFlag=True\r\n` +
-      `Realtime=1\r\n` +
-      `Encrypt=0\r\n` +
-      (isPushVer241
-        ? `PUSHVER=2.4.1\r\nServerVer=2.4.1\r\nPushProtVer=2.4.1\r\n`
-        : ``) +
-      `Options=ATTLOG\r\n`;
+      `GET DATETIME:${nowDateTimeStr()}\n` +
+      `STAMP:0\n` +
+      `ATTLOGSTAMP:0\n` +
+      `OPCLOGSTAMP:9999999\n` +
+      `TRANSACTIONSTAMP:0\n` +
+      `ERRORLOGSTAMP:9999999\n` +
+      `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\n` +
+      `RegistryCode=1\n` +
+      `Delay=30\n` +
+      `ErrorDelay=60\n` +
+      `TransTimes=00:00;14:00\n` +
+      `TransInterval=1\n` +
+      `TransFlag=True\n` +
+      `Realtime=1\n` +
+      `Encrypt=0\n` +
+      (isPushVer241 ? `PUSHVER=2.4.1\nServerVer=2.4.1\nPushProtVer=2.4.1\n` : ``) +
+      `Options=ATTLOG\n`;
 
     if (cmd) {
-      body += `C:${cmd.id}:${cmd.command}\r\n`;
-      // Device executes silently without calling devicecmd — mark SYNCED on delivery
+      body += `C:${cmd.id}:${cmd.command}\n`;
       await ackCommand(cmd.id, true);
       logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via cdata, marked SYNCED");
     }
@@ -103,17 +94,71 @@ export const iclockController = {
     const isRealDevice = sn && sn !== "TEST" && sn.length > 4;
     if (isRealDevice) await updateDeviceHeartbeat(sn);
 
+    // Some ZKTeco firmware sends ATTLOG as application/x-www-form-urlencoded with
+    // attendance lines in a "data" field, others send raw text/plain.
+    // Also handle the case where urlencoded middleware already parsed the body.
+    function extractBody(): string {
+      if (typeof req.body === "string") return req.body;
+      if (req.body && typeof req.body === "object") {
+        // urlencoded parsed — attendance may be in "data" key or the whole object
+        const b = req.body as Record<string, unknown>;
+        if (typeof b["data"] === "string") return b["data"];
+        // fallback: try to reconstruct as tab-separated from object values
+      }
+      return "";
+    }
+
+    logger.info(
+      { sn, table, contentType: req.headers["content-type"], bodyType: typeof req.body },
+      "ADMS POST cdata received",
+    );
+
     if (table === "ATTLOG" || table === "TRANSACTION") {
-      const body = typeof req.body === "string" ? req.body : "";
+      const body = extractBody();
+      logger.info({ sn, table, rawBody: body.slice(0, 300) }, "ADMS ATTLOG raw body");
       const records = parseAttlogBody(body);
       const result = await processAttendance(records);
-      logger.info({ sn, table, ...result }, "ADMS ATTLOG received");
+      logger.info({ sn, table, ...result }, "ADMS ATTLOG processed");
     } else if (table === "USERINFO") {
-      const body = typeof req.body === "string" ? req.body : "";
+      const body = extractBody();
       const result = await processUserInfo(body);
       logger.info({ sn, ...result }, "ADMS USERINFO received");
+    } else if (table === "options" || String(req.query["c"] ?? "") === "registry") {
+      // Some firmware sends POST cdata?table=options&c=registry for initial registration
+      // Return the same config as GET cdata so push mode activates
+      const pushver = String(req.query["pushver"] ?? "");
+      const wantsUserInfo = consumeRequestUserInfo();
+      const cmd = await getNextCommand();
+      let body =
+        `GET DATETIME:${nowDateTimeStr()}\n` +
+        `STAMP:0\n` +
+        `ATTLOGSTAMP:0\n` +
+        `OPCLOGSTAMP:9999999\n` +
+        `TRANSACTIONSTAMP:0\n` +
+        `ERRORLOGSTAMP:9999999\n` +
+        `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\n` +
+        `RegistryCode=1\n` +
+        `Delay=30\n` +
+        `ErrorDelay=60\n` +
+        `TransTimes=00:00;14:00\n` +
+        `TransInterval=1\n` +
+        `TransFlag=True\n` +
+        `Realtime=1\n` +
+        `Encrypt=0\n` +
+        (pushver === "2.4.1" ? `PUSHVER=2.4.1\nServerVer=2.4.1\nPushProtVer=2.4.1\n` : ``) +
+        `Options=ATTLOG\n`;
+      if (cmd) {
+        body += `C:${cmd.id}:${cmd.command}\n`;
+        await ackCommand(cmd.id, true);
+      }
+      logger.info({ sn, table }, "ADMS POST cdata options/registry — sending config");
+      res.setHeader("Content-Type", "text/plain");
+      return res.send(body);
     } else {
-      logger.info({ sn, table, bodyLen: String(req.body ?? "").length }, "ADMS data received (table ignored)");
+      logger.info(
+        { sn, table, rawBody: String(req.body ?? "").slice(0, 300) },
+        "ADMS POST cdata unknown table",
+      );
     }
 
     res.setHeader("Content-Type", "text/plain");
@@ -121,10 +166,9 @@ export const iclockController = {
   },
 
   // GET /iclock/getrequest — command poll AND initial registration for ZAM70/v3 firmware
-  // ZAM70-NF24HA (pushver 2.4.1) never calls /iclock/cdata GET for initial setup; it uses
-  // getrequest with INFO= instead. When INFO is present we must reply with the full ADMS
-  // config (RegistryCode=1, Realtime=1) or the device stays in registration loop and never
-  // pushes attendance records.
+  // When INFO= is present the device is doing its initial registration handshake.
+  // Per ZKTeco ADMS docs, respond with ONLY the key=value config block (no GET DATETIME:
+  // or STAMP: lines) using \n line endings. This is what activates real-time ATTLOG push.
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const info = req.query["INFO"];
@@ -137,39 +181,35 @@ export const iclockController = {
       const cmd = await getNextCommand();
       const pushver = String(req.query["pushver"] ?? "");
 
+      // Minimal registration response — exactly the format the docs specify.
+      // No GET DATETIME:, no STAMP: lines. Just key=value with \n.
       let body =
-        `GET DATETIME:${nowDateTimeStr()}\r\n` +
-        `STAMP:0\r\n` +
-        `ATTLOGSTAMP:0\r\n` +
-        `OPCLOGSTAMP:9999999\r\n` +
-        `TRANSACTIONSTAMP:0\r\n` +
-        `ERRORLOGSTAMP:9999999\r\n` +
-        `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
-        `RegistryCode=1\r\n` +
-        `Delay=30\r\n` +
-        `ErrorDelay=60\r\n` +
-        `TransTimes=00:00;14:00\r\n` +
-        `TransInterval=10\r\n` +
-        `TransFlag=True\r\n` +
-        `Realtime=1\r\n` +
-        `Encrypt=0\r\n` +
-        (pushver === "2.4.1" ? `PUSHVER=2.4.1\r\nServerVer=2.4.1\r\nPushProtVer=2.4.1\r\n` : ``) +
-        `Options=ATTLOG\r\n`;
+        `RegistryCode=1\n` +
+        `Delay=30\n` +
+        `ErrorDelay=60\n` +
+        `TransTimes=00:00;14:00\n` +
+        `TransInterval=1\n` +
+        `TransFlag=True\n` +
+        `Realtime=1\n` +
+        `Encrypt=0\n` +
+        (pushver === "2.4.1" ? `PUSHVER=2.4.1\nServerVer=2.4.1\nPushProtVer=2.4.1\n` : ``) +
+        `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\n` +
+        `Options=ATTLOG\n`;
 
       if (cmd) {
-        body += `C:${cmd.id}:${cmd.command}\r\n`;
+        body += `C:${cmd.id}:${cmd.command}\n`;
         await ackCommand(cmd.id, true);
-        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest INFO, marked SYNCED");
+        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest INFO");
       }
 
-      logger.info({ sn, info, sendingConfig: true }, "ADMS device registered via getrequest INFO");
+      logger.info({ sn, info, pushver }, "ADMS getrequest INFO — sending registration config");
       return res.send(body);
     }
 
     const cmd = await getNextCommand();
     if (cmd) {
       await ackCommand(cmd.id, true);
-      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest, marked SYNCED");
+      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest");
       res.send(`C:${cmd.id}:${cmd.command}`);
     } else {
       res.send("OK");
