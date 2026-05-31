@@ -1,9 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_PATH = path.resolve(__dirname, "../../logs/biometric.log");
+const LOG_PATH = path.join(process.cwd(), "logs", "biometric.log");
 
 // Ensure logs directory exists
 const logsDir = path.dirname(LOG_PATH);

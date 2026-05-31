@@ -56,14 +56,22 @@ export const iclockController = {
       "ADMS device check-in",
     );
 
+    // pushver 2.4.1 requires Realtime:1 and version acknowledgment in the
+    // response, otherwise the device does heartbeats but never pushes ATTLOG.
+    const pushver = String(req.query["pushver"] ?? "");
+    const isPushVer241 = pushver === "2.4.1";
+
     let body =
       `GET DATETIME:${nowDateTimeStr()}\r\n` +
-      `STAMP:0\r\n` +
+      `STAMP:9999999\r\n` +
       `ATTLOGSTAMP:0\r\n` +
       `OPCLOGSTAMP:9999999\r\n` +
       `TRANSACTIONSTAMP:9999999\r\n` +
       `ERRORLOGSTAMP:9999999\r\n` +
-      `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n`;
+      `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
+      (isPushVer241
+        ? `PUSHVER:2.4.1\r\nServerVer:2.4.1\r\nPushProtVer:2.4.1\r\nRealtime:1\r\nEncrypt:0\r\n`
+        : `Realtime:1\r\n`);
 
     if (cmd) {
       body += `C:${cmd.id}:${cmd.command}\r\n`;
