@@ -11,7 +11,6 @@ import iclockRoutes from "./modules/biometric/iclock.routes.js";
 const app = express();
 
 app.use(cors());
-app.use(helmet());
 app.use(express.json({ limit: "10mb" }));
 app.use(
   express.text({
@@ -25,8 +24,14 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// ADMS protocol — ZKTeco device connects here directly (no JWT, no /api prefix)
+// ADMS protocol — mounted BEFORE helmet so ZKTeco device does not receive
+// browser security headers (HSTS, CSP upgrade-insecure-requests) that can
+// cause the device firmware to silently upgrade subsequent POSTs to HTTPS
+// and fail to deliver attendance records.
 app.use("/iclock", iclockRoutes);
+
+// Helmet applies only to browser-facing routes (/api, /api-docs)
+app.use(helmet());
 
 // Log request info for development visibility
 app.use((req, res, next) => {

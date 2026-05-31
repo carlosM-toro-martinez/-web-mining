@@ -27,15 +27,13 @@ export async function getDeviceStatus(): Promise<{ conectado: boolean; sn?: stri
 
 export async function setRequestUserInfo(): Promise<void> {
   _requestUserInfo = true;
-  // Also enqueue an explicit DATA QUERY USERINFO command for devices
-  // that do not respond to USERINFOSTAMP:0 alone (e.g. SenseFace 2A)
-  await prisma.syncQueue.create({
-    data: {
-      action: "CREATE",
-      payload: { command: "DATA QUERY USERINFO" },
-      status: "PENDING",
-      deviceIp: "",
-    },
+  // Enqueue two command variants — different ZKTeco firmware versions
+  // respond to different syntaxes. Both are harmless if ignored.
+  await prisma.syncQueue.createMany({
+    data: [
+      { action: "CREATE", payload: { command: "DATA QUERY USERINFO" }, status: "PENDING", deviceIp: "" },
+      { action: "CREATE", payload: { command: "QUERY USERINFO" },      status: "PENDING", deviceIp: "" },
+    ],
   });
 }
 
