@@ -56,8 +56,11 @@ export const iclockController = {
       "ADMS device check-in",
     );
 
-    // pushver 2.4.1 requires Realtime:1 and version acknowledgment in the
-    // response, otherwise the device does heartbeats but never pushes ATTLOG.
+    // ADMS push protocol handshake.
+    // The device sends options=all on every request expecting RegistryCode=1
+    // and Realtime=1 in Key=Value format to activate real-time ATTLOG push.
+    // Without RegistryCode=1 the device loops in registration mode and never
+    // sends attendance records.
     const pushver = String(req.query["pushver"] ?? "");
     const isPushVer241 = pushver === "2.4.1";
 
@@ -69,9 +72,18 @@ export const iclockController = {
       `TRANSACTIONSTAMP:0\r\n` +
       `ERRORLOGSTAMP:9999999\r\n` +
       `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
+      `RegistryCode=1\r\n` +
+      `Delay=30\r\n` +
+      `ErrorDelay=60\r\n` +
+      `TransTimes=00:00;14:00\r\n` +
+      `TransInterval=10\r\n` +
+      `TransFlag=True\r\n` +
+      `Realtime=1\r\n` +
+      `Encrypt=0\r\n` +
       (isPushVer241
-        ? `PUSHVER:2.4.1\r\nServerVer:2.4.1\r\nPushProtVer:2.4.1\r\nRealtime:1\r\nEncrypt:0\r\nOptions:ATTLOG\r\n`
-        : `Realtime:1\r\nOptions:ATTLOG\r\n`);
+        ? `PUSHVER=2.4.1\r\nServerVer=2.4.1\r\nPushProtVer=2.4.1\r\n`
+        : ``) +
+      `Options=ATTLOG\r\n`;
 
     if (cmd) {
       body += `C:${cmd.id}:${cmd.command}\r\n`;

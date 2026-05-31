@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npx prisma *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(mkdir -p \"c:/Users/HP/Desktop/projects/Minera_Marte/code/biometric-relay\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\HP\\Desktop\\projects\\Minera_Marte\\code"
     ]
   }
 }
