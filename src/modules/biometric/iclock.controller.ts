@@ -120,14 +120,53 @@ export const iclockController = {
     res.send("OK");
   },
 
-  // GET /iclock/getrequest — fallback for devices that do call this endpoint
+  // GET /iclock/getrequest — command poll AND initial registration for ZAM70/v3 firmware
+  // ZAM70-NF24HA (pushver 2.4.1) never calls /iclock/cdata GET for initial setup; it uses
+  // getrequest with INFO= instead. When INFO is present we must reply with the full ADMS
+  // config (RegistryCode=1, Realtime=1) or the device stays in registration loop and never
+  // pushes attendance records.
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
+    const info = req.query["INFO"];
     if (sn && sn !== "TEST" && sn.length > 4) await updateDeviceHeartbeat(sn);
 
-    const cmd = await getNextCommand();
     res.setHeader("Content-Type", "text/plain");
 
+    if (info !== undefined) {
+      const wantsUserInfo = consumeRequestUserInfo();
+      const cmd = await getNextCommand();
+      const pushver = String(req.query["pushver"] ?? "");
+
+      let body =
+        `GET DATETIME:${nowDateTimeStr()}\r\n` +
+        `STAMP:0\r\n` +
+        `ATTLOGSTAMP:0\r\n` +
+        `OPCLOGSTAMP:9999999\r\n` +
+        `TRANSACTIONSTAMP:0\r\n` +
+        `ERRORLOGSTAMP:9999999\r\n` +
+        `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
+        `RegistryCode=1\r\n` +
+        `Delay=30\r\n` +
+        `ErrorDelay=60\r\n` +
+        `TransTimes=00:00;14:00\r\n` +
+        `TransInterval=10\r\n` +
+        `TransFlag=True\r\n` +
+        `Realtime=1\r\n` +
+        `Encrypt=0\r\n` +
+        (pushver === "2.4.1" ? `PUSHVER=2.4.1\r\nServerVer=2.4.1\r\nPushProtVer=2.4.1\r\n` : ``) +
+        `Options=ATTLOG\r\n`;
+
+      if (cmd) {
+        body += `C:${cmd.id}:${cmd.command}\r\n`;
+        await ackCommand(cmd.id, true);
+        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest INFO, marked SYNCED");
+      }
+
+      logger.info({ sn, info, sendingConfig: true }, "ADMS device registered via getrequest INFO");
+      return res.send(body);
+    }
+
+    const cmd = await getNextCommand();
     if (cmd) {
       await ackCommand(cmd.id, true);
       logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest, marked SYNCED");
