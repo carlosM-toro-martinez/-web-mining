@@ -63,7 +63,7 @@ export const iclockController = {
 
     let body =
       `GET DATETIME:${nowDateTimeStr()}\r\n` +
-      `STAMP:9999999\r\n` +
+      `STAMP:0\r\n` +
       `ATTLOGSTAMP:0\r\n` +
       `OPCLOGSTAMP:9999999\r\n` +
       `TRANSACTIONSTAMP:0\r\n` +
