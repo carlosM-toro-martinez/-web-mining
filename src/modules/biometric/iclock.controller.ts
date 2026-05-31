@@ -66,12 +66,12 @@ export const iclockController = {
       `STAMP:9999999\r\n` +
       `ATTLOGSTAMP:0\r\n` +
       `OPCLOGSTAMP:9999999\r\n` +
-      `TRANSACTIONSTAMP:9999999\r\n` +
+      `TRANSACTIONSTAMP:0\r\n` +
       `ERRORLOGSTAMP:9999999\r\n` +
       `USERINFOSTAMP:${wantsUserInfo ? "0" : "9999999"}\r\n` +
       (isPushVer241
-        ? `PUSHVER:2.4.1\r\nServerVer:2.4.1\r\nPushProtVer:2.4.1\r\nRealtime:1\r\nEncrypt:0\r\n`
-        : `Realtime:1\r\n`);
+        ? `PUSHVER:2.4.1\r\nServerVer:2.4.1\r\nPushProtVer:2.4.1\r\nRealtime:1\r\nEncrypt:0\r\nOptions:ATTLOG\r\n`
+        : `Realtime:1\r\nOptions:ATTLOG\r\n`);
 
     if (cmd) {
       body += `C:${cmd.id}:${cmd.command}\r\n`;
@@ -91,11 +91,11 @@ export const iclockController = {
     const isRealDevice = sn && sn !== "TEST" && sn.length > 4;
     if (isRealDevice) await updateDeviceHeartbeat(sn);
 
-    if (table === "ATTLOG") {
+    if (table === "ATTLOG" || table === "TRANSACTION") {
       const body = typeof req.body === "string" ? req.body : "";
       const records = parseAttlogBody(body);
       const result = await processAttendance(records);
-      logger.info({ sn, ...result }, "ADMS ATTLOG received");
+      logger.info({ sn, table, ...result }, "ADMS ATTLOG received");
     } else if (table === "USERINFO") {
       const body = typeof req.body === "string" ? req.body : "";
       const result = await processUserInfo(body);

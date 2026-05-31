@@ -16,8 +16,8 @@ function ts(): string {
 function append(text: string): void {
   try {
     fs.appendFileSync(LOG_PATH, text, "utf8");
-  } catch {
-    // Non-fatal: don't crash the request if logging fails
+  } catch (err) {
+    process.stderr.write(`[biometricLogger] write failed: ${err}\n`);
   }
 }
 

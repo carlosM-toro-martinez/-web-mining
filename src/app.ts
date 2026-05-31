@@ -24,16 +24,8 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// ADMS protocol — mounted BEFORE helmet so ZKTeco device does not receive
-// browser security headers (HSTS, CSP upgrade-insecure-requests) that can
-// cause the device firmware to silently upgrade subsequent POSTs to HTTPS
-// and fail to deliver attendance records.
-app.use("/iclock", iclockRoutes);
-
-// Helmet applies only to browser-facing routes (/api, /api-docs)
-app.use(helmet());
-
-// Log request info for development visibility
+// Log request info — must be registered BEFORE route handlers so it runs
+// for ALL requests including /iclock POSTs from the biometric device.
 app.use((req, res, next) => {
   const start = Date.now();
   logger.info({ method: req.method, url: req.originalUrl }, "Incoming request");
@@ -84,6 +76,12 @@ app.use((req, res, next) => {
 
   next();
 });
+
+// ADMS protocol — no helmet, no security headers (device firmware can't handle them)
+app.use("/iclock", iclockRoutes);
+
+// Helmet applies only to browser-facing routes below (/api, /api-docs)
+app.use(helmet());
 
 const swaggerDocument = {
   openapi: "3.0.0",
