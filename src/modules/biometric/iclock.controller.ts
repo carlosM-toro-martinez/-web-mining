@@ -52,7 +52,7 @@ export const iclockController = {
     const cmd = await getNextCommand();
 
     logger.info(
-      { sn, pendingCmd: cmd?.id ?? null, sendingUserInfoRequest: wantsUserInfo },
+      { sn, query: req.query, pendingCmd: cmd?.id ?? null, sendingUserInfoRequest: wantsUserInfo },
       "ADMS device check-in",
     );
 
