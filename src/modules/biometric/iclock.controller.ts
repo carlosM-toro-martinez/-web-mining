@@ -10,7 +10,7 @@ import {
   ackCommand,
   getDeviceStatus,
   setRequestUserInfo,
-  triggerInitialAttlogSync,
+  triggerAttlogQuery,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -180,8 +180,9 @@ export const iclockController = {
     res.setHeader("Content-Type", "text/plain");
 
     if (info !== undefined) {
-      // Queue the initial DATA QUERY ATTLOG once per SN per server session.
-      if (isReal) await triggerInitialAttlogSync(sn);
+      // Queue DATA QUERY ATTLOG on every scan so the device sends buffered records.
+      // Duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
+      if (isReal) await triggerAttlogQuery(sn);
 
       const wantsUserInfo = consumeRequestUserInfo();
       const cmd = await getNextCommand();

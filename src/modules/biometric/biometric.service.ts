@@ -6,23 +6,38 @@ import { getIO } from "../../config/socket.js";
 
 let _requestUserInfo = false;
 
-// Tracks which SNs have already had their initial ATTLOG sync queued this session.
-// On server restart it runs once per device again — duplicates are dropped by
-// the @@unique([deviceUserId, fecha]) constraint on AsistenciaLog.
-const _initialSyncDone = new Set<string>();
+// Returns the DATA QUERY ATTLOG startTime based on the last record we processed.
+// The device uses Bolivia local time (UTC-4), so we convert from stored UTC.
+// A 2-minute buffer avoids missing records due to clock drift or out-of-order delivery.
+async function attlogStartTime(): Promise<string> {
+  const latest = await prisma.asistenciaLog.findFirst({
+    orderBy: { fecha: "desc" },
+    select: { fecha: true },
+  });
+  if (!latest) return "2000-01-01 00:00:00";
 
-export async function triggerInitialAttlogSync(sn: string): Promise<void> {
-  if (_initialSyncDone.has(sn)) return;
-  _initialSyncDone.add(sn);
+  // Convert UTC → Bolivia (UTC-4) and subtract 2min buffer
+  const ms = latest.fecha.getTime() - 2 * 60_000 - 4 * 60 * 60_000;
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+// Queues a DATA QUERY ATTLOG command so the device sends records since the last sync.
+// On first run: queries from 2000 (gets everything).
+// On subsequent runs: queries from ~last record (gets only new ones).
+// Any duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
+export async function triggerAttlogQuery(sn: string): Promise<void> {
+  const startTime = await attlogStartTime();
   await prisma.syncQueue.create({
     data: {
       action: "CREATE",
-      payload: { command: "DATA QUERY ATTLOG startTime=2000-01-01 00:00:00 endTime=2099-12-31 23:59:59" },
+      payload: { command: `DATA QUERY ATTLOG startTime=${startTime} endTime=2099-12-31 23:59:59` },
       status: "PENDING",
       deviceIp: sn,
     },
   });
-  logger.info({ sn }, "Initial ATTLOG sync queued for device");
+  logger.info({ sn, startTime }, "ATTLOG query queued");
 }
 
 export async function updateDeviceHeartbeat(sn: string): Promise<void> {
@@ -92,7 +107,8 @@ export function parseAttlogBody(body: string): ParsedRecord[] {
     const dateStr = parts[1]?.trim();
     const statusStr = parts[2]?.trim();
     if (!deviceUserId || !dateStr) continue;
-    const fecha = new Date(dateStr);
+    // Device sends local Bolivia time (UTC-4). Append offset so it's stored as correct UTC.
+    const fecha = new Date(dateStr.replace(" ", "T") + "-04:00");
     if (isNaN(fecha.getTime())) continue;
     records.push({ deviceUserId, fecha, tipo: mapTipo(parseInt(statusStr ?? "0", 10)) });
   }
