@@ -5,22 +5,24 @@ import { biometricController } from "./biometric.controller.js";
 const router = Router();
 router.use(authenticate);
 
-// GET  /api/biometric/status           — Estado del dispositivo (última vez visto)
+const ROLES = ["ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"] as const;
+
+// GET  /api/biometric/status — cualquier usuario autenticado
 router.get("/status", biometricController.deviceStatus);
 
-// GET  /api/biometric/attendance       — Listar marcas de asistencia con filtros
+// GET  /api/biometric/attendance — cualquier usuario autenticado
 router.get("/attendance", biometricController.getAttendance);
 
-// GET  /api/biometric/device-users     — Empleados confirmados en el dispositivo
-router.get("/device-users", authorize("ADMIN", "ALMACENERO"), biometricController.deviceUsers);
+// GET  /api/biometric/device-users
+router.get("/device-users", authorize(...ROLES), biometricController.deviceUsers);
 
-// GET  /api/biometric/pending-commands — Ver comandos ADMS pendientes de enviar
-router.get("/pending-commands", authorize("ADMIN", "ALMACENERO"), biometricController.pendingCommands);
+// GET  /api/biometric/pending-commands
+router.get("/pending-commands", authorize(...ROLES), biometricController.pendingCommands);
 
-// POST /api/biometric/request-device-users — Importar usuarios del dispositivo a la BD
-router.post("/request-device-users", authorize("ADMIN", "ALMACENERO"), biometricController.requestDeviceUsers);
+// POST /api/biometric/request-device-users
+router.post("/request-device-users", authorize(...ROLES), biometricController.requestDeviceUsers);
 
-// POST /api/biometric/sync-attendance — forzar sync completo de todas las marcas del dispositivo
-router.post("/sync-attendance", authorize("ADMIN", "ALMACENERO"), biometricController.syncAttendance);
+// POST /api/biometric/sync-attendance
+router.post("/sync-attendance", authorize(...ROLES), biometricController.syncAttendance);
 
 export default router;
