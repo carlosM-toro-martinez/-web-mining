@@ -20,32 +20,19 @@ export function infoHasNewScan(sn: string, info: string): boolean {
   return true;
 }
 
-// Builds the startTime string for DATA QUERY ATTLOG based on last stored record.
-// Stored as device local time. 1-minute buffer to avoid missing boundary records.
-async function attlogStartTime(): Promise<string> {
-  const latest = await prisma.asistenciaLog.findFirst({
-    orderBy: { fecha: "desc" },
-    select: { fecha: true },
-  });
-  if (!latest) return "2000-01-01 00:00:00";
-  const d = new Date(latest.fecha.getTime() - 60_000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-}
-
 // Queues a DATA QUERY ATTLOG command in SyncQueue.
-// startTime defaults to last stored record (incremental) or full history if forced.
-export async function queueAttlogQuery(sn: string, full = false): Promise<void> {
-  const startTime = full ? "2000-01-01 00:00:00" : await attlogStartTime();
+// Always uses StartTime=2000-01-01 to get ALL records regardless of device clock/timezone.
+// Existing records are silently dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
+export async function queueAttlogQuery(sn: string): Promise<void> {
   await prisma.syncQueue.create({
     data: {
       action: "CREATE",
-      payload: { command: `DATA QUERY ATTLOG StartTime=${startTime} EndTime=2099-12-31 23:59:59` },
+      payload: { command: `DATA QUERY ATTLOG StartTime=2000-01-01 00:00:00 EndTime=2099-12-31 23:59:59` },
       status: "PENDING",
       deviceIp: sn,
     },
   });
-  logger.info({ sn, startTime, full }, "ATTLOG query queued");
+  logger.info({ sn }, "ATTLOG query queued");
 }
 
 export async function updateDeviceHeartbeat(sn: string): Promise<void> {

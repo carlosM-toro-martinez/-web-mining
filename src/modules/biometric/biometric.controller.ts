@@ -73,13 +73,16 @@ export const biometricController = {
   // Queues DATA QUERY ATTLOG from 2000 so device sends ALL its stored records.
   // Records already in DB are silently dropped by the unique constraint.
   // The command is delivered on the device's next heartbeat (~5-30s).
-  async syncAttendance(req: AuthRequest, res: Response) {
+  async syncAttendance(_req: AuthRequest, res: Response) {
     try {
-      const sn = String((req.query["sn"] as string) ?? "NYU7245000560");
-      await queueAttlogQuery(sn, true); // full=true → startTime=2000-01-01
+      const device = await prisma.deviceState.findFirst({ orderBy: { lastSeen: "desc" } });
+      if (!device) {
+        return res.status(404).json({ success: false, error: "No hay dispositivo conectado aún." });
+      }
+      await queueAttlogQuery(device.sn);
       res.json({
         success: true,
-        data: { message: "Sync encolado. El dispositivo enviará todos sus registros en el próximo heartbeat (~30s)." },
+        data: { message: `Sync encolado para ${device.sn}. El dispositivo enviará todos sus registros en el próximo heartbeat (~30s).` },
       });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
