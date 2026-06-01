@@ -130,7 +130,23 @@ export const iclockController = {
       // Return the same config as GET cdata so push mode activates
       const pushver = String(req.query["pushver"] ?? "");
       const wantsUserInfo = consumeRequestUserInfo();
-      const cmd = await getNextCommand();
+      let cmd = await getNextCommand();
+
+      // SenseFace 2A (and similar) won't re-push records just from ATTLOGSTAMP:0 —
+      // they track their own "already sent" pointer. If the device registers with
+      // pending records and no command is queued, we issue DATA QUERY ATTLOG explicitly
+      // so the device is forced to push all stored records right now.
+      if (!cmd && isRealDevice) {
+        const rawBody = extractBody();
+        const txMatch = rawBody.match(/TransactionCount=(\d+)/);
+        const txCount = parseInt(txMatch?.[1] ?? "0", 10);
+        if (txCount > 0) {
+          await queueAttlogQuery(sn);
+          cmd = await getNextCommand();
+          logger.info({ sn, txCount }, "ADMS auto-queued ATTLOG query on device registration");
+        }
+      }
+
       let body =
         `GET DATETIME:${nowDateTimeStr()}\n` +
         `STAMP:0\n` +
@@ -152,6 +168,7 @@ export const iclockController = {
       if (cmd) {
         body += `C:${cmd.id}:${cmd.command}\n`;
         await ackCommand(cmd.id, true);
+        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via options/registry");
       }
       logger.info({ sn, table }, "ADMS POST cdata options/registry — sending config");
       res.setHeader("Content-Type", "text/plain");
