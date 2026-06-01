@@ -137,7 +137,7 @@ export async function eliminarHorario(id: number) {
 
 export async function asignarHorario(employeeId: number, horarioId: number, desde: Date) {
   const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
-  if (!emp) throw new HttpError("Empleado no encontrado", 404);
+  if (!emp) throw new HttpError(`Empleado no encontrado (id=${employeeId}). Usa GET /api/employees para obtener los IDs correctos.`, 404);
 
   const hor = await prisma.horario.findUnique({ where: { id: horarioId } });
   if (!hor) throw new HttpError("Horario no encontrado", 404);
@@ -285,10 +285,56 @@ export async function eliminarAusencia(id: number) {
 
 // ─── REPORTE DE ASISTENCIA ────────────────────────────────────────────────────
 
+// Elimina marcas consecutivas del mismo tipo dentro de una ventana de tiempo.
+// Evita contar doble-escaneos accidentales del biométrico en el reporte.
+// Los datos originales en AsistenciaLog NO se modifican.
+function dedupMarks(marks: Date[], windowMs = 5 * 60 * 1000): Date[] {
+  const sorted = [...marks].sort((a, b) => a.getTime() - b.getTime());
+  const result: Date[] = [];
+  for (const mark of sorted) {
+    const last = result[result.length - 1];
+    if (!last || mark.getTime() - last.getTime() > windowMs) {
+      result.push(mark);
+    }
+  }
+  return result;
+}
+
+// Clasifica las marcas del día en entrada y salida usando lógica de tiempo.
+// Ignora el tipo que manda el dispositivo (siempre manda ENTRADA=0 en este setup).
+// Reglas:
+//   1. Dedup ventana 5 min → eliminar doble-escaneos
+//   2. Si 3+ marcas → solo tomar la primera (más temprana) y la última (más tardía)
+//   3. Si 2 marcas → primera = entrada, última = salida
+//   4. Si 1 marca + horario → por proximidad: más cerca de horaEntrada → entrada, más cerca de horaSalida → salida
+//   5. Si 1 marca + sin horario → entrada
+function clasificarMarcasDia(
+  todas: Date[],
+  horario: { horaEntrada: string; horaSalida: string } | null,
+): { entrada: Date | null; salida: Date | null } {
+  if (todas.length === 0) return { entrada: null, salida: null };
+
+  const unicas  = dedupMarks(todas);
+  const sorted  = [...unicas].sort((a, b) => a.getTime() - b.getTime());
+
+  // Con 3+ marcas: solo extremos
+  const relevantes = sorted.length >= 3
+    ? [sorted[0]!, sorted[sorted.length - 1]!]
+    : sorted;
+
+  // Una sola marca → siempre es entrada. No hay suficiente contexto para asumir salida.
+  if (relevantes.length === 1) {
+    return { entrada: relevantes[0]!, salida: null };
+  }
+
+  // 2 marcas → primera entrada, última salida
+  return { entrada: relevantes[0]!, salida: relevantes[1]! };
+}
+
 type EstadoDia =
   | "PUNTUAL" | "TARDE" | "AUSENTE" | "SIN_HORARIO"
   | "NO_LABORAL" | "VACACION" | "DESCANSO"
-  | "PERMISO" | "ENFERMEDAD" | "FERIADO" | "OTRO";
+  | "PERMISO" | "ENFERMEDAD" | "FERIADO" | "ABANDONO" | "OTRO";
 
 export async function generarReporte(desde: Date, hasta: Date, employeeId?: number) {
   const desdeInicio = inicioDelDia(desde);
@@ -328,17 +374,17 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
     },
   });
 
-  // Agrupar logs por employeeId → fecha (YYYY-MM-DD) → tipo → primera/última marca
-  const logsByEmp = new Map<number, Map<string, { entradas: Date[]; salidas: Date[] }>>();
+  // Agrupar todas las marcas por employeeId → fecha (YYYY-MM-DD)
+  // El tipo del dispositivo se ignora: la clasificación entrada/salida
+  // se hace por proximidad al horario, no por lo que manda el biométrico.
+  const logsByEmp = new Map<number, Map<string, Date[]>>();
   for (const log of logs) {
     if (!log.employeeId) continue;
     if (!logsByEmp.has(log.employeeId)) logsByEmp.set(log.employeeId, new Map());
     const byDate = logsByEmp.get(log.employeeId)!;
     const key = log.fecha.toISOString().slice(0, 10);
-    if (!byDate.has(key)) byDate.set(key, { entradas: [], salidas: [] });
-    const entry = byDate.get(key)!;
-    if (log.tipo === "ENTRADA") entry.entradas.push(log.fecha);
-    else if (log.tipo === "SALIDA") entry.salidas.push(log.fecha);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key)!.push(log.fecha);
   }
 
   // Agrupar ausencias por employeeId
@@ -355,7 +401,7 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
     const dias = [];
     const resumen: Record<string, number> = {
       puntual: 0, tarde: 0, ausente: 0,
-      vacacion: 0, descanso: 0, permiso: 0, enfermedad: 0, feriado: 0, otro: 0,
+      vacacion: 0, descanso: 0, permiso: 0, enfermedad: 0, feriado: 0, abandono: 0, otro: 0,
       noLaboral: 0, sinHorario: 0,
     };
 
@@ -409,31 +455,34 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
           const key = aus.tipo.toLowerCase();
           resumen[key] = (resumen[key] ?? 0) + 1;
         } else {
-          const marcas = empLogs.get(diaStr);
-          if (!marcas || marcas.entradas.length === 0) {
+          const todasLasMarcas = empLogs.get(diaStr) ?? [];
+          if (todasLasMarcas.length === 0) {
             estado = "AUSENTE";
             resumen["ausente"]!++;
           } else {
-            const primeraEntrada = marcas.entradas.reduce((a: Date, b: Date) => (a < b ? a : b));
-            const ultimaSalida   = marcas.salidas.length > 0
-              ? marcas.salidas.reduce((a: Date, b: Date) => (a > b ? a : b))
-              : null;
-
-            const retraso = calcularRetraso(primeraEntrada, horario.horaEntrada, horario.tolerancia);
-            minutosRetraso = Math.max(0, retraso);
-
             const hh = (d: Date) =>
               `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 
-            entradaReal = hh(primeraEntrada);
-            salidaReal  = ultimaSalida ? hh(ultimaSalida) : null;
+            const { entrada, salida } = clasificarMarcasDia(todasLasMarcas, horario);
 
-            if (retraso > 0) {
-              estado = "TARDE";
-              resumen["tarde"]!++;
+            entradaReal = entrada ? hh(entrada) : null;
+            salidaReal  = salida  ? hh(salida)  : null;
+
+            if (!entrada) {
+              // Solo salida registrada, sin entrada → ausente a efectos prácticos
+              estado = "AUSENTE";
+              resumen["ausente"]!++;
             } else {
-              estado = "PUNTUAL";
-              resumen["puntual"]!++;
+              const retraso = calcularRetraso(entrada, horario.horaEntrada, horario.tolerancia);
+              minutosRetraso = Math.max(0, retraso);
+
+              if (retraso > 0) {
+                estado = "TARDE";
+                resumen["tarde"]!++;
+              } else {
+                estado = "PUNTUAL";
+                resumen["puntual"]!++;
+              }
             }
           }
         }

@@ -34,7 +34,7 @@ const asignacionSchema = z.object({
   desde:      z.coerce.date(),
 });
 
-const AUSENCIA_TIPOS = ["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","OTRO"] as const;
+const AUSENCIA_TIPOS = ["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","ABANDONO","OTRO"] as const;
 
 const ausenciaSchema = z.object({
   employeeId: z.coerce.number().int().positive(),
