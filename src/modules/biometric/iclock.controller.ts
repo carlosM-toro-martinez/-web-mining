@@ -48,7 +48,6 @@ export const iclockController = {
     logger.info({ sn, query: req.query }, "ADMS cdata GET heartbeat");
 
     const body =
-      `OK\n` +
       `RegistryCode=1\n` +
       `Delay=10\n` +
       `ErrorDelay=60\n` +
@@ -138,7 +137,7 @@ export const iclockController = {
     if (cmd) {
       await ackCommand(cmd.id, true);
       logger.info({ sn, cmdId: cmd.id, command: cmd.command }, "ADMS comando entregado via getrequest");
-      return res.send(`C:${cmd.id}:${cmd.command}`);
+      return res.send(`C:${cmd.id}:${cmd.command}\n`);
     }
 
     return res.send("OK");
