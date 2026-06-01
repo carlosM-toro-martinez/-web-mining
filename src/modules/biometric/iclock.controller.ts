@@ -11,6 +11,7 @@ import {
   getDeviceStatus,
   setRequestUserInfo,
   triggerAttlogQuery,
+  isNewScan,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -180,9 +181,10 @@ export const iclockController = {
     res.setHeader("Content-Type", "text/plain");
 
     if (info !== undefined) {
-      // Queue DATA QUERY ATTLOG on every scan so the device sends buffered records.
-      // Duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
-      if (isReal) await triggerAttlogQuery(sn);
+      // Only trigger DATA QUERY when the count in INFO increases — that means a real
+      // new face scan happened. If count is the same, the device is just responding
+      // to our previous DATA QUERY (loop) and we should not queue another command.
+      if (isReal && isNewScan(sn, String(info))) await triggerAttlogQuery(sn);
 
       const wantsUserInfo = consumeRequestUserInfo();
       const cmd = await getNextCommand();

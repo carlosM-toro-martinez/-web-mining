@@ -7,8 +7,8 @@ import { getIO } from "../../config/socket.js";
 let _requestUserInfo = false;
 
 // Returns the DATA QUERY ATTLOG startTime based on the last record we processed.
-// The device uses Bolivia local time (UTC-4), so we convert from stored UTC.
-// A 2-minute buffer avoids missing records due to clock drift or out-of-order delivery.
+// No timezone conversion — device time is stored and queried in the same space.
+// 1-minute buffer to avoid missing records at the boundary.
 async function attlogStartTime(): Promise<string> {
   const latest = await prisma.asistenciaLog.findFirst({
     orderBy: { fecha: "desc" },
@@ -16,11 +16,23 @@ async function attlogStartTime(): Promise<string> {
   });
   if (!latest) return "2000-01-01 00:00:00";
 
-  // Convert UTC → Bolivia (UTC-4) and subtract 2min buffer
-  const ms = latest.fecha.getTime() - 2 * 60_000 - 4 * 60 * 60_000;
-  const d = new Date(ms);
+  const d = new Date(latest.fecha.getTime() - 60_000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+// Tracks the last INFO count seen per SN to detect real new scans vs loop responses.
+// The ZAM70 sends getrequest+INFO= both when a new scan happens AND as a response
+// to each DATA QUERY ATTLOG command. The count field (position 3 in INFO string)
+// only increments on actual face scans, so we use it to break the loop.
+const _lastInfoCount = new Map<string, number>();
+
+export function isNewScan(sn: string, info: string): boolean {
+  const count = parseInt(info.split(",")[3] ?? "0", 10);
+  const prev = _lastInfoCount.get(sn) ?? -1;
+  if (isNaN(count) || count <= prev) return false;
+  _lastInfoCount.set(sn, count);
+  return true;
 }
 
 // Queues a DATA QUERY ATTLOG command so the device sends records since the last sync.
@@ -107,8 +119,10 @@ export function parseAttlogBody(body: string): ParsedRecord[] {
     const dateStr = parts[1]?.trim();
     const statusStr = parts[2]?.trim();
     if (!deviceUserId || !dateStr) continue;
-    // Device sends local Bolivia time (UTC-4). Append offset so it's stored as correct UTC.
-    const fecha = new Date(dateStr.replace(" ", "T") + "-04:00");
+    // Store exactly what the device sends. The device clock must be set to
+    // Bolivia time in its admin panel. We treat device time as the source of
+    // truth and never convert — what the device says is what gets stored.
+    const fecha = new Date(dateStr.replace(" ", "T") + "Z");
     if (isNaN(fecha.getTime())) continue;
     records.push({ deviceUserId, fecha, tipo: mapTipo(parseInt(statusStr ?? "0", 10)) });
   }
