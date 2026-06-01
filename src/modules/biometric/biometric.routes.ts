@@ -20,4 +20,7 @@ router.get("/pending-commands", authorize("ADMIN", "ALMACENERO"), biometricContr
 // POST /api/biometric/request-device-users — Importar usuarios del dispositivo a la BD
 router.post("/request-device-users", authorize("ADMIN", "ALMACENERO"), biometricController.requestDeviceUsers);
 
+// POST /api/biometric/sync-attendance — forzar sync completo de todas las marcas del dispositivo
+router.post("/sync-attendance", authorize("ADMIN", "ALMACENERO"), biometricController.syncAttendance);
+
 export default router;

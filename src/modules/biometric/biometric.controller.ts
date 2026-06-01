@@ -1,7 +1,7 @@
 import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { z } from "zod";
-import { getDeviceStatus, getAttendanceLogs, setRequestUserInfo } from "./biometric.service.js";
+import { getDeviceStatus, getAttendanceLogs, setRequestUserInfo, queueAttlogQuery } from "./biometric.service.js";
 import { prisma } from "../../config/prisma.js";
 
 const attendanceQuerySchema = z.object({
@@ -67,6 +67,23 @@ export const biometricController = {
         message: "El dispositivo enviará su lista de usuarios en el próximo heartbeat (~30s). Revisa GET /api/employees para ver los importados.",
       },
     });
+  },
+
+  // POST /api/biometric/sync-attendance — manual full sync from device
+  // Queues DATA QUERY ATTLOG from 2000 so device sends ALL its stored records.
+  // Records already in DB are silently dropped by the unique constraint.
+  // The command is delivered on the device's next heartbeat (~5-30s).
+  async syncAttendance(req: AuthRequest, res: Response) {
+    try {
+      const sn = String((req.query["sn"] as string) ?? "NYU7245000560");
+      await queueAttlogQuery(sn, true); // full=true → startTime=2000-01-01
+      res.json({
+        success: true,
+        data: { message: "Sync encolado. El dispositivo enviará todos sus registros en el próximo heartbeat (~30s)." },
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
   },
 
   // GET /api/biometric/pending-commands — see queued ADMS commands

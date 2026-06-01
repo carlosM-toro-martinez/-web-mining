@@ -6,35 +6,37 @@ import { getIO } from "../../config/socket.js";
 
 let _requestUserInfo = false;
 
-// Returns the DATA QUERY ATTLOG startTime based on the last record we processed.
-// No timezone conversion — device time is stored and queried in the same space.
-// 1-minute buffer to avoid missing records at the boundary.
+// Last INFO count seen per SN — used to detect real new scans vs loop callbacks.
+// ZAM70 sends getrequest+INFO= both on new scans AND after receiving a DATA QUERY,
+// but the count field only increments on actual face scans.
+const _lastInfoCount = new Map<string, number>();
+
+// Returns true if the count in the INFO string is higher than last seen for this SN.
+export function infoHasNewScan(sn: string, info: string): boolean {
+  const count = parseInt(info.split(",")[3] ?? "0", 10);
+  const prev = _lastInfoCount.get(sn) ?? -1;
+  if (isNaN(count) || count <= prev) return false;
+  _lastInfoCount.set(sn, count);
+  return true;
+}
+
+// Builds the startTime string for DATA QUERY ATTLOG based on last stored record.
+// Stored as device local time. 1-minute buffer to avoid missing boundary records.
 async function attlogStartTime(): Promise<string> {
   const latest = await prisma.asistenciaLog.findFirst({
     orderBy: { fecha: "desc" },
     select: { fecha: true },
   });
   if (!latest) return "2000-01-01 00:00:00";
-
   const d = new Date(latest.fecha.getTime() - 60_000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-// Per-SN timestamp of the last DATA QUERY ATTLOG we queued.
-// Used to debounce: don't queue another within 30s to avoid infinite loops.
-const _lastQueryTime = new Map<string, number>();
-
-// Queues DATA QUERY ATTLOG if 30s have passed since the last one for this SN.
-// Called on EVERY getrequest (both INFO= and plain heartbeat) so new scans
-// are always captured within 30s regardless of device heartbeat type.
-// Duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
-export async function maybeQueueAttlogQuery(sn: string): Promise<void> {
-  const last = _lastQueryTime.get(sn) ?? 0;
-  if (Date.now() - last < 30_000) return;
-  _lastQueryTime.set(sn, Date.now());
-
-  const startTime = await attlogStartTime();
+// Queues a DATA QUERY ATTLOG command in SyncQueue.
+// startTime defaults to last stored record (incremental) or full history if forced.
+export async function queueAttlogQuery(sn: string, full = false): Promise<void> {
+  const startTime = full ? "2000-01-01 00:00:00" : await attlogStartTime();
   await prisma.syncQueue.create({
     data: {
       action: "CREATE",
@@ -43,7 +45,7 @@ export async function maybeQueueAttlogQuery(sn: string): Promise<void> {
       deviceIp: sn,
     },
   });
-  logger.info({ sn, startTime }, "ATTLOG query queued");
+  logger.info({ sn, startTime, full }, "ATTLOG query queued");
 }
 
 export async function updateDeviceHeartbeat(sn: string): Promise<void> {

@@ -10,7 +10,8 @@ import {
   ackCommand,
   getDeviceStatus,
   setRequestUserInfo,
-  maybeQueueAttlogQuery,
+  infoHasNewScan,
+  queueAttlogQuery,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -166,28 +167,30 @@ export const iclockController = {
     res.send("OK");
   },
 
-  // GET /iclock/getrequest — heartbeat + registration for ZAM70 firmware.
-  //
-  // Strategy: queue DATA QUERY ATTLOG on every heartbeat (INFO= or plain) but
-  // debounced to once every 30s. This guarantees new scans are captured within
-  // 30s regardless of whether the device sends INFO= or plain heartbeats after
-  // a scan. The 30s debounce prevents infinite loops.
+  // GET /iclock/getrequest
+  // ZAM70 never calls /iclock/cdata for registration — it uses getrequest+INFO=.
+  // When INFO= carries a new count (real face scan), we queue DATA QUERY ATTLOG
+  // so the device sends all records since the last stored one. Same count = loop
+  // response from device — we send config only to break the cycle.
+  // Plain heartbeats (no INFO=) deliver any other pending commands (user sync etc).
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const info = req.query["INFO"];
     const isReal = sn && sn !== "TEST" && sn.length > 4;
     if (isReal) await updateDeviceHeartbeat(sn);
 
-    // Queue DATA QUERY ATTLOG (debounced 30s) on every heartbeat type
-    if (isReal) await maybeQueueAttlogQuery(sn);
-
     res.setHeader("Content-Type", "text/plain");
 
     if (info !== undefined) {
-      // INFO= heartbeat: device is registering/re-registering. Send config + any queued command.
-      const wantsUserInfo = consumeRequestUserInfo();
-      const cmd = await getNextCommand();
       const pushver = String(req.query["pushver"] ?? "");
+      const wantsUserInfo = consumeRequestUserInfo();
+
+      // Queue DATA QUERY only when count increases (new scan). Same count = loop.
+      if (isReal && infoHasNewScan(sn, String(info))) {
+        await queueAttlogQuery(sn);
+      }
+
+      const cmd = await getNextCommand();
 
       let body =
         `RegistryCode=1\n` +
@@ -212,7 +215,7 @@ export const iclockController = {
       return res.send(body);
     }
 
-    // Plain heartbeat — deliver any queued command (including the DATA QUERY we just created)
+    // Plain heartbeat — deliver pending commands (user sync, manual sync, etc.)
     const cmd = await getNextCommand();
     if (cmd) {
       await ackCommand(cmd.id, true);
