@@ -199,6 +199,10 @@ export async function processUserInfo(body: string): Promise<{
       });
 
       if (existing) {
+        await prisma.employee.update({
+          where: { id: existing.id },
+          data: { nombre, syncStatus: "SYNCED" },
+        });
         result.actualizados++;
       } else {
         await prisma.employee.create({
