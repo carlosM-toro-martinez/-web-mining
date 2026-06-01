@@ -6,6 +6,25 @@ import { getIO } from "../../config/socket.js";
 
 let _requestUserInfo = false;
 
+// Tracks which SNs have already had their initial ATTLOG sync queued this session.
+// On server restart it runs once per device again — duplicates are dropped by
+// the @@unique([deviceUserId, fecha]) constraint on AsistenciaLog.
+const _initialSyncDone = new Set<string>();
+
+export async function triggerInitialAttlogSync(sn: string): Promise<void> {
+  if (_initialSyncDone.has(sn)) return;
+  _initialSyncDone.add(sn);
+  await prisma.syncQueue.create({
+    data: {
+      action: "CREATE",
+      payload: { command: "DATA QUERY ATTLOG startTime=2000-01-01 00:00:00 endTime=2099-12-31 23:59:59" },
+      status: "PENDING",
+      deviceIp: sn,
+    },
+  });
+  logger.info({ sn }, "Initial ATTLOG sync queued for device");
+}
+
 export async function updateDeviceHeartbeat(sn: string): Promise<void> {
   await prisma.deviceState.upsert({
     where: { sn },

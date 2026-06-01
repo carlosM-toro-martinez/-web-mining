@@ -10,6 +10,7 @@ import {
   ackCommand,
   getDeviceStatus,
   setRequestUserInfo,
+  triggerInitialAttlogSync,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -69,7 +70,7 @@ export const iclockController = {
       `RegistryCode=1\n` +
       `Delay=30\n` +
       `ErrorDelay=60\n` +
-      `TransTimes=00:00;14:00\n` +
+      `TransTimes=00:00;23:59\n` +
       `TransInterval=1\n` +
       `TransFlag=True\n` +
       `Realtime=1\n` +
@@ -140,7 +141,7 @@ export const iclockController = {
         `RegistryCode=1\n` +
         `Delay=30\n` +
         `ErrorDelay=60\n` +
-        `TransTimes=00:00;14:00\n` +
+        `TransTimes=00:00;23:59\n` +
         `TransInterval=1\n` +
         `TransFlag=True\n` +
         `Realtime=1\n` +
@@ -165,29 +166,32 @@ export const iclockController = {
     res.send("OK");
   },
 
-  // GET /iclock/getrequest — command poll AND initial registration for ZAM70/v3 firmware
-  // When INFO= is present the device is doing its initial registration handshake.
-  // Per ZKTeco ADMS docs, respond with ONLY the key=value config block (no GET DATETIME:
-  // or STAMP: lines) using \n line endings. This is what activates real-time ATTLOG push.
+  // GET /iclock/getrequest — heartbeat + initial registration for ZAM70 firmware.
+  // ZAM70-NF24HA never calls /iclock/cdata for registration; it uses getrequest+INFO=.
+  // On first connection we queue a DATA QUERY ATTLOG command via SyncQueue so the
+  // device sends all its buffered records. The SyncQueue marks it SYNCED on delivery
+  // so it's only sent once — no loop.
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const info = req.query["INFO"];
-    if (sn && sn !== "TEST" && sn.length > 4) await updateDeviceHeartbeat(sn);
+    const isReal = sn && sn !== "TEST" && sn.length > 4;
+    if (isReal) await updateDeviceHeartbeat(sn);
 
     res.setHeader("Content-Type", "text/plain");
 
     if (info !== undefined) {
+      // Queue the initial DATA QUERY ATTLOG once per SN per server session.
+      if (isReal) await triggerInitialAttlogSync(sn);
+
       const wantsUserInfo = consumeRequestUserInfo();
       const cmd = await getNextCommand();
       const pushver = String(req.query["pushver"] ?? "");
 
-      // Minimal registration response — exactly the format the docs specify.
-      // No GET DATETIME:, no STAMP: lines. Just key=value with \n.
       let body =
         `RegistryCode=1\n` +
         `Delay=30\n` +
         `ErrorDelay=60\n` +
-        `TransTimes=00:00;14:00\n` +
+        `TransTimes=00:00;23:59\n` +
         `TransInterval=1\n` +
         `TransFlag=True\n` +
         `Realtime=1\n` +
@@ -199,17 +203,18 @@ export const iclockController = {
       if (cmd) {
         body += `C:${cmd.id}:${cmd.command}\n`;
         await ackCommand(cmd.id, true);
-        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest INFO");
+        logger.info({ sn, cmdId: cmd.id, command: cmd.command }, "ADMS command delivered via getrequest INFO");
       }
 
-      logger.info({ sn, info, pushver }, "ADMS getrequest INFO — sending registration config");
+      logger.info({ sn, pushver, cmdSent: cmd?.id ?? null }, "ADMS getrequest INFO — registration config sent");
       return res.send(body);
     }
 
+    // Plain heartbeat — serve any pending command or OK
     const cmd = await getNextCommand();
     if (cmd) {
       await ackCommand(cmd.id, true);
-      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest");
+      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest heartbeat");
       res.send(`C:${cmd.id}:${cmd.command}`);
     } else {
       res.send("OK");
