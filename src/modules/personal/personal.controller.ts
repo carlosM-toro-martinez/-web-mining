@@ -9,17 +9,22 @@ import {
   generarReporte,
 } from "./personal.service.js";
 
+// Elimina keys con valor undefined para satisfacer exactOptionalPropertyTypes
+function strip<T extends object>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
 // ─── Schemas de validación ────────────────────────────────────────────────────
 
 const horarioSchema = z.object({
-  nombre:      z.string().min(1),
-  descripcion: z.string().optional(),
-  horaEntrada: z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
-  horaSalida:  z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
-  tolerancia:  z.coerce.number().int().min(0).max(120).optional(),
-  lunes:    z.boolean().optional(), martes:   z.boolean().optional(),
-  miercoles:z.boolean().optional(), jueves:   z.boolean().optional(),
-  viernes:  z.boolean().optional(), sabado:   z.boolean().optional(),
+  nombre:       z.string().min(1),
+  descripcion:  z.string().optional(),
+  horaEntrada:  z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
+  horaSalida:   z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
+  tolerancia:   z.coerce.number().int().min(0).max(120).optional(),
+  lunes:    z.boolean().optional(), martes:    z.boolean().optional(),
+  miercoles:z.boolean().optional(), jueves:    z.boolean().optional(),
+  viernes:  z.boolean().optional(), sabado:    z.boolean().optional(),
   domingo:  z.boolean().optional(),
 });
 
@@ -48,26 +53,24 @@ export const personalController = {
   // ── Horarios ──────────────────────────────────────────────────────────────
 
   async listarHorarios(_req: AuthRequest, res: Response) {
-    const data = await listarHorarios();
-    res.json({ success: true, data });
+    res.json({ success: true, data: await listarHorarios() });
   },
 
   async obtenerHorario(req: AuthRequest, res: Response) {
-    const data = await obtenerHorario(Number(req.params["id"]));
-    res.json({ success: true, data });
+    res.json({ success: true, data: await obtenerHorario(Number(req.params["id"])) });
   },
 
   async crearHorario(req: AuthRequest, res: Response) {
     const parsed = horarioSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
-    const data = await crearHorario(parsed.data);
+    const data = await crearHorario(strip(parsed.data));
     res.status(201).json({ success: true, data });
   },
 
   async actualizarHorario(req: AuthRequest, res: Response) {
     const parsed = horarioSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
-    const data = await actualizarHorario(Number(req.params["id"]), parsed.data);
+    const data = await actualizarHorario(Number(req.params["id"]), strip(parsed.data));
     res.json({ success: true, data });
   },
 
@@ -86,13 +89,11 @@ export const personalController = {
   },
 
   async horarioActualEmpleado(req: AuthRequest, res: Response) {
-    const data = await horarioActualEmpleado(Number(req.params["id"]));
-    res.json({ success: true, data: data ?? null });
+    res.json({ success: true, data: await horarioActualEmpleado(Number(req.params["id"])) ?? null });
   },
 
   async historialHorariosEmpleado(req: AuthRequest, res: Response) {
-    const data = await historialHorariosEmpleado(Number(req.params["id"]));
-    res.json({ success: true, data });
+    res.json({ success: true, data: await historialHorariosEmpleado(Number(req.params["id"])) });
   },
 
   async eliminarAsignacion(req: AuthRequest, res: Response) {
@@ -105,28 +106,42 @@ export const personalController = {
   async crearAusencia(req: AuthRequest, res: Response) {
     const parsed = ausenciaSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
-    const data = await crearAusencia(parsed.data);
+    const { employeeId, tipo, desde, hasta, motivo, aprobado, creadoPor } = parsed.data;
+    const data = await crearAusencia({
+      employeeId, tipo: tipo as AusenciaTipo, desde, hasta,
+      ...(motivo    !== undefined && { motivo }),
+      ...(aprobado  !== undefined && { aprobado }),
+      ...(creadoPor !== undefined && { creadoPor }),
+    });
     res.status(201).json({ success: true, data });
   },
 
   async listarAusencias(req: AuthRequest, res: Response) {
     const q = req.query;
-    const data = await listarAusencias({
-      employeeId: q["empleadoId"] ? Number(q["empleadoId"]) : undefined,
-      tipo:       q["tipo"] as AusenciaTipo | undefined,
-      desde:      q["desde"] ? new Date(String(q["desde"])) : undefined,
-      hasta:      q["hasta"] ? new Date(String(q["hasta"]))  : undefined,
-      aprobado:   q["aprobado"] !== undefined ? q["aprobado"] === "true" : undefined,
-      page:       q["page"]  ? Number(q["page"])  : undefined,
-      limit:      q["limit"] ? Number(q["limit"]) : undefined,
-    });
-    res.json({ success: true, ...data });
+    const filtros: Parameters<typeof listarAusencias>[0] = {};
+    if (q["empleadoId"]) filtros.employeeId = Number(q["empleadoId"]);
+    if (q["tipo"])       filtros.tipo       = q["tipo"] as AusenciaTipo;
+    if (q["desde"])      filtros.desde      = new Date(String(q["desde"]));
+    if (q["hasta"])      filtros.hasta      = new Date(String(q["hasta"]));
+    if (q["aprobado"] !== undefined) filtros.aprobado = q["aprobado"] === "true";
+    if (q["page"])       filtros.page       = Number(q["page"]);
+    if (q["limit"])      filtros.limit      = Number(q["limit"]);
+    const result = await listarAusencias(filtros);
+    res.json({ success: true, ...result });
   },
 
   async actualizarAusencia(req: AuthRequest, res: Response) {
     const parsed = ausenciaSchema.omit({ employeeId: true }).partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
-    const data = await actualizarAusencia(Number(req.params["id"]), parsed.data);
+    const { tipo, desde, hasta, motivo, aprobado, creadoPor } = parsed.data;
+    const data = await actualizarAusencia(Number(req.params["id"]), {
+      ...(tipo      !== undefined && { tipo: tipo as AusenciaTipo }),
+      ...(desde     !== undefined && { desde }),
+      ...(hasta     !== undefined && { hasta }),
+      ...(motivo    !== undefined && { motivo }),
+      ...(aprobado  !== undefined && { aprobado }),
+      ...(creadoPor !== undefined && { creadoPor }),
+    });
     res.json({ success: true, data });
   },
 
@@ -147,7 +162,6 @@ export const personalController = {
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
     const { desde, hasta, empleadoId } = parsed.data;
     if (desde > hasta) return res.status(400).json({ success: false, error: "'desde' debe ser anterior a 'hasta'" });
-
     const data = await generarReporte(desde, hasta, empleadoId);
     res.json({ success: true, data });
   },

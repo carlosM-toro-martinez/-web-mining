@@ -48,12 +48,13 @@ function inicioDelDia(fecha: Date): Date {
 
 export async function crearHorario(data: {
   nombre: string;
-  descripcion?: string;
+  descripcion?: string | undefined;
   horaEntrada: string;
   horaSalida: string;
-  tolerancia?: number;
-  lunes?: boolean; martes?: boolean; miercoles?: boolean;
-  jueves?: boolean; viernes?: boolean; sabado?: boolean; domingo?: boolean;
+  tolerancia?: number | undefined;
+  lunes?: boolean | undefined; martes?: boolean | undefined; miercoles?: boolean | undefined;
+  jueves?: boolean | undefined; viernes?: boolean | undefined;
+  sabado?: boolean | undefined; domingo?: boolean | undefined;
 }) {
   if (!validarHora(data.horaEntrada)) throw new HttpError("horaEntrada inválida (HH:MM)", 400);
   if (!validarHora(data.horaSalida))  throw new HttpError("horaSalida inválida (HH:MM)", 400);
@@ -94,11 +95,15 @@ export async function obtenerHorario(id: number) {
   return h;
 }
 
-export async function actualizarHorario(id: number, data: Partial<{
-  nombre: string; descripcion: string; horaEntrada: string; horaSalida: string;
-  tolerancia: number; lunes: boolean; martes: boolean; miercoles: boolean;
-  jueves: boolean; viernes: boolean; sabado: boolean; domingo: boolean; activo: boolean;
-}>) {
+export async function actualizarHorario(id: number, data: {
+  nombre?: string | undefined; descripcion?: string | undefined;
+  horaEntrada?: string | undefined; horaSalida?: string | undefined;
+  tolerancia?: number | undefined; lunes?: boolean | undefined;
+  martes?: boolean | undefined; miercoles?: boolean | undefined;
+  jueves?: boolean | undefined; viernes?: boolean | undefined;
+  sabado?: boolean | undefined; domingo?: boolean | undefined;
+  activo?: boolean | undefined;
+}) {
   const existe = await prisma.horario.findUnique({ where: { id } });
   if (!existe) throw new HttpError("Horario no encontrado", 404);
 
@@ -112,7 +117,13 @@ export async function actualizarHorario(id: number, data: Partial<{
   if (toMinutes(entrada) >= toMinutes(salida))
     throw new HttpError("horaEntrada debe ser anterior a horaSalida", 400);
 
-  return prisma.horario.update({ where: { id }, data });
+  const payload: Record<string, unknown> = {};
+  const fields = ["nombre","descripcion","horaEntrada","horaSalida","tolerancia",
+                  "lunes","martes","miercoles","jueves","viernes","sabado","domingo","activo"] as const;
+  for (const f of fields) {
+    if (data[f] !== undefined) payload[f] = data[f];
+  }
+  return prisma.horario.update({ where: { id }, data: payload });
 }
 
 export async function eliminarHorario(id: number) {
@@ -236,9 +247,14 @@ export async function listarAusencias(filtros: {
   return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
 }
 
-export async function actualizarAusencia(id: number, data: Partial<{
-  tipo: AusenciaTipo; desde: Date; hasta: Date; motivo: string; aprobado: boolean; creadoPor: string;
-}>) {
+export async function actualizarAusencia(id: number, data: {
+  tipo?: AusenciaTipo | undefined;
+  desde?: Date | undefined;
+  hasta?: Date | undefined;
+  motivo?: string | undefined;
+  aprobado?: boolean | undefined;
+  creadoPor?: string | undefined;
+}) {
   const existe = await prisma.ausenciaEmpleado.findUnique({ where: { id } });
   if (!existe) throw new HttpError("Ausencia no encontrada", 404);
 
@@ -246,9 +262,17 @@ export async function actualizarAusencia(id: number, data: Partial<{
   const hasta  = data.hasta  ? inicioDelDia(data.hasta)  : undefined;
   if (desde && hasta && desde > hasta) throw new HttpError("'desde' debe ser anterior o igual a 'hasta'", 400);
 
+  const updatePayload: Record<string, unknown> = {};
+  if (data.tipo      !== undefined) updatePayload["tipo"]      = data.tipo;
+  if (data.motivo    !== undefined) updatePayload["motivo"]    = data.motivo;
+  if (data.aprobado  !== undefined) updatePayload["aprobado"]  = data.aprobado;
+  if (data.creadoPor !== undefined) updatePayload["creadoPor"] = data.creadoPor;
+  if (desde) updatePayload["desde"] = desde;
+  if (hasta)  updatePayload["hasta"]  = hasta;
+
   return prisma.ausenciaEmpleado.update({
     where: { id },
-    data:  { ...data, ...(desde ? { desde } : {}), ...(hasta ? { hasta } : {}) },
+    data:  updatePayload,
     include: { employee: { select: { id: true, nombre: true, cargo: true } } },
   });
 }
@@ -390,9 +414,9 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
             estado = "AUSENTE";
             resumen["ausente"]!++;
           } else {
-            const primeraEntrada = marcas.entradas.reduce((a, b) => (a < b ? a : b));
+            const primeraEntrada = marcas.entradas.reduce((a: Date, b: Date) => (a < b ? a : b));
             const ultimaSalida   = marcas.salidas.length > 0
-              ? marcas.salidas.reduce((a, b) => (a > b ? a : b))
+              ? marcas.salidas.reduce((a: Date, b: Date) => (a > b ? a : b))
               : null;
 
             const retraso = calcularRetraso(primeraEntrada, horario.horaEntrada, horario.tolerancia);
