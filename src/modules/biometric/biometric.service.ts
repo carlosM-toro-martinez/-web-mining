@@ -21,30 +21,24 @@ async function attlogStartTime(): Promise<string> {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-// Tracks the last INFO count seen per SN to detect real new scans vs loop responses.
-// The ZAM70 sends getrequest+INFO= both when a new scan happens AND as a response
-// to each DATA QUERY ATTLOG command. The count field (position 3 in INFO string)
-// only increments on actual face scans, so we use it to break the loop.
-const _lastInfoCount = new Map<string, number>();
+// Per-SN timestamp of the last DATA QUERY ATTLOG we queued.
+// Used to debounce: don't queue another within 30s to avoid infinite loops.
+const _lastQueryTime = new Map<string, number>();
 
-export function isNewScan(sn: string, info: string): boolean {
-  const count = parseInt(info.split(",")[3] ?? "0", 10);
-  const prev = _lastInfoCount.get(sn) ?? -1;
-  if (isNaN(count) || count <= prev) return false;
-  _lastInfoCount.set(sn, count);
-  return true;
-}
+// Queues DATA QUERY ATTLOG if 30s have passed since the last one for this SN.
+// Called on EVERY getrequest (both INFO= and plain heartbeat) so new scans
+// are always captured within 30s regardless of device heartbeat type.
+// Duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
+export async function maybeQueueAttlogQuery(sn: string): Promise<void> {
+  const last = _lastQueryTime.get(sn) ?? 0;
+  if (Date.now() - last < 30_000) return;
+  _lastQueryTime.set(sn, Date.now());
 
-// Queues a DATA QUERY ATTLOG command so the device sends records since the last sync.
-// On first run: queries from 2000 (gets everything).
-// On subsequent runs: queries from ~last record (gets only new ones).
-// Any duplicates are dropped by @@unique([deviceUserId, fecha]) on AsistenciaLog.
-export async function triggerAttlogQuery(sn: string): Promise<void> {
   const startTime = await attlogStartTime();
   await prisma.syncQueue.create({
     data: {
       action: "CREATE",
-      payload: { command: `DATA QUERY ATTLOG startTime=${startTime} endTime=2099-12-31 23:59:59` },
+      payload: { command: `DATA QUERY ATTLOG StartTime=${startTime} EndTime=2099-12-31 23:59:59` },
       status: "PENDING",
       deviceIp: sn,
     },

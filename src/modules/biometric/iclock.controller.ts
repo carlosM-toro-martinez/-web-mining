@@ -10,8 +10,7 @@ import {
   ackCommand,
   getDeviceStatus,
   setRequestUserInfo,
-  triggerAttlogQuery,
-  isNewScan,
+  maybeQueueAttlogQuery,
 } from "./biometric.service.js";
 
 function nowDateTimeStr(): string {
@@ -167,25 +166,25 @@ export const iclockController = {
     res.send("OK");
   },
 
-  // GET /iclock/getrequest — heartbeat + initial registration for ZAM70 firmware.
-  // ZAM70-NF24HA never calls /iclock/cdata for registration; it uses getrequest+INFO=.
-  // On first connection we queue a DATA QUERY ATTLOG command via SyncQueue so the
-  // device sends all its buffered records. The SyncQueue marks it SYNCED on delivery
-  // so it's only sent once — no loop.
+  // GET /iclock/getrequest — heartbeat + registration for ZAM70 firmware.
+  //
+  // Strategy: queue DATA QUERY ATTLOG on every heartbeat (INFO= or plain) but
+  // debounced to once every 30s. This guarantees new scans are captured within
+  // 30s regardless of whether the device sends INFO= or plain heartbeats after
+  // a scan. The 30s debounce prevents infinite loops.
   async getrequest(req: Request, res: Response) {
     const sn = String(req.query["SN"] ?? "");
     const info = req.query["INFO"];
     const isReal = sn && sn !== "TEST" && sn.length > 4;
     if (isReal) await updateDeviceHeartbeat(sn);
 
+    // Queue DATA QUERY ATTLOG (debounced 30s) on every heartbeat type
+    if (isReal) await maybeQueueAttlogQuery(sn);
+
     res.setHeader("Content-Type", "text/plain");
 
     if (info !== undefined) {
-      // Only trigger DATA QUERY when the count in INFO increases — that means a real
-      // new face scan happened. If count is the same, the device is just responding
-      // to our previous DATA QUERY (loop) and we should not queue another command.
-      if (isReal && isNewScan(sn, String(info))) await triggerAttlogQuery(sn);
-
+      // INFO= heartbeat: device is registering/re-registering. Send config + any queued command.
       const wantsUserInfo = consumeRequestUserInfo();
       const cmd = await getNextCommand();
       const pushver = String(req.query["pushver"] ?? "");
@@ -206,18 +205,18 @@ export const iclockController = {
       if (cmd) {
         body += `C:${cmd.id}:${cmd.command}\n`;
         await ackCommand(cmd.id, true);
-        logger.info({ sn, cmdId: cmd.id, command: cmd.command }, "ADMS command delivered via getrequest INFO");
+        logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest INFO");
       }
 
-      logger.info({ sn, pushver, cmdSent: cmd?.id ?? null }, "ADMS getrequest INFO — registration config sent");
+      logger.info({ sn, pushver, cmdSent: cmd?.id ?? null }, "ADMS getrequest INFO");
       return res.send(body);
     }
 
-    // Plain heartbeat — serve any pending command or OK
+    // Plain heartbeat — deliver any queued command (including the DATA QUERY we just created)
     const cmd = await getNextCommand();
     if (cmd) {
       await ackCommand(cmd.id, true);
-      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via getrequest heartbeat");
+      logger.info({ sn, cmdId: cmd.id }, "ADMS command delivered via heartbeat");
       res.send(`C:${cmd.id}:${cmd.command}`);
     } else {
       res.send("OK");
