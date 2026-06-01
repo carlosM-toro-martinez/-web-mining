@@ -11,11 +11,14 @@ let _requestUserInfo = false;
 // but the count field only increments on actual face scans.
 const _lastInfoCount = new Map<string, number>();
 
-// Returns true if the count in the INFO string is higher than last seen for this SN.
+// Devuelve true cuando el dispositivo reporta registros pendientes (AttLogCount > 0)
+// y el conteo cambió respecto al último visto (evita re-encolar para el mismo lote).
+// El AttLogCount está en la posición 3 del campo INFO separado por comas.
 export function infoHasNewScan(sn: string, info: string): boolean {
   const count = parseInt(info.split(",")[3] ?? "0", 10);
-  const prev = _lastInfoCount.get(sn) ?? -1;
-  if (isNaN(count) || count <= prev) return false;
+  if (isNaN(count) || count <= 0) return false;
+  const prev = _lastInfoCount.get(sn) ?? 0;
+  if (count === prev) return false;
   _lastInfoCount.set(sn, count);
   return true;
 }

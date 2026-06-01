@@ -5,7 +5,6 @@ import { logBiometricRequest, logBiometricResponse } from "../../utils/biometric
 
 const router = Router();
 
-// Intercept every /iclock request and response and write to logs/biometric.log
 router.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
   const method = req.method;
@@ -19,7 +18,6 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     body: req.body,
   });
 
-  // Intercept res.send to capture the response body
   const originalSend = res.send.bind(res);
   res.send = function (body: unknown) {
     const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
@@ -36,15 +34,33 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// ZKTeco ADMS protocol — device connects to these endpoints directly
-// No JWT auth: device authenticates via its serial number (SN)
+// ── Protocolo ADMS ZKTeco ─────────────────────────────────────────────────────
+// Sin JWT: el dispositivo se identifica por su número de serie (SN).
+
+// Heartbeat y config del dispositivo (solo devuelve configuración, NUNCA comandos)
 router.get("/cdata", iclockController.cdata);
+
+// El dispositivo envía datos: ATTLOG, USERINFO, options
 router.post("/cdata", iclockController.cdataPost);
+
+// Asistencia en tiempo real (marca física inmediata) — responder GBK\nOK
+router.post("/adata", iclockController.adata);
+
+// ÚNICO punto de entrega de comandos → "OK" o "C:ID:COMANDO"
 router.get("/getrequest", iclockController.getrequest);
+
+// Confirmación de ejecución de comando por parte del dispositivo
 router.post("/devicecmd", iclockController.devicecmd);
 
-// Public utility endpoints — no auth, for frontend status indicator and manual sync
+// ── Endpoints de utilidad (sin auth, red interna) ────────────────────────────
+
+// Estado de conexión del dispositivo
 router.get("/status", iclockController.status);
+
+// Encola DATA QUERY USERINFO → entregado en próximo getrequest
 router.post("/sync-users", iclockController.syncUsers);
+
+// Encola DATA QUERY ATTLOG → entregado en próximo getrequest (~30s)
+router.post("/force-attlog", iclockController.forceAttlog);
 
 export default router;
