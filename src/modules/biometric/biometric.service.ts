@@ -93,17 +93,8 @@ export interface ParsedRecord {
   tipo: string;
 }
 
-// Returns current Bolivia time (UTC-4) stored "as if UTC" so the raw DB value
-// shows Bolivia local time without any timezone conversion needed on the frontend.
-// Bolivia has no DST — always UTC-4.
-function boliviaNow(seqMs = 0): Date {
-  return new Date(Date.now() - 4 * 60 * 60 * 1000 + seqMs);
-}
-
 export function parseAttlogBody(body: string): ParsedRecord[] {
   const records: ParsedRecord[] = [];
-  let seq = 0;
-
   for (const line of body.split("\n")) {
     const parts = line.trim().split("\t");
     if (parts.length < 3) continue;
@@ -111,17 +102,10 @@ export function parseAttlogBody(body: string): ParsedRecord[] {
     const dateStr = parts[1]?.trim();
     const statusStr = parts[2]?.trim();
     if (!deviceUserId || !dateStr) continue;
-
-    // ── SERVER BOLIVIA TIME ─────────────────────────────────────────────────
-    // Device clock is currently unreliable. Using server time (Bolivia UTC-4)
-    // so all new records are stamped with the correct local time.
-    // seqMs separates records in the same batch to respect the unique constraint.
-    // TO RESTORE DEVICE TIME: comment the next line and uncomment the one below.
-    const fecha = boliviaNow(seq * 1000);
-    // const fecha = new Date(dateStr.replace(" ", "T") + "Z"); // ← device time
-    // ───────────────────────────────────────────────────────────────────────
-
-    seq++;
+    // Store exactly what the device sends. The device clock must be set to
+    // Bolivia time in its admin panel. We treat device time as the source of
+    // truth and never convert — what the device says is what gets stored.
+    const fecha = new Date(dateStr.replace(" ", "T") + "Z");
     if (isNaN(fecha.getTime())) continue;
     records.push({ deviceUserId, fecha, tipo: mapTipo(parseInt(statusStr ?? "0", 10)) });
   }
