@@ -301,16 +301,72 @@ model EppAsignacion {
 ////////////////////////////////
 
 model Employee {
-  id           Int             @id @default(autoincrement())
+  id           Int               @id @default(autoincrement())
   nombre       String
-  documento    String?         @unique
+  documento    String?           @unique
   cargo        String?
-  deviceUserId String          @unique
-  activo       Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  syncStatus   SyncStatus      @default(PENDING)
+  deviceUserId String            @unique
+  activo       Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  syncStatus   SyncStatus        @default(PENDING)
   logs         AsistenciaLog[]
+  horarios     EmpleadoHorario[]
+  ausencias    AusenciaEmpleado[]
+}
+
+model Horario {
+  id          Int               @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  horaEntrada String            // "HH:MM" hora local Bolivia
+  horaSalida  String            // "HH:MM" hora local Bolivia
+  tolerancia  Int               @default(15) // minutos de tolerancia para tardanza
+  lunes       Boolean           @default(true)
+  martes      Boolean           @default(true)
+  miercoles   Boolean           @default(true)
+  jueves      Boolean           @default(true)
+  viernes     Boolean           @default(true)
+  sabado      Boolean           @default(false)
+  domingo     Boolean           @default(false)
+  activo      Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  asignaciones EmpleadoHorario[]
+}
+
+model EmpleadoHorario {
+  id         Int       @id @default(autoincrement())
+  employeeId Int
+  horarioId  Int
+  desde      DateTime  // fecha desde la que aplica este horario
+  hasta      DateTime? // null = vigente actualmente
+  createdAt  DateTime  @default(now())
+
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  horario    Horario   @relation(fields: [horarioId], references: [id])
+
+  @@index([employeeId])
+  @@index([horarioId])
+}
+
+model AusenciaEmpleado {
+  id         Int          @id @default(autoincrement())
+  employeeId Int
+  tipo       AusenciaTipo
+  desde      DateTime     // inicio del período (fecha, hora ignorada)
+  hasta      DateTime     // fin del período inclusivo (fecha, hora ignorada)
+  motivo     String?
+  aprobado   Boolean      @default(false)
+  creadoPor  String?      // nombre o ID del que aprueba
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  employee   Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([desde, hasta])
 }
 
 model SyncQueue {
@@ -886,6 +942,15 @@ enum SyncAction {
   CREATE
   UPDATE
   DELETE
+}
+
+enum AusenciaTipo {
+  VACACION
+  DESCANSO
+  PERMISO
+  ENFERMEDAD
+  FERIADO
+  OTRO
 }
 
 enum DrillHoleType {

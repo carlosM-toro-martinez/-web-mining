@@ -17,6 +17,7 @@ import surfaceExplorationRoutes from "../modules/surfaceExploration/surfaceExplo
 import miningExcelRoutes from "../modules/miningExcel/miningExcel.routes.js";
 import pedidosRoutes from "../modules/pedidos/pedidos.routes.js";
 import inventarioImportRoutes from "../modules/inventarioImport/inventarioImport.routes.js";
+import personalRoutes from "../modules/personal/personal.routes.js";
 
 const router = Router();
 
@@ -45,5 +46,6 @@ router.use("/biometric", biometricRoutes);
 router.use("/imports/mining-excel", miningExcelRoutes);
 router.use("/pedidos", pedidosRoutes);
 router.use("/inventario-import", inventarioImportRoutes);
+router.use("/personal", personalRoutes);
 
 export default router;
