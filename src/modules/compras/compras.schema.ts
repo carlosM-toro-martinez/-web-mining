@@ -14,6 +14,7 @@ export const createCompraSchema = z
       .min(1),
     observacion: z.string().optional(),
     fechaOperacion: z.coerce.date().optional(),
+    numeroFactura: z.string().min(1).optional(),
   })
   .strict();
 

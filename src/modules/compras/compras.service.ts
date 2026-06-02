@@ -29,12 +29,6 @@ export const comprasService = {
       throw new HttpError("Uno o más productos no encontrados", 404);
     }
 
-    // Validar que todos los productos tengan cuenta contable
-    const sinCuenta = productos.filter((p) => !p.cuentaId);
-    if (sinCuenta.length > 0) {
-      throw new HttpError("Todos los productos deben tener una cuenta contable asignada", 400);
-    }
-
     const compra = await prisma.compra.create({
       data: {
         proveedorId: data.proveedorId,
@@ -42,6 +36,7 @@ export const comprasService = {
         estado: "PENDIENTE",
         observacion: data.observacion ?? null,
         fechaOperacion: data.fechaOperacion ?? null,
+        numeroFactura: data.numeroFactura ?? null,
         items: {
           create: data.items.map((item) => ({
             productoId: item.productoId,
