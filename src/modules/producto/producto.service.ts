@@ -136,36 +136,32 @@ export const productoService = {
   async create(data: CreateProductoDTO, userId: number) {
     await this.validarJerarquiaCategoria(data.grupoId, data.subgrupoId);
 
-    // Validar centro de costo y función de gasto
-    const [centroCosto, funcionGasto] = await Promise.all([
-      prisma.centroCosto.findUnique({ where: { id: data.centroCostoId } }),
-      prisma.funcionGasto.findUnique({ where: { id: data.funcionGastoId } }),
-    ]);
+    let cuentaId: number | null = data.cuentaId ?? null;
 
-    if (!centroCosto) {
-      throw new HttpError("Centro de costo no encontrado", 404);
-    }
+    // Solo genera/busca cuenta contable si se proporcionaron centroCostoId y funcionGastoId
+    if (data.centroCostoId && data.funcionGastoId) {
+      const [centroCosto, funcionGasto] = await Promise.all([
+        prisma.centroCosto.findUnique({ where: { id: data.centroCostoId } }),
+        prisma.funcionGasto.findUnique({ where: { id: data.funcionGastoId } }),
+      ]);
 
-    if (!funcionGasto) {
-      throw new HttpError("Función de gasto no encontrada", 404);
-    }
+      if (!centroCosto) throw new HttpError("Centro de costo no encontrado", 404);
+      if (!funcionGasto) throw new HttpError("Función de gasto no encontrada", 404);
 
-    // Generar código completo de cuenta
-    const codigoCompleto = `${centroCosto.codigo}-${funcionGasto.codigo}`;
+      const codigoCompleto = `${centroCosto.codigo}-${funcionGasto.codigo}`;
+      let cuenta = await prisma.cuentaContable.findUnique({ where: { codigoCompleto } });
 
-    // Buscar cuenta existente o crear nueva
-    let cuenta = await prisma.cuentaContable.findUnique({
-      where: { codigoCompleto },
-    });
+      if (!cuenta) {
+        cuenta = await prisma.cuentaContable.create({
+          data: {
+            codigoCompleto,
+            centroCostoId: data.centroCostoId,
+            funcionGastoId: data.funcionGastoId,
+          },
+        });
+      }
 
-    if (!cuenta) {
-      cuenta = await prisma.cuentaContable.create({
-        data: {
-          codigoCompleto,
-          centroCostoId: data.centroCostoId,
-          funcionGastoId: data.funcionGastoId,
-        },
-      });
+      cuentaId = cuenta.id;
     }
 
     const producto = await prisma.producto.create({
@@ -174,7 +170,7 @@ export const productoService = {
         nombre: data.nombre,
         unidad: data.unidad,
         categoriaId: data.subgrupoId,
-        cuentaId: cuenta.id,
+        cuentaId: cuentaId ?? null,
         esEpp: data.esEpp ?? false,
 
         stock: {
