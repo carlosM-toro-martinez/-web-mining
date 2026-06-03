@@ -183,6 +183,29 @@ export const productoService = {
       },
     });
 
+    // Sembrar SaldoMensual con ceros en todos los períodos que ya existen
+    const periodosExistentes = await prisma.saldoMensual.findMany({
+      select: { anio: true, mes: true },
+      distinct: ["anio", "mes"],
+    });
+
+    if (periodosExistentes.length > 0) {
+      await prisma.saldoMensual.createMany({
+        data: periodosExistentes.map((p) => ({
+          productoId: producto.id,
+          anio: p.anio,
+          mes: p.mes,
+          saldoInicial: 0,
+          ingresoQty: 0,
+          salidaQty: 0,
+          saldoFinal: 0,
+          precioUnit: 0,
+          totalBs: 0,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
     await prisma.log.create({
       data: {
         usuarioId: userId,
