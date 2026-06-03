@@ -17,16 +17,39 @@ export const comprasService = {
       throw new HttpError("Proveedor no encontrado", 404);
     }
 
-    // Validar que todos los productos existan
-    const productos = await prisma.producto.findMany({
-      where: {
-        id: { in: data.items.map((item) => item.productoId) },
-      },
-      select: { id: true, cuentaId: true },
-    });
+    // Resolver productoId desde productoCodigo cuando sea necesario y validar existencia
+    const itemsResueltos: { productoId: number; productoCodigo: string; cantidadPedida: number; precioUnit: number }[] = [];
+    const noEncontrados: string[] = [];
 
-    if (productos.length !== data.items.length) {
-      throw new HttpError("Uno o más productos no encontrados", 404);
+    for (const item of data.items) {
+      if (item.productoId) {
+        const p = await prisma.producto.findUnique({
+          where: { id: item.productoId },
+          select: { id: true, codigo: true },
+        });
+        if (!p) {
+          noEncontrados.push(`id:${item.productoId}`);
+        } else {
+          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit });
+        }
+      } else {
+        const p = await prisma.producto.findUnique({
+          where: { codigo: item.productoCodigo! },
+          select: { id: true, codigo: true },
+        });
+        if (!p) {
+          noEncontrados.push(`código:"${item.productoCodigo}"`);
+        } else {
+          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit });
+        }
+      }
+    }
+
+    if (noEncontrados.length > 0) {
+      throw new HttpError(
+        `Productos no encontrados: ${noEncontrados.join(", ")}`,
+        404,
+      );
     }
 
     const compra = await prisma.compra.create({
@@ -38,7 +61,7 @@ export const comprasService = {
         fechaOperacion: data.fechaOperacion ?? null,
         numeroFactura: data.numeroFactura ?? null,
         items: {
-          create: data.items.map((item) => ({
+          create: itemsResueltos.map((item) => ({
             productoId: item.productoId,
             cantidadPedida: item.cantidadPedida,
             precioUnit: item.precioUnit,

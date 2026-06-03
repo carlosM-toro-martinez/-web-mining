@@ -6,10 +6,14 @@ export const createCompraSchema = z
     items: z
       .array(
         z.object({
-          productoId: z.number().int().positive(),
+          productoId: z.number().int().positive().optional(),
+          productoCodigo: z.string().min(1).optional(),
           cantidadPedida: z.number().positive(),
           precioUnit: z.number().positive(),
-        }),
+        }).refine(
+          (d) => d.productoId !== undefined || d.productoCodigo !== undefined,
+          { message: "Se requiere productoId o productoCodigo en cada item" },
+        ),
       )
       .min(1),
     observacion: z.string().optional(),
