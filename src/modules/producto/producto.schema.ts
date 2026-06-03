@@ -9,7 +9,7 @@ export const createProductoSchema = z
     subgrupoId: z.number().int().positive(),
     centroCostoId: z.number().int().positive(),
     funcionGastoId: z.number().int().positive(),
-    cuentaId: z.number().int().positive().optional(),
+    cuentaId: z.number().int().positive().nullish(),
     esEpp: z.boolean().optional(),
   })
   .strict();
