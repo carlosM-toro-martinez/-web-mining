@@ -19,6 +19,7 @@ import {
   inicializarPeriodo,
   cerrarMes,
   getCierres,
+  getPreviewPeriodo,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -297,6 +298,19 @@ export const inventarioImportController = {
   async getCierres(_req: AuthRequest, res: Response) {
     try {
       const data = await getCierres();
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getPreviewPeriodo(req: AuthRequest, res: Response) {
+    try {
+      const parsed = saldoMensualQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes" });
+      }
+      const data = await getPreviewPeriodo(parsed.data.anio, parsed.data.mes);
       res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });

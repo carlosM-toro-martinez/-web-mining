@@ -93,6 +93,14 @@ router.get(
   inventarioImportController.getSaldosMensuales,
 );
 
+// GET /api/inventario-import/saldo-mensual/preview?anio=2025&mes=9
+// Vista en tiempo real del período: saldoInicial + movimientos retroactivos ya cargados.
+// Funciona tanto si el mes está cerrado como si no.
+router.get(
+  "/saldo-mensual/preview",
+  inventarioImportController.getPreviewPeriodo,
+);
+
 // ─── Saldo mensual – item individual ─────────────────────────────────────────
 // POST /api/inventario-import/saldo-mensual/item
 // Upsert de un producto para un mes (para carga uno por uno desde formulario).

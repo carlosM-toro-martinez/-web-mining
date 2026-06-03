@@ -1170,3 +1170,111 @@ export async function recalcularStock(
     correccionesLimpiadas,
   };
 }
+
+// ─── Preview de un período: saldo acumulado sin cerrar el mes ─────────────────
+// Combina saldoInicial de SaldoMensual con los movimientos retroactivos ya cargados
+// para ese período, sin tocar nada en la base de datos.
+
+export async function getPreviewPeriodo(anio: number, mes: number) {
+  const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+  // Si el mes ya está cerrado, SaldoMensual tiene los valores definitivos
+  const saldos = await prisma.saldoMensual.findMany({
+    where: { anio, mes },
+    include: { producto: { include: { categoria: { include: { parent: true } } } } },
+    orderBy: { producto: { codigo: "asc" } },
+  });
+
+  if (esCerrado) {
+    const items = saldos.map((r) => {
+      const saldoInicial = Number(r.saldoInicial);
+      const ingresoQty   = Number(r.ingresoQty);
+      const salidaQty    = Number(r.salidaQty);
+      const saldoFinal   = Number(r.saldoFinal);
+      const precioUnit   = Number(r.precioUnit);
+      return {
+        productoId: r.productoId,
+        productoCodigo: r.producto.codigo,
+        productoNombre: r.producto.nombre,
+        unidad: r.producto.unidad,
+        grupo: r.producto.categoria.parent?.nombre ?? r.producto.categoria.nombre,
+        subGrupo: r.producto.categoria.parent ? r.producto.categoria.nombre : null,
+        saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit,
+        totalBs: Number(r.totalBs),
+      };
+    });
+
+    const resumen = items.reduce(
+      (acc, i) => ({
+        totalProductos: acc.totalProductos + 1,
+        productosConMovimiento: acc.productosConMovimiento + (i.ingresoQty > 0 || i.salidaQty > 0 ? 1 : 0),
+        totalUnidades: acc.totalUnidades + i.saldoFinal,
+        totalBs: acc.totalBs + i.totalBs,
+      }),
+      { totalProductos: 0, productosConMovimiento: 0, totalUnidades: 0, totalBs: 0 },
+    );
+
+    return { anio, mes, esCerrado, resumen, items };
+  }
+
+  // Mes abierto: calcular en tiempo real
+  // - ingresoQty: las compras retroactivas ya actualizan SaldoMensual.ingresoQty directamente
+  //   → se usa r.ingresoQty directamente (no buscar en Movimiento para evitar doble conteo)
+  // - salidaQty: los vales se crean con createdAt = fecha histórica pero esRetroactivo=false
+  //   → buscar por rango de fecha del mes (igual que hace cerrarMes)
+  const mesInicio = new Date(anio, mes - 1, 1);
+  const mesFin    = new Date(anio, mes, 1);
+
+  const salidas = await prisma.movimiento.findMany({
+    where: {
+      tipo: "SALIDA",
+      OR: [
+        { esRetroactivo: false, createdAt: { gte: mesInicio, lt: mesFin } },
+        { esRetroactivo: true,  periodoAnio: anio, periodoMes: mes },
+      ],
+    },
+    select: { productoId: true, cantidad: true },
+  });
+
+  // Agrupar salidas por producto
+  const salidaMap = new Map<number, number>();
+  for (const s of salidas) {
+    salidaMap.set(s.productoId, (salidaMap.get(s.productoId) ?? 0) + Number(s.cantidad));
+  }
+
+  const items = saldos.map((r) => {
+    const saldoInicial = Number(r.saldoInicial);
+    const ingresoQty   = Number(r.ingresoQty);          // ya acumulado por compras.service
+    const salidaQty    = salidaMap.get(r.productoId) ?? 0;
+    const precioUnit   = Number(r.precioUnit);
+    const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
+    const totalBs      = saldoFinal * precioUnit;
+
+    return {
+      productoId: r.productoId,
+      productoCodigo: r.producto.codigo,
+      productoNombre: r.producto.nombre,
+      unidad: r.producto.unidad,
+      grupo: r.producto.categoria.parent?.nombre ?? r.producto.categoria.nombre,
+      subGrupo: r.producto.categoria.parent ? r.producto.categoria.nombre : null,
+      saldoInicial,
+      ingresoQty,
+      salidaQty,
+      saldoFinal,
+      precioUnit,
+      totalBs,
+    };
+  });
+
+  const resumen = items.reduce(
+    (acc, i) => ({
+      totalProductos: acc.totalProductos + 1,
+      productosConMovimiento: acc.productosConMovimiento + (i.ingresoQty > 0 || i.salidaQty > 0 ? 1 : 0),
+      totalUnidades: acc.totalUnidades + i.saldoFinal,
+      totalBs: acc.totalBs + i.totalBs,
+    }),
+    { totalProductos: 0, productosConMovimiento: 0, totalUnidades: 0, totalBs: 0 },
+  );
+
+  return { anio, mes, esCerrado, resumen, items };
+}
