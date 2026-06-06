@@ -52,4 +52,31 @@ export const comprasController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async anularCompra(req: AuthRequest, res: Response) {
+    try {
+      const { motivo } = req.body;
+      if (!motivo || typeof motivo !== "string" || motivo.trim() === "") {
+        return res.status(400).json({ success: false, error: "El campo motivo es requerido" });
+      }
+      const result = await comprasService.anularCompra(
+        String(req.params.id),
+        motivo.trim(),
+        req.user!.id,
+      );
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getAnulaciones(_req: AuthRequest, res: Response) {
+    try {
+      const data = await comprasService.getAnulaciones();
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

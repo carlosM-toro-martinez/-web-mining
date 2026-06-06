@@ -543,44 +543,91 @@ export const valesService = {
     if (vale.estado === "RECHAZADO") throw new HttpError("No se puede anular un vale rechazado", 409);
     if (vale.anulacion) throw new HttpError("El vale ya tiene una anulación registrada", 409);
 
-    // Crear contra-asientos para ítems que tuvieron entrega real
+    const periodoVale = await detectarPeriodo(vale.fechaOperacion);
+    const esRetroactivo = periodoVale.esRetroactivo;
+    const periodoAnio = esRetroactivo ? periodoVale.periodoAnio : undefined;
+    const periodoMes  = esRetroactivo ? periodoVale.periodoMes  : undefined;
+
     let contraAsientos = 0;
+
     for (const item of vale.items) {
       const entregado = new Prisma.Decimal(item.cantidadEntregada ?? 0);
       if (entregado.lte(0)) continue;
 
-      const stock = item.producto.stock;
-      if (!stock) continue;
+      if (esRetroactivo) {
+        // Contra-asiento retroactivo: revierte SaldoMensual, NO toca Stock actual
+        const saldo = await prisma.saldoMensual.findUnique({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+        });
 
-      // Contra-asiento ENTRADA devuelve el stock físico
-      await prisma.movimiento.create({
-        data: {
-          operationId: randomUUID(),
-          productoId: item.productoId,
-          tipo: "ENTRADA",
-          cantidad: entregado,
-          precioUnit: stock.precioUnit,
-          entradaBs: new Prisma.Decimal(stock.precioUnit).mul(entregado),
-          salidaBs: 0,
-          saldoBs: new Prisma.Decimal(stock.cantidad).add(entregado).mul(stock.precioUnit),
-          stockAntes: stock.cantidad,
-          stockDespues: new Prisma.Decimal(stock.cantidad).add(entregado),
-          usuarioId: userId,
-          referencia: "ANULACION_VALE",
-          referenciaId: id,
-        },
-      });
+        const stockAntes  = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
+        const stockDespues = stockAntes.add(entregado);
+        const precioUnit   = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(0);
 
-      await prisma.stock.update({
-        where: { productoId: item.productoId },
-        data: { cantidad: { increment: entregado } },
-      });
+        await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "ENTRADA",
+            cantidad: entregado,
+            precioUnit,
+            entradaBs: precioUnit.mul(entregado),
+            salidaBs: 0,
+            saldoBs: stockDespues.mul(precioUnit),
+            stockAntes,
+            stockDespues,
+            usuarioId: userId,
+            referencia: "ANULACION_VALE",
+            referenciaId: id,
+            esRetroactivo: true,
+            periodoAnio: periodoAnio ?? null,
+            periodoMes:  periodoMes  ?? null,
+            createdAt: vale.fechaOperacion ?? new Date(),
+          },
+        });
+
+        if (saldo) {
+          const nuevaSalida = new Prisma.Decimal(saldo.salidaQty).sub(entregado);
+          const nuevoFinal  = new Prisma.Decimal(saldo.saldoFinal).add(entregado);
+          await prisma.saldoMensual.update({
+            where: { id: saldo.id },
+            data: { salidaQty: nuevaSalida, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioUnit) },
+          });
+        }
+      } else {
+        // Contra-asiento normal: devuelve stock físico
+        const stock = item.producto.stock;
+        if (!stock) continue;
+
+        await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "ENTRADA",
+            cantidad: entregado,
+            precioUnit: stock.precioUnit,
+            entradaBs: new Prisma.Decimal(stock.precioUnit).mul(entregado),
+            salidaBs: 0,
+            saldoBs: new Prisma.Decimal(stock.cantidad).add(entregado).mul(stock.precioUnit),
+            stockAntes: stock.cantidad,
+            stockDespues: new Prisma.Decimal(stock.cantidad).add(entregado),
+            usuarioId: userId,
+            referencia: "ANULACION_VALE",
+            referenciaId: id,
+          },
+        });
+
+        await prisma.stock.update({
+          where: { productoId: item.productoId },
+          data: { cantidad: { increment: entregado } },
+        });
+      }
 
       contraAsientos++;
     }
 
-    // Si estaba APROBADO (sin entregar), liberar reservas
-    if (vale.estado === "APROBADO") {
+    // Si estaba APROBADO (sin entregar), liberar reservas (solo para no-retroactivos)
+    if (vale.estado === "APROBADO" && !esRetroactivo) {
       for (const item of vale.items) {
         const stock = item.producto.stock;
         if (!stock) continue;
@@ -607,10 +654,10 @@ export const valesService = {
     ]);
 
     await prisma.log.create({
-      data: { usuarioId: userId, accion: "ANULAR_VALE", data: { valeId: id, motivo, contraAsientos } },
+      data: { usuarioId: userId, accion: "ANULAR_VALE", data: { valeId: id, motivo, contraAsientos, esRetroactivo } },
     });
 
-    logger.info({ userId, valeId: id, contraAsientos }, "Vale anulado");
+    logger.info({ userId, valeId: id, contraAsientos, esRetroactivo }, "Vale anulado");
     return { vale: valeAnulado, anulacion, contraAsientos };
   },
 

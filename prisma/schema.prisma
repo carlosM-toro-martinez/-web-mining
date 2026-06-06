@@ -31,6 +31,7 @@ model User {
   activo                Boolean         @default(true)
   comprasRecibidas      Compra[]        @relation("UsuarioRecibe")
   comprasRegistradas    Compra[]        @relation("UsuarioRegistro")
+  anulacionesCompra     AnulacionCompra[]
   eppAsignaciones       EppAsignacion[]
   logs                  Log[]
   movimientosEntregados Movimiento[]    @relation("UsuarioEntrega")
@@ -228,10 +229,11 @@ model Compra {
   fechaOperacion    DateTime?
   usuarioRecibidoId Int?
   usuarioRegistroId Int
-  proveedor         Proveedor    @relation(fields: [proveedorId], references: [id])
-  usuarioRecibe     User?        @relation("UsuarioRecibe", fields: [usuarioRecibidoId], references: [id])
-  usuarioRegistro   User         @relation("UsuarioRegistro", fields: [usuarioRegistroId], references: [id])
+  proveedor         Proveedor        @relation(fields: [proveedorId], references: [id])
+  usuarioRecibe     User?            @relation("UsuarioRecibe", fields: [usuarioRecibidoId], references: [id])
+  usuarioRegistro   User             @relation("UsuarioRegistro", fields: [usuarioRegistroId], references: [id])
   items             CompraItem[]
+  anulacion         AnulacionCompra?
 }
 
 model CompraItem {
@@ -274,6 +276,16 @@ model AnulacionVale {
   createdAt  DateTime @default(now())
   vale       Vale     @relation(fields: [valeId], references: [id])
   usuario    User     @relation(fields: [usuarioId], references: [id])
+}
+
+model AnulacionCompra {
+  id        String   @id @default(uuid())
+  compraId  String   @unique
+  usuarioId Int
+  motivo    String
+  createdAt DateTime @default(now())
+  compra    Compra   @relation(fields: [compraId], references: [id])
+  usuario   User     @relation(fields: [usuarioId], references: [id])
 }
 
 model ValeItem {
@@ -921,6 +933,7 @@ enum EstadoCompra {
   PENDIENTE
   PARCIAL
   COMPLETADO
+  ANULADA
 }
 
 enum EstadoVale {

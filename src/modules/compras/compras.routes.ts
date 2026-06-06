@@ -64,4 +64,19 @@ router.patch(
   comprasController.recibirCompra,
 );
 
+// Anular compra (ADMIN, SUPERINTENDENTE)
+router.post(
+  "/:id/anular",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  comprasController.anularCompra,
+);
+
+// Listar anulaciones de compras
+router.get(
+  "/anulaciones/historial",
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  comprasController.getAnulaciones,
+);
+
 export default router;

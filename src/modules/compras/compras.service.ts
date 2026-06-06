@@ -373,4 +373,145 @@ export const comprasService = {
       movimientos,
     };
   },
+
+  async anularCompra(id: string, motivo: string, userId: number) {
+    const compra = await prisma.compra.findUnique({
+      where: { id },
+      include: {
+        items: { include: { producto: { include: { stock: true } } } },
+        anulacion: true,
+      },
+    });
+
+    if (!compra) throw new HttpError("Compra no encontrada", 404);
+    if (compra.estado === "ANULADA") throw new HttpError("La compra ya está anulada", 409);
+    if (compra.anulacion) throw new HttpError("La compra ya tiene una anulación registrada", 409);
+
+    const periodoCompra = await detectarPeriodo(compra.fechaOperacion);
+    const esRetroactivo = periodoCompra.esRetroactivo;
+    const periodoAnio   = esRetroactivo ? periodoCompra.periodoAnio : undefined;
+    const periodoMes    = esRetroactivo ? periodoCompra.periodoMes  : undefined;
+
+    let contraAsientos = 0;
+
+    for (const item of compra.items) {
+      const recibido = new Prisma.Decimal(item.cantidadRecibida ?? 0);
+      if (recibido.lte(0)) continue;
+
+      if (esRetroactivo) {
+        // Contra-asiento retroactivo: revierte SaldoMensual, NO toca Stock actual
+        const saldo = await prisma.saldoMensual.findUnique({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
+        });
+
+        const stockAntes   = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
+        const stockDespues = stockAntes.sub(recibido);
+        const precioUnit   = new Prisma.Decimal(item.precioUnit);
+
+        await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "SALIDA",
+            cantidad: recibido,
+            precioUnit,
+            entradaBs: 0,
+            salidaBs: precioUnit.mul(recibido),
+            saldoBs: stockDespues.mul(precioUnit),
+            stockAntes,
+            stockDespues,
+            usuarioId: userId,
+            referencia: "ANULACION_COMPRA",
+            referenciaId: id,
+            esRetroactivo: true,
+            periodoAnio: periodoAnio ?? null,
+            periodoMes:  periodoMes  ?? null,
+            createdAt: compra.fechaOperacion ?? new Date(),
+          },
+        });
+
+        if (saldo) {
+          const nuevoIngreso = new Prisma.Decimal(saldo.ingresoQty).sub(recibido);
+          const nuevoFinal   = new Prisma.Decimal(saldo.saldoFinal).sub(recibido);
+          const precioSaldo  = new Prisma.Decimal(saldo.precioUnit);
+          await prisma.saldoMensual.update({
+            where: { id: saldo.id },
+            data: { ingresoQty: nuevoIngreso, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+          });
+        }
+      } else {
+        // Contra-asiento normal: descuenta stock físico
+        const stock = item.producto.stock;
+        if (!stock) continue;
+
+        const precioUnit   = new Prisma.Decimal(item.precioUnit);
+        const stockDespues = new Prisma.Decimal(stock.cantidad).sub(recibido);
+
+        await prisma.movimiento.create({
+          data: {
+            operationId: randomUUID(),
+            productoId: item.productoId,
+            tipo: "SALIDA",
+            cantidad: recibido,
+            precioUnit,
+            entradaBs: 0,
+            salidaBs: precioUnit.mul(recibido),
+            saldoBs: stockDespues.mul(precioUnit),
+            stockAntes: stock.cantidad,
+            stockDespues,
+            usuarioId: userId,
+            referencia: "ANULACION_COMPRA",
+            referenciaId: id,
+          },
+        });
+
+        await prisma.stock.update({
+          where: { productoId: item.productoId },
+          data: { cantidad: { decrement: recibido } },
+        });
+      }
+
+      contraAsientos++;
+    }
+
+    const [compraAnulada, anulacion] = await prisma.$transaction([
+      prisma.compra.update({
+        where: { id },
+        data: { estado: "ANULADA" },
+        include: {
+          proveedor: true,
+          usuarioRegistro: { select: { id: true, nombre: true, email: true } },
+          items: { include: { producto: { select: { id: true, codigo: true, nombre: true } } } },
+        },
+      }),
+      prisma.anulacionCompra.create({
+        data: { compraId: id, usuarioId: userId, motivo },
+        include: { usuario: { select: { id: true, nombre: true, email: true } } },
+      }),
+    ]);
+
+    await prisma.log.create({
+      data: { usuarioId: userId, accion: "ANULAR_COMPRA", data: { compraId: id, motivo, contraAsientos, esRetroactivo } },
+    });
+
+    logger.info({ userId, compraId: id, contraAsientos, esRetroactivo }, "Compra anulada");
+    return { compra: compraAnulada, anulacion, contraAsientos };
+  },
+
+  async getAnulaciones() {
+    return prisma.anulacionCompra.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        usuario: { select: { id: true, nombre: true, email: true } },
+        compra: {
+          select: {
+            id: true,
+            createdAt: true,
+            numeroFactura: true,
+            proveedor: { select: { id: true, nombre: true } },
+          },
+        },
+      },
+    });
+  },
 };
