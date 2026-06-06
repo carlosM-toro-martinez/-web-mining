@@ -101,9 +101,7 @@ export const comprasService = {
     const limit = Number(query.limit ?? 10);
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      OR: [{ usuarioRegistroId: userId }, { usuarioRecibidoId: userId }],
-    };
+    const where: any = {};
 
     if (query.estado) {
       where.estado = query.estado;
