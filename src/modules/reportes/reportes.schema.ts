@@ -3,6 +3,7 @@ import { z } from "zod";
 export const binCardQuerySchema = z.object({
   page: z.string().optional().transform((val) => (val ? parseInt(val) : 1)),
   limit: z.string().optional().transform((val) => (val ? parseInt(val) : 50)),
+  sinPaginar: z.string().optional().transform((val) => val === "true"),
   productoId: z.string().optional().transform((val) => (val ? parseInt(val) : undefined)),
   fechaInicio: z.string().optional().transform((val) => (val ? new Date(val) : undefined)),
   fechaFin: z.string().optional().transform((val) => (val ? new Date(val) : undefined)),
@@ -22,15 +23,17 @@ export const valesResumenQuerySchema = z.object({
   fechaFin: z.string().optional().transform((val) => (val ? new Date(val) : undefined)),
   page: z.string().optional().transform((val) => (val ? parseInt(val) : 1)),
   limit: z.string().optional().transform((val) => (val ? parseInt(val) : 20)),
+  sinPaginar: z.string().optional().transform((val) => val === "true"),
 });
 
 export const comprasResumenQuerySchema = z.object({
-  estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO"]).optional(),
+  estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO", "ANULADA"]).optional(),
   proveedorId: z.string().optional().transform((val) => (val ? parseInt(val) : undefined)),
   fechaInicio: z.string().optional().transform((val) => (val ? new Date(val) : undefined)),
   fechaFin: z.string().optional().transform((val) => (val ? new Date(val) : undefined)),
   page: z.string().optional().transform((val) => (val ? parseInt(val) : 1)),
   limit: z.string().optional().transform((val) => (val ? parseInt(val) : 20)),
+  sinPaginar: z.string().optional().transform((val) => val === "true"),
 });
 
 export const periodoQuerySchema = z.object({
@@ -38,8 +41,16 @@ export const periodoQuerySchema = z.object({
   mes: z.coerce.number().int().min(1).max(12),
 });
 
+export const periodoRangoQuerySchema = z.object({
+  anioInicio: z.coerce.number().int().min(2000),
+  mesInicio: z.coerce.number().int().min(1).max(12),
+  anioFin: z.coerce.number().int().min(2000),
+  mesFin: z.coerce.number().int().min(1).max(12),
+});
+
 export type BinCardQueryDTO = z.infer<typeof binCardQuerySchema>;
 export type StockQueryDTO = z.infer<typeof stockQuerySchema>;
 export type ValesResumenQueryDTO = z.infer<typeof valesResumenQuerySchema>;
 export type ComprasResumenQueryDTO = z.infer<typeof comprasResumenQuerySchema>;
 export type PeriodoQueryDTO = z.infer<typeof periodoQuerySchema>;
+export type PeriodoRangoQueryDTO = z.infer<typeof periodoRangoQuerySchema>;

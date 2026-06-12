@@ -5,7 +5,7 @@ import {
   stockQuerySchema,
   valesResumenQuerySchema,
   comprasResumenQuerySchema,
-  periodoQuerySchema,
+  periodoRangoQuerySchema,
 } from "./reportes.schema.js";
 import { HttpError } from "../../errors/http.error.js";
 
@@ -67,9 +67,9 @@ export const reportesController = {
 
   async getBalanceMensual(req: Request, res: Response) {
     try {
-      const parsed = periodoQuerySchema.safeParse(req.query);
+      const parsed = periodoRangoQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: "Se requieren parámetros anio y mes válidos" });
+        return res.status(400).json({ success: false, error: "Se requieren parámetros anioInicio, mesInicio, anioFin y mesFin válidos" });
       }
       const result = await reportesService.getBalanceMensual(parsed.data);
       res.json({ success: true, data: result });
@@ -81,9 +81,9 @@ export const reportesController = {
 
   async getInventarioAlmacen(req: Request, res: Response) {
     try {
-      const parsed = periodoQuerySchema.safeParse(req.query);
+      const parsed = periodoRangoQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        return res.status(400).json({ success: false, error: "Se requieren parámetros anio y mes válidos" });
+        return res.status(400).json({ success: false, error: "Se requieren parámetros anioInicio, mesInicio, anioFin y mesFin válidos" });
       }
       const result = await reportesService.getInventarioAlmacen(parsed.data);
       res.json({ success: true, data: result });

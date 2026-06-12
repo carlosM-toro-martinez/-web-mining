@@ -5,7 +5,7 @@ import type {
   StockQueryDTO,
   ValesResumenQueryDTO,
   ComprasResumenQueryDTO,
-  PeriodoQueryDTO,
+  PeriodoRangoQueryDTO,
 } from "./reportes.schema.js";
 import type { BinCardItem, BinCardValoradoItem, StockItem } from "./reportes.types.js";
 
@@ -28,32 +28,31 @@ function buildDateRange(query: { fecha?: Date | undefined; fechaInicio?: Date | 
   return undefined;
 }
 
+function generarRangoDeMeses(anioInicio: number, mesInicio: number, anioFin: number, mesFin: number) {
+  const meses: { anio: number; mes: number }[] = [];
+  let anio = anioInicio;
+  let mes = mesInicio;
+  while (anio < anioFin || (anio === anioFin && mes <= mesFin)) {
+    meses.push({ anio, mes });
+    mes++;
+    if (mes > 12) { mes = 1; anio++; }
+  }
+  return meses;
+}
+
 export const reportesService = {
   async getBinCard(query: BinCardQueryDTO) {
-    const page = query.page || 1;
-    const limit = query.limit || 50;
-    const skip = (page - 1) * limit;
-
     const where: any = {};
     if (query.productoId) where.productoId = query.productoId;
     const dateRange = buildDateRange(query);
     if (dateRange) where.createdAt = dateRange;
 
-    const [movimientos, total] = await Promise.all([
-      prisma.movimiento.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "asc" },
-        include: {
-          usuarioEntrega: { select: { nombre: true } },
-          producto: { select: { nombre: true } },
-        },
-      }),
-      prisma.movimiento.count({ where }),
-    ]);
+    const include = {
+      usuarioEntrega: { select: { nombre: true } },
+      producto: { select: { nombre: true } },
+    };
 
-    const items: BinCardItem[] = movimientos.map((mov) => ({
+    const mapMov = (mov: any): BinCardItem => ({
       id: mov.id,
       operationId: mov.operationId,
       fecha: mov.createdAt,
@@ -65,37 +64,43 @@ export const reportesService = {
       referencia: mov.referencia,
       referenciaId: mov.referenciaId,
       productoNombre: mov.producto.nombre,
-    }));
+    });
 
+    if (query.sinPaginar) {
+      const movimientos = await prisma.movimiento.findMany({
+        where, orderBy: { createdAt: "asc" }, include,
+      });
+      const items = movimientos.map(mapMov);
+      logger.info({ query }, "Bin Card sin paginación generado");
+      return { items, meta: { total: items.length } };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 50;
+    const skip = (page - 1) * limit;
+
+    const [movimientos, total] = await Promise.all([
+      prisma.movimiento.findMany({ where, skip, take: limit, orderBy: { createdAt: "asc" }, include }),
+      prisma.movimiento.count({ where }),
+    ]);
+
+    const items = movimientos.map(mapMov);
     logger.info({ query, page, limit }, "Bin Card generado");
     return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
   async getBinCardValorado(query: BinCardQueryDTO) {
-    const page = query.page || 1;
-    const limit = query.limit || 50;
-    const skip = (page - 1) * limit;
-
     const where: any = {};
     if (query.productoId) where.productoId = query.productoId;
     const dateRange = buildDateRange(query);
     if (dateRange) where.createdAt = dateRange;
 
-    const [movimientos, total] = await Promise.all([
-      prisma.movimiento.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "asc" },
-        include: {
-          usuarioEntrega: { select: { nombre: true } },
-          producto: { select: { nombre: true } },
-        },
-      }),
-      prisma.movimiento.count({ where }),
-    ]);
+    const include = {
+      usuarioEntrega: { select: { nombre: true } },
+      producto: { select: { nombre: true } },
+    };
 
-    const items: BinCardValoradoItem[] = movimientos.map((mov) => ({
+    const mapMov = (mov: any): BinCardValoradoItem => ({
       id: mov.id,
       operationId: mov.operationId,
       fecha: mov.createdAt,
@@ -111,8 +116,27 @@ export const reportesService = {
       referencia: mov.referencia,
       referenciaId: mov.referenciaId,
       productoNombre: mov.producto.nombre,
-    }));
+    });
 
+    if (query.sinPaginar) {
+      const movimientos = await prisma.movimiento.findMany({
+        where, orderBy: { createdAt: "asc" }, include,
+      });
+      const items = movimientos.map(mapMov);
+      logger.info({ query }, "Bin Card Valorado sin paginación generado");
+      return { items, meta: { total: items.length } };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 50;
+    const skip = (page - 1) * limit;
+
+    const [movimientos, total] = await Promise.all([
+      prisma.movimiento.findMany({ where, skip, take: limit, orderBy: { createdAt: "asc" }, include }),
+      prisma.movimiento.count({ where }),
+    ]);
+
+    const items = movimientos.map(mapMov);
     logger.info({ query, page, limit }, "Bin Card Valorado generado");
     return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
@@ -164,33 +188,35 @@ export const reportesService = {
   },
 
   async getValesResumen(query: ValesResumenQueryDTO) {
-    const page = query.page || 1;
-    const limit = query.limit || 20;
-    const skip = (page - 1) * limit;
-
     const where: any = {};
     if (query.estado) where.estado = query.estado;
     if (query.solicitanteId) where.solicitanteId = query.solicitanteId;
     const dateRange = buildDateRange(query);
     if (dateRange) where.createdAt = dateRange;
 
-    const [vales, total] = await Promise.all([
-      prisma.vale.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
+    const include = {
+      solicitante: { select: { id: true, nombre: true, email: true } },
+      superintendente: { select: { id: true, nombre: true } },
+      almacenero: { select: { id: true, nombre: true } },
+      items: {
         include: {
-          solicitante: { select: { id: true, nombre: true, email: true } },
-          superintendente: { select: { id: true, nombre: true } },
-          almacenero: { select: { id: true, nombre: true } },
-          items: {
-            include: {
-              producto: { select: { id: true, nombre: true, codigo: true } },
-            },
-          },
+          producto: { select: { id: true, nombre: true, codigo: true } },
         },
-      }),
+      },
+    };
+
+    if (query.sinPaginar) {
+      const vales = await prisma.vale.findMany({ where, orderBy: { createdAt: "desc" }, include });
+      logger.info({ query }, "Reporte vales sin paginación generado");
+      return { vales, meta: { total: vales.length } };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [vales, total] = await Promise.all([
+      prisma.vale.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" }, include }),
       prisma.vale.count({ where }),
     ]);
 
@@ -199,33 +225,35 @@ export const reportesService = {
   },
 
   async getComprasResumen(query: ComprasResumenQueryDTO) {
-    const page = query.page || 1;
-    const limit = query.limit || 20;
-    const skip = (page - 1) * limit;
-
     const where: any = {};
     if (query.estado) where.estado = query.estado;
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
     if (dateRange) where.createdAt = dateRange;
 
-    const [compras, total] = await Promise.all([
-      prisma.compra.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
+    const include = {
+      proveedor: { select: { id: true, nombre: true } },
+      usuarioRegistro: { select: { id: true, nombre: true } },
+      usuarioRecibe: { select: { id: true, nombre: true } },
+      items: {
         include: {
-          proveedor: { select: { id: true, nombre: true } },
-          usuarioRegistro: { select: { id: true, nombre: true } },
-          usuarioRecibe: { select: { id: true, nombre: true } },
-          items: {
-            include: {
-              producto: { select: { id: true, nombre: true, codigo: true } },
-            },
-          },
+          producto: { select: { id: true, nombre: true, codigo: true } },
         },
-      }),
+      },
+    };
+
+    if (query.sinPaginar) {
+      const compras = await prisma.compra.findMany({ where, orderBy: { createdAt: "desc" }, include });
+      logger.info({ query }, "Reporte compras sin paginación generado");
+      return { compras, meta: { total: compras.length } };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [compras, total] = await Promise.all([
+      prisma.compra.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" }, include }),
       prisma.compra.count({ where }),
     ]);
 
@@ -233,172 +261,186 @@ export const reportesService = {
     return { compras, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
-  // ── Balance mensual por grupo ─────────────────────────────────────────────
-  async getBalanceMensual(query: PeriodoQueryDTO) {
-    const { anio, mes } = query;
+  async getBalanceMensual(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
 
-    const registros = await prisma.saldoMensual.findMany({
-      where: { anio, mes },
-      include: {
-        producto: {
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+        const registros = await prisma.saldoMensual.findMany({
+          where: { anio, mes },
           include: {
-            categoria: { include: { parent: true } },
+            producto: {
+              include: { categoria: { include: { parent: true } } },
+            },
           },
-        },
-      },
-    });
-
-    // Agrupar por grupo (categoría raíz)
-    const grupoMap = new Map<
-      number,
-      {
-        grupoCodigo: string;
-        grupoNombre: string;
-        saldoInicial: number;
-        ingresoMateriales: number;
-        salidaMateriales: number;
-        saldoFinal: number;
-      }
-    >();
-
-    for (const r of registros) {
-      const cat = r.producto.categoria;
-      const grupo = cat.parent ?? cat; // Si tiene padre, el padre es el grupo; si no, la categoría misma
-      const grupoId = grupo.id;
-
-      if (!grupoMap.has(grupoId)) {
-        grupoMap.set(grupoId, {
-          grupoCodigo: grupo.codigo,
-          grupoNombre: grupo.nombre,
-          saldoInicial: 0,
-          ingresoMateriales: 0,
-          salidaMateriales: 0,
-          saldoFinal: 0,
         });
-      }
 
-      const entry = grupoMap.get(grupoId)!;
-      entry.saldoInicial += Number(r.saldoInicial) * Number(r.precioUnit);
-      entry.ingresoMateriales += Number(r.ingresoQty) * Number(r.precioUnit);
-      entry.salidaMateriales += Number(r.salidaQty) * Number(r.precioUnit);
-      entry.saldoFinal += Number(r.totalBs);
-    }
+        const grupoMap = new Map<
+          number,
+          {
+            grupoCodigo: string;
+            grupoNombre: string;
+            saldoInicial: number;
+            ingresoMateriales: number;
+            salidaMateriales: number;
+            saldoFinal: number;
+          }
+        >();
 
-    const items = [...grupoMap.values()].sort((a, b) =>
-      a.grupoCodigo.localeCompare(b.grupoCodigo),
-    );
+        for (const r of registros) {
+          const cat = r.producto.categoria;
+          const grupo = cat.parent ?? cat;
+          const grupoId = grupo.id;
 
-    const totales = items.reduce(
-      (acc, g) => ({
-        saldoInicial: acc.saldoInicial + g.saldoInicial,
-        ingresoMateriales: acc.ingresoMateriales + g.ingresoMateriales,
-        salidaMateriales: acc.salidaMateriales + g.salidaMateriales,
-        saldoFinal: acc.saldoFinal + g.saldoFinal,
+          if (!grupoMap.has(grupoId)) {
+            grupoMap.set(grupoId, {
+              grupoCodigo: grupo.codigo,
+              grupoNombre: grupo.nombre,
+              saldoInicial: 0,
+              ingresoMateriales: 0,
+              salidaMateriales: 0,
+              saldoFinal: 0,
+            });
+          }
+
+          const entry = grupoMap.get(grupoId)!;
+          entry.saldoInicial += Number(r.saldoInicial) * Number(r.precioUnit);
+          entry.ingresoMateriales += Number(r.ingresoQty) * Number(r.precioUnit);
+          entry.salidaMateriales += Number(r.salidaQty) * Number(r.precioUnit);
+          entry.saldoFinal += Number(r.totalBs);
+        }
+
+        const grupos = [...grupoMap.values()].sort((a, b) =>
+          a.grupoCodigo.localeCompare(b.grupoCodigo),
+        );
+
+        const totales = grupos.reduce(
+          (acc, g) => ({
+            saldoInicial: acc.saldoInicial + g.saldoInicial,
+            ingresoMateriales: acc.ingresoMateriales + g.ingresoMateriales,
+            salidaMateriales: acc.salidaMateriales + g.salidaMateriales,
+            saldoFinal: acc.saldoFinal + g.saldoFinal,
+          }),
+          { saldoInicial: 0, ingresoMateriales: 0, salidaMateriales: 0, saldoFinal: 0 },
+        );
+
+        return { anio, mes, esCerrado, grupos, totales };
       }),
-      { saldoInicial: 0, ingresoMateriales: 0, salidaMateriales: 0, saldoFinal: 0 },
     );
 
-    logger.info({ anio, mes, grupos: items.length }, "Balance mensual generado");
-    return { anio, mes, items, totales };
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Balance mensual por rango generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
 
-  // ── Inventario almacén por producto (jerárquico) ──────────────────────────
-  async getInventarioAlmacen(query: PeriodoQueryDTO) {
-    const { anio, mes } = query;
+  async getInventarioAlmacen(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
 
-    const registros = await prisma.saldoMensual.findMany({
-      where: { anio, mes },
-      include: {
-        producto: {
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+        const registros = await prisma.saldoMensual.findMany({
+          where: { anio, mes },
           include: {
-            categoria: { include: { parent: true } },
+            producto: {
+              include: {
+                categoria: { include: { parent: true } },
+              },
+            },
           },
-        },
-      },
-      orderBy: { producto: { codigo: "asc" } },
-    });
+          orderBy: { producto: { codigo: "asc" } },
+        });
 
-    // Estructura jerárquica: grupo → subGrupo → productos
-    const grupoMap = new Map<
-      number,
-      {
-        codigo: string;
-        nombre: string;
-        subGrupos: Map<
+        const grupoMap = new Map<
           number,
           {
             codigo: string;
             nombre: string;
-            productos: Array<{
-              codigo: string;
-              nombre: string;
-              unidad: string;
-              saldoInicial: number;
-              ingresoQty: number;
-              salidaQty: number;
-              saldoFinal: number;
-              precioUnit: number;
-              totalBs: number;
-            }>;
+            subGrupos: Map<
+              number,
+              {
+                codigo: string;
+                nombre: string;
+                productos: Array<{
+                  codigo: string;
+                  nombre: string;
+                  unidad: string;
+                  saldoInicial: number;
+                  ingresoQty: number;
+                  salidaQty: number;
+                  saldoFinal: number;
+                  precioUnit: number;
+                  totalBs: number;
+                }>;
+              }
+            >;
+            totalBs: number;
           }
-        >;
-        totalBs: number;
-      }
-    >();
+        >();
 
-    for (const r of registros) {
-      const cat = r.producto.categoria;
-      const esSubGrupo = cat.parent !== null;
-      const grupo = esSubGrupo ? cat.parent! : cat;
-      const subGrupo = esSubGrupo ? cat : null;
+        for (const r of registros) {
+          const cat = r.producto.categoria;
+          const esSubGrupo = cat.parent !== null;
+          const grupo = esSubGrupo ? cat.parent! : cat;
+          const subGrupo = esSubGrupo ? cat : null;
 
-      if (!grupoMap.has(grupo.id)) {
-        grupoMap.set(grupo.id, {
-          codigo: grupo.codigo,
-          nombre: grupo.nombre,
-          subGrupos: new Map(),
-          totalBs: 0,
-        });
-      }
+          if (!grupoMap.has(grupo.id)) {
+            grupoMap.set(grupo.id, {
+              codigo: grupo.codigo,
+              nombre: grupo.nombre,
+              subGrupos: new Map(),
+              totalBs: 0,
+            });
+          }
 
-      const grupoEntry = grupoMap.get(grupo.id)!;
-      const subGrupoId = subGrupo?.id ?? grupo.id;
-      const subGrupoCodigo = subGrupo?.codigo ?? grupo.codigo;
-      const subGrupoNombre = subGrupo?.nombre ?? grupo.nombre;
+          const grupoEntry = grupoMap.get(grupo.id)!;
+          const subGrupoId = subGrupo?.id ?? grupo.id;
+          const subGrupoCodigo = subGrupo?.codigo ?? grupo.codigo;
+          const subGrupoNombre = subGrupo?.nombre ?? grupo.nombre;
 
-      if (!grupoEntry.subGrupos.has(subGrupoId)) {
-        grupoEntry.subGrupos.set(subGrupoId, {
-          codigo: subGrupoCodigo,
-          nombre: subGrupoNombre,
-          productos: [],
-        });
-      }
+          if (!grupoEntry.subGrupos.has(subGrupoId)) {
+            grupoEntry.subGrupos.set(subGrupoId, {
+              codigo: subGrupoCodigo,
+              nombre: subGrupoNombre,
+              productos: [],
+            });
+          }
 
-      const totalBs = Number(r.totalBs);
-      grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
-        codigo: r.producto.codigo,
-        nombre: r.producto.nombre,
-        unidad: r.producto.unidad,
-        saldoInicial: Number(r.saldoInicial),
-        ingresoQty: Number(r.ingresoQty),
-        salidaQty: Number(r.salidaQty),
-        saldoFinal: Number(r.saldoFinal),
-        precioUnit: Number(r.precioUnit),
-        totalBs,
-      });
-      grupoEntry.totalBs += totalBs;
-    }
+          const totalBs = Number(r.totalBs);
+          grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
+            codigo: r.producto.codigo,
+            nombre: r.producto.nombre,
+            unidad: r.producto.unidad,
+            saldoInicial: Number(r.saldoInicial),
+            ingresoQty: Number(r.ingresoQty),
+            salidaQty: Number(r.salidaQty),
+            saldoFinal: Number(r.saldoFinal),
+            precioUnit: Number(r.precioUnit),
+            totalBs,
+          });
+          grupoEntry.totalBs += totalBs;
+        }
 
-    const grupos = [...grupoMap.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)).map((g) => ({
-      codigo: g.codigo,
-      nombre: g.nombre,
-      totalBs: g.totalBs,
-      subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
-    }));
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.codigo.localeCompare(b.codigo))
+          .map((g) => ({
+            codigo: g.codigo,
+            nombre: g.nombre,
+            totalBs: g.totalBs,
+            subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
+          }));
 
-    const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBs, 0);
+        const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBs, 0);
 
-    logger.info({ anio, mes, grupos: grupos.length }, "Inventario almacén generado");
-    return { anio, mes, grupos, totalGeneral };
+        return { anio, mes, esCerrado, grupos, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Inventario almacén por rango generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
 };
