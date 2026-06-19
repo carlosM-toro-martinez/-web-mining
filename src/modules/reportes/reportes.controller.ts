@@ -65,6 +65,17 @@ export const reportesController = {
     }
   },
 
+  async getComprasDetalle(req: Request, res: Response) {
+    try {
+      const query = comprasResumenQuerySchema.parse(req.query);
+      const result = await reportesService.getComprasDetalle(query);
+      res.json({ success: true, data: result.compras, meta: result.meta, totalGeneral: result.totalGeneral });
+    } catch (error) {
+      if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
+      else res.status(500).json({ error: "Error interno del servidor" });
+    }
+  },
+
   async getBalanceMensual(req: Request, res: Response) {
     try {
       const parsed = periodoRangoQuerySchema.safeParse(req.query);

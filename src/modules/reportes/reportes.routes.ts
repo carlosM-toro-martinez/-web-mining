@@ -21,6 +21,9 @@ router.get("/vales", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), report
 // Resumen de compras (filtrable por estado, proveedor, fecha)
 router.get("/compras", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasResumen);
 
+// Detalle completo de compras con proveedor, items valorados y totales
+router.get("/compras-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasDetalle);
+
 // Balance mensual por grupo (?anio=2025&mes=9)
 router.get("/balance-mensual", reportesController.getBalanceMensual);
 

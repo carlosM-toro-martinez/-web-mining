@@ -261,6 +261,105 @@ export const reportesService = {
     return { compras, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
+  async getComprasDetalle(query: ComprasResumenQueryDTO) {
+    const where: any = {};
+    if (query.estado) where.estado = query.estado;
+    if (query.proveedorId) where.proveedorId = query.proveedorId;
+    const dateRange = buildDateRange(query);
+    if (dateRange) where.createdAt = dateRange;
+
+    const include = {
+      proveedor: true,
+      usuarioRegistro: { select: { id: true, nombre: true } },
+      usuarioRecibe: { select: { id: true, nombre: true } },
+      anulacion: {
+        include: { usuario: { select: { id: true, nombre: true } } },
+      },
+      items: {
+        include: {
+          producto: { select: { id: true, codigo: true, nombre: true, unidad: true } },
+        },
+      },
+    };
+
+    const mapCompra = (c: any) => {
+      const descuentoPct = Number(c.descuento);
+      const items = c.items.map((item: any) => {
+        const cantidadRecibida = Number(item.cantidadRecibida);
+        const precioUnit = Number(item.precioUnit);
+        return {
+          productoId: item.productoId,
+          codigo: item.producto.codigo,
+          nombre: item.producto.nombre,
+          unidad: item.producto.unidad,
+          cantidadPedida: Number(item.cantidadPedida),
+          cantidadRecibida,
+          precioUnit,
+          subtotalBs: cantidadRecibida * precioUnit,
+        };
+      });
+
+      const subtotalBs = items.reduce((acc: number, i: any) => acc + i.subtotalBs, 0);
+      const descuentoBs = subtotalBs * (descuentoPct / 100);
+      const totalBs = subtotalBs - descuentoBs;
+
+      return {
+        id: c.id,
+        estado: c.estado,
+        numeroFactura: c.numeroFactura ?? null,
+        observacion: c.observacion ?? null,
+        descuento: descuentoPct,
+        createdAt: c.createdAt,
+        recibidoAt: c.recibidoAt ?? null,
+        fechaOperacion: c.fechaOperacion ?? null,
+        proveedor: {
+          id: c.proveedor.id,
+          nombre: c.proveedor.nombre,
+          razonSocial: c.proveedor.razonSocial ?? null,
+          nit: c.proveedor.nit ?? null,
+          contacto: c.proveedor.contacto ?? null,
+          lugar: c.proveedor.lugar ?? null,
+        },
+        usuarioRegistro: c.usuarioRegistro,
+        usuarioRecibe: c.usuarioRecibe ?? null,
+        anulacion: c.anulacion
+          ? {
+              motivo: c.anulacion.motivo,
+              creadoAt: c.anulacion.createdAt,
+              usuario: c.anulacion.usuario,
+            }
+          : null,
+        items,
+        subtotalBs,
+        descuentoBs,
+        totalBs,
+      };
+    };
+
+    if (query.sinPaginar) {
+      const compras = await prisma.compra.findMany({ where, orderBy: { createdAt: "desc" }, include });
+      const data = compras.map(mapCompra);
+      const totalGeneral = data.reduce((acc, c) => acc + c.totalBs, 0);
+      logger.info({ query }, "Reporte compras detalle sin paginación generado");
+      return { compras: data, meta: { total: data.length }, totalGeneral };
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [compras, total] = await Promise.all([
+      prisma.compra.findMany({ where, skip, take: limit, orderBy: { createdAt: "desc" }, include }),
+      prisma.compra.count({ where }),
+    ]);
+
+    const data = compras.map(mapCompra);
+    const totalGeneral = data.reduce((acc, c) => acc + c.totalBs, 0);
+
+    logger.info({ query }, "Reporte compras detalle generado");
+    return { compras: data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) }, totalGeneral };
+  },
+
   async getBalanceMensual(query: PeriodoRangoQueryDTO) {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
