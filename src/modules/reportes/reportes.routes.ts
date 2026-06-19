@@ -24,7 +24,13 @@ router.get("/compras", authorize("ADMIN", "ALMACENERO"), reportesController.getC
 // Balance mensual por grupo (?anio=2025&mes=9)
 router.get("/balance-mensual", reportesController.getBalanceMensual);
 
-// Inventario almacén jerárquico por producto (?anio=2025&mes=9)
+// Inventario almacén jerárquico por producto
 router.get("/inventario-almacen", reportesController.getInventarioAlmacen);
+
+// Entradas al almacén por período (solo ingresos con valor Bs)
+router.get("/entradas-almacen", reportesController.getEntradasAlmacen);
+
+// Salidas del almacén por período (solo egresos con valor Bs)
+router.get("/salidas-almacen", reportesController.getSalidasAlmacen);
 
 export default router;

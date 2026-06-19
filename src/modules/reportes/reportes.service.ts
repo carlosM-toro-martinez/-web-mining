@@ -443,4 +443,202 @@ export const reportesService = {
     logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Inventario almacén por rango generado");
     return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
+
+  async getEntradasAlmacen(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+        const registros = await prisma.saldoMensual.findMany({
+          where: { anio, mes },
+          include: {
+            producto: {
+              include: { categoria: { include: { parent: true } } },
+            },
+          },
+          orderBy: { producto: { codigo: "asc" } },
+        });
+
+        const grupoMap = new Map<
+          number,
+          {
+            codigo: string;
+            nombre: string;
+            subGrupos: Map<
+              number,
+              {
+                codigo: string;
+                nombre: string;
+                productos: Array<{
+                  codigo: string;
+                  nombre: string;
+                  unidad: string;
+                  ingresoQty: number;
+                  precioUnit: number;
+                  totalBsEntrada: number;
+                }>;
+              }
+            >;
+            totalBsEntrada: number;
+          }
+        >();
+
+        for (const r of registros) {
+          const ingresoQty = Number(r.ingresoQty);
+          if (ingresoQty === 0) continue;
+
+          const cat = r.producto.categoria;
+          const esSubGrupo = cat.parent !== null;
+          const grupo = esSubGrupo ? cat.parent! : cat;
+          const subGrupo = esSubGrupo ? cat : null;
+
+          if (!grupoMap.has(grupo.id)) {
+            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBsEntrada: 0 });
+          }
+
+          const grupoEntry = grupoMap.get(grupo.id)!;
+          const subGrupoId = subGrupo?.id ?? grupo.id;
+
+          if (!grupoEntry.subGrupos.has(subGrupoId)) {
+            grupoEntry.subGrupos.set(subGrupoId, {
+              codigo: subGrupo?.codigo ?? grupo.codigo,
+              nombre: subGrupo?.nombre ?? grupo.nombre,
+              productos: [],
+            });
+          }
+
+          const precioUnit = Number(r.precioUnit);
+          const totalBsEntrada = ingresoQty * precioUnit;
+
+          grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
+            codigo: r.producto.codigo,
+            nombre: r.producto.nombre,
+            unidad: r.producto.unidad,
+            ingresoQty,
+            precioUnit,
+            totalBsEntrada,
+          });
+          grupoEntry.totalBsEntrada += totalBsEntrada;
+        }
+
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.codigo.localeCompare(b.codigo))
+          .map((g) => ({
+            codigo: g.codigo,
+            nombre: g.nombre,
+            totalBsEntrada: g.totalBsEntrada,
+            subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
+          }));
+
+        const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0);
+
+        return { anio, mes, esCerrado, grupos, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Entradas almacén por rango generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getSalidasAlmacen(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+        const registros = await prisma.saldoMensual.findMany({
+          where: { anio, mes },
+          include: {
+            producto: {
+              include: { categoria: { include: { parent: true } } },
+            },
+          },
+          orderBy: { producto: { codigo: "asc" } },
+        });
+
+        const grupoMap = new Map<
+          number,
+          {
+            codigo: string;
+            nombre: string;
+            subGrupos: Map<
+              number,
+              {
+                codigo: string;
+                nombre: string;
+                productos: Array<{
+                  codigo: string;
+                  nombre: string;
+                  unidad: string;
+                  salidaQty: number;
+                  precioUnit: number;
+                  totalBsSalida: number;
+                }>;
+              }
+            >;
+            totalBsSalida: number;
+          }
+        >();
+
+        for (const r of registros) {
+          const salidaQty = Number(r.salidaQty);
+          if (salidaQty === 0) continue;
+
+          const cat = r.producto.categoria;
+          const esSubGrupo = cat.parent !== null;
+          const grupo = esSubGrupo ? cat.parent! : cat;
+          const subGrupo = esSubGrupo ? cat : null;
+
+          if (!grupoMap.has(grupo.id)) {
+            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBsSalida: 0 });
+          }
+
+          const grupoEntry = grupoMap.get(grupo.id)!;
+          const subGrupoId = subGrupo?.id ?? grupo.id;
+
+          if (!grupoEntry.subGrupos.has(subGrupoId)) {
+            grupoEntry.subGrupos.set(subGrupoId, {
+              codigo: subGrupo?.codigo ?? grupo.codigo,
+              nombre: subGrupo?.nombre ?? grupo.nombre,
+              productos: [],
+            });
+          }
+
+          const precioUnit = Number(r.precioUnit);
+          const totalBsSalida = salidaQty * precioUnit;
+
+          grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
+            codigo: r.producto.codigo,
+            nombre: r.producto.nombre,
+            unidad: r.producto.unidad,
+            salidaQty,
+            precioUnit,
+            totalBsSalida,
+          });
+          grupoEntry.totalBsSalida += totalBsSalida;
+        }
+
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.codigo.localeCompare(b.codigo))
+          .map((g) => ({
+            codigo: g.codigo,
+            nombre: g.nombre,
+            totalBsSalida: g.totalBsSalida,
+            subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
+          }));
+
+        const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsSalida, 0);
+
+        return { anio, mes, esCerrado, grupos, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Salidas almacén por rango generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
 };
