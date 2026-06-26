@@ -72,7 +72,10 @@ export const reportesController = {
       res.json({ success: true, data: result.compras, meta: result.meta, totalGeneral: result.totalGeneral });
     } catch (error) {
       if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
-      else res.status(500).json({ error: "Error interno del servidor" });
+      else {
+        console.error("[compras-detalle] Error:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
+      }
     }
   },
 
@@ -129,6 +132,20 @@ export const reportesController = {
     } catch (error) {
       if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
       else res.status(500).json({ error: "Error interno del servidor" });
+    }
+  },
+
+  async getComprasProveedor(req: Request, res: Response) {
+    try {
+      const query = comprasResumenQuerySchema.parse(req.query);
+      const result = await reportesService.getComprasProveedor(query);
+      res.json({ success: true, data: result.compras, meta: result.meta, totalGeneral: result.totalGeneral, totalGeneralSinIVA: result.totalGeneralSinIVA });
+    } catch (error) {
+      if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
+      else {
+        console.error("[compras-proveedor] Error:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
+      }
     }
   },
 };

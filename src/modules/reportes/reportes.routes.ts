@@ -36,4 +36,7 @@ router.get("/entradas-almacen", reportesController.getEntradasAlmacen);
 // Salidas del almacén por período (solo egresos con valor Bs)
 router.get("/salidas-almacen", reportesController.getSalidasAlmacen);
 
+// Compras detalladas por proveedor y factura con totalSinIVA (total − 13% IVA)
+router.get("/compras-proveedor", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasProveedor);
+
 export default router;

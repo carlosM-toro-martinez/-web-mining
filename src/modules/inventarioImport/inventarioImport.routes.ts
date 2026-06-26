@@ -179,4 +179,14 @@ router.get(
   inventarioImportController.getCierres,
 );
 
+// POST /api/inventario-import/recalcular-precios
+// Recalcula precioUnit, precioUnitProm, ingresosBs y totalBsProm en todos los
+// SaldoMensual históricos que tengan ingresoQty > 0, leyendo los Movimiento reales.
+// Ejecutar UNA vez tras la migración que agregó los nuevos campos.
+router.post(
+  "/recalcular-precios",
+  authorize("ADMIN"),
+  inventarioImportController.recalcularPreciosProm,
+);
+
 export default router;

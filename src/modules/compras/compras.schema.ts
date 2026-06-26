@@ -30,9 +30,16 @@ export const recibirCompraSchema = z
 
 export const compraQuerySchema = z
   .object({
-    estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO"]).optional(),
+    estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO", "ANULADA"]).optional(),
     proveedorId: z.coerce.number().int().positive().optional(),
-    page: z.coerce.number().optional(),
+    // Filtro por rango de fechas (usa fechaOperacion con fallback a createdAt)
+    fechaInicio: z.string().optional().transform((v) => (v ? new Date(v) : undefined)),
+    fechaFin:    z.string().optional().transform((v) => (v ? new Date(v) : undefined)),
+    // Filtro por mes exacto
+    anio: z.coerce.number().int().min(2000).optional(),
+    mes:  z.coerce.number().int().min(1).max(12).optional(),
+    page:  z.coerce.number().optional(),
     limit: z.coerce.number().optional(),
+    sinPaginar: z.string().optional().transform((v) => v === "true"),
   })
   .strict();

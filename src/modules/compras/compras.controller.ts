@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 import { comprasService } from "./compras.service.js";
+import { compraQuerySchema } from "./compras.schema.js";
 
 export const comprasController = {
   async createCompra(req: AuthRequest, res: Response) {
@@ -16,7 +17,8 @@ export const comprasController = {
 
   async getCompras(req: AuthRequest, res: Response) {
     try {
-      const result = await comprasService.getCompras(req.query as any, req.user!.id);
+      const query = compraQuerySchema.parse(req.query);
+      const result = await comprasService.getCompras(query, req.user!.id);
       res.json({ success: true, data: result.compras, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

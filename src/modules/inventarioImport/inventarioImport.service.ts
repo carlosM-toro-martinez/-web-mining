@@ -814,57 +814,69 @@ export async function inicializarPeriodo(anio: number, mes: number) {
   let actualizados = 0;
 
   for (const producto of productos) {
-    const previo = await prisma.saldoMensual.findUnique({
+    const previo = await (prisma.saldoMensual.findUnique as any)({
       where: { productoId_anio_mes: { productoId: producto.id, anio: anioPrev, mes: mesPrev } },
-      select: { saldoFinal: true, precioUnit: true },
-    });
+      select: { saldoFinal: true, precioUnit: true, precioUnitProm: true },
+    }) as { saldoFinal: Prisma.Decimal; precioUnit: Prisma.Decimal; precioUnitProm: Prisma.Decimal } | null;
 
-    let saldoInicial: Prisma.Decimal;
-    let precioUnit: Prisma.Decimal;
+    let saldoInicial:   Prisma.Decimal;
+    let precioUnit:     Prisma.Decimal;
+    let precioUnitProm: Prisma.Decimal;
 
     if (previo) {
-      saldoInicial = new Prisma.Decimal(previo.saldoFinal);
-      precioUnit = new Prisma.Decimal(previo.precioUnit);
+      saldoInicial   = new Prisma.Decimal(previo.saldoFinal);
+      precioUnit     = new Prisma.Decimal(previo.precioUnit);
+      precioUnitProm = new Prisma.Decimal(previo.precioUnitProm ?? previo.precioUnit);
     } else if (producto.stock) {
-      saldoInicial = new Prisma.Decimal(producto.stock.cantidad);
-      precioUnit = new Prisma.Decimal(producto.stock.precioUnit);
+      saldoInicial   = new Prisma.Decimal(producto.stock.cantidad);
+      precioUnit     = new Prisma.Decimal(producto.stock.precioUnit);
+      precioUnitProm = new Prisma.Decimal(producto.stock.precioProm ?? producto.stock.precioUnit);
     } else {
-      saldoInicial = new Prisma.Decimal(0);
-      precioUnit = new Prisma.Decimal(0);
+      saldoInicial   = new Prisma.Decimal(0);
+      precioUnit     = new Prisma.Decimal(0);
+      precioUnitProm = new Prisma.Decimal(0);
     }
 
-    const yaExiste = await prisma.saldoMensual.findUnique({
+    const yaExiste = await (prisma.saldoMensual.findUnique as any)({
       where: { productoId_anio_mes: { productoId: producto.id, anio, mes } },
-      select: { id: true, ingresoQty: true, salidaQty: true },
-    });
+      select: { id: true, ingresoQty: true, salidaQty: true, ingresosBs: true },
+    }) as { id: string; ingresoQty: Prisma.Decimal; salidaQty: Prisma.Decimal; ingresosBs: Prisma.Decimal } | null;
 
     if (yaExiste) {
-      // Preserve accumulated movements; recalculate saldoFinal with correct saldoInicial
       const saldoFinal = saldoInicial
         .add(new Prisma.Decimal(yaExiste.ingresoQty))
         .sub(new Prisma.Decimal(yaExiste.salidaQty));
-      await prisma.saldoMensual.update({
+      // Recalcular promedio con los ingresosBs ya acumulados
+      const ingresosBs   = new Prisma.Decimal(yaExiste.ingresosBs ?? 0);
+      const ingresoQty   = new Prisma.Decimal(yaExiste.ingresoQty);
+      const precioPromAct = ingresoQty.gt(0) ? ingresosBs.div(ingresoQty) : precioUnitProm;
+      await (prisma.saldoMensual.update as any)({
         where: { id: yaExiste.id },
         data: {
           saldoInicial,
           saldoFinal,
           precioUnit,
-          totalBs: saldoFinal.mul(precioUnit),
+          totalBs:        saldoFinal.mul(precioUnit),
+          precioUnitProm: precioPromAct,
+          totalBsProm:    saldoFinal.mul(precioPromAct),
         },
       });
       actualizados++;
     } else {
-      await prisma.saldoMensual.create({
+      await (prisma.saldoMensual.create as any)({
         data: {
-          productoId: producto.id,
+          productoId:     producto.id,
           anio,
           mes,
           saldoInicial,
-          ingresoQty: 0,
-          salidaQty: 0,
-          saldoFinal: saldoInicial,
+          ingresoQty:     0,
+          salidaQty:      0,
+          saldoFinal:     saldoInicial,
           precioUnit,
-          totalBs: saldoInicial.mul(precioUnit),
+          totalBs:        saldoInicial.mul(precioUnit),
+          ingresosBs:     0,
+          precioUnitProm,
+          totalBsProm:    saldoInicial.mul(precioUnitProm),
         },
       });
       creados++;
@@ -936,16 +948,18 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
     select: { productoId: true, tipo: true, cantidad: true, precioUnit: true },
   });
 
-  const byProducto = new Map<number, { ingresoQty: Prisma.Decimal; salidaQty: Prisma.Decimal; precioUnit: Prisma.Decimal }>();
+  const byProducto = new Map<number, { ingresoQty: Prisma.Decimal; salidaQty: Prisma.Decimal; precioUnit: Prisma.Decimal; ingresosBs: Prisma.Decimal }>();
   for (const mov of movs) {
     const e = byProducto.get(mov.productoId) ?? {
       ingresoQty: new Prisma.Decimal(0),
-      salidaQty: new Prisma.Decimal(0),
+      salidaQty:  new Prisma.Decimal(0),
       precioUnit: new Prisma.Decimal(mov.precioUnit),
+      ingresosBs: new Prisma.Decimal(0),
     };
     if (mov.tipo === "ENTRADA") {
       e.ingresoQty = e.ingresoQty.add(mov.cantidad);
-      e.precioUnit = new Prisma.Decimal(mov.precioUnit);
+      e.precioUnit = new Prisma.Decimal(mov.precioUnit); // último precio de compra
+      e.ingresosBs = e.ingresosBs.add(new Prisma.Decimal(mov.precioUnit).mul(mov.cantidad));
     } else {
       e.salidaQty = e.salidaQty.add(mov.cantidad);
     }
@@ -957,33 +971,36 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
   let saldosActualizados = 0;
 
   for (const productoId of productoIds) {
-    const { ingresoQty, salidaQty, precioUnit } = byProducto.get(productoId)!;
+    const { ingresoQty, salidaQty, precioUnit, ingresosBs } = byProducto.get(productoId)!;
 
     const mesPrev = mes === 1 ? 12 : mes - 1;
     const anioPrev = mes === 1 ? anio - 1 : anio;
-    const saldoPrev = await prisma.saldoMensual.findUnique({
+    const saldoPrev = await (prisma.saldoMensual.findUnique as any)({
       where: { productoId_anio_mes: { productoId, anio: anioPrev, mes: mesPrev } },
-      select: { saldoFinal: true, precioUnit: true },
-    });
+      select: { saldoFinal: true, precioUnit: true, precioUnitProm: true },
+    }) as { saldoFinal: Prisma.Decimal; precioUnit: Prisma.Decimal; precioUnitProm: Prisma.Decimal } | null;
 
-    const saldoInicial = saldoPrev ? new Prisma.Decimal(saldoPrev.saldoFinal) : new Prisma.Decimal(0);
-    const precioCierre = saldoPrev ? new Prisma.Decimal(saldoPrev.precioUnit) : precioUnit;
-    const saldoFinal = saldoInicial.add(ingresoQty).sub(salidaQty);
-    const totalBs = saldoFinal.mul(precioCierre);
+    const saldoInicial   = saldoPrev ? new Prisma.Decimal(saldoPrev.saldoFinal) : new Prisma.Decimal(0);
+    const precioCierre   = saldoPrev ? new Prisma.Decimal(saldoPrev.precioUnit) : precioUnit; // último precio
+    const saldoFinal     = saldoInicial.add(ingresoQty).sub(salidaQty);
+    const totalBs        = saldoFinal.mul(precioCierre);
+    // Promedio ponderado de este mes (todas las entradas del período)
+    const precioUnitProm = ingresoQty.gt(0) ? ingresosBs.div(ingresoQty) : precioCierre;
+    const totalBsProm    = saldoFinal.mul(precioUnitProm);
 
     const saldoExistente = await prisma.saldoMensual.findUnique({
       where: { productoId_anio_mes: { productoId, anio, mes } },
     });
 
     if (saldoExistente) {
-      await prisma.saldoMensual.update({
+      await (prisma.saldoMensual.update as any)({
         where: { productoId_anio_mes: { productoId, anio, mes } },
-        data: { saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs },
+        data: { saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs, ingresosBs, precioUnitProm, totalBsProm },
       });
       saldosActualizados++;
     } else {
-      await prisma.saldoMensual.create({
-        data: { productoId, anio, mes, saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs },
+      await (prisma.saldoMensual.create as any)({
+        data: { productoId, anio, mes, saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs, ingresosBs, precioUnitProm, totalBsProm },
       });
       saldosCreados++;
     }
@@ -995,16 +1012,17 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
       where: { productoId_anio_mes: { productoId, anio: anioSig, mes: mesSig } },
     });
     if (sigExistente) {
-      await prisma.saldoMensual.update({
+      await (prisma.saldoMensual.update as any)({
         where: { productoId_anio_mes: { productoId, anio: anioSig, mes: mesSig } },
         data: { saldoInicial: saldoFinal },
       });
     } else {
-      await prisma.saldoMensual.create({
+      await (prisma.saldoMensual.create as any)({
         data: {
           productoId, anio: anioSig, mes: mesSig,
-          saldoInicial: saldoFinal, ingresoQty: 0, salidaQty: 0,
+          saldoInicial: saldoFinal, ingresoQty: 0, salidaQty: 0, ingresosBs: 0,
           saldoFinal, precioUnit: precioCierre, totalBs,
+          precioUnitProm, totalBsProm,
         },
       });
     }
@@ -1178,30 +1196,66 @@ export async function recalcularStock(
 export async function getPreviewPeriodo(anio: number, mes: number) {
   const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-  // Tanto para meses abiertos como cerrados, SaldoMensual ya tiene los valores correctos:
-  // - compras.service y vales.service actualizan ingresoQty/salidaQty/saldoFinal en tiempo real
-  // - cerrarMes los consolida y bloquea el período
-  // → leer directo de SaldoMensual es suficiente en ambos casos
-  const saldos = await prisma.saldoMensual.findMany({
-    where: { anio, mes },
-    include: { producto: { include: { categoria: { include: { parent: true } } } } },
-    orderBy: { producto: { codigo: "asc" } },
-  });
+  const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+  const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-  const items = saldos.map((r) => ({
-    productoId: r.productoId,
-    productoCodigo: r.producto.codigo,
-    productoNombre: r.producto.nombre,
-    unidad: r.producto.unidad,
-    grupo: r.producto.categoria.parent?.nombre ?? r.producto.categoria.nombre,
-    subGrupo: r.producto.categoria.parent ? r.producto.categoria.nombre : null,
-    saldoInicial: Number(r.saldoInicial),
-    ingresoQty:   Number(r.ingresoQty),
-    salidaQty:    Number(r.salidaQty),
-    saldoFinal:   Number(r.saldoFinal),
-    precioUnit:   Number(r.precioUnit),
-    totalBs:      Number(r.totalBs),
-  }));
+  const [saldos, movimientos] = await Promise.all([
+    prisma.saldoMensual.findMany({
+      where: { anio, mes },
+      include: { producto: { include: { categoria: { include: { parent: true } } } } },
+      orderBy: { producto: { codigo: "asc" } },
+    }),
+    // Precio real: calcular desde Movimiento.entradaBs (SaldoMensual.precioUnit puede ser 0)
+    prisma.movimiento.findMany({
+      where: {
+        tipo: "ENTRADA",
+        OR: [
+          { periodoAnio: anio, periodoMes: mes },
+          { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+        ],
+      },
+      select: { productoId: true, cantidad: true, entradaBs: true },
+    }),
+  ]);
+
+  // Mapa productoId → precio promedio ponderado del período
+  const precioMap = new Map<number, { totalBsEntrada: number; qty: number }>();
+  for (const mov of movimientos) {
+    const pid = mov.productoId;
+    if (!precioMap.has(pid)) precioMap.set(pid, { totalBsEntrada: 0, qty: 0 });
+    const e = precioMap.get(pid)!;
+    e.totalBsEntrada += Number(mov.entradaBs);
+    e.qty            += Number(mov.cantidad);
+  }
+
+  const items = saldos.map((r) => {
+    const mv         = precioMap.get(r.productoId);
+    // precioUnit = último precio de compra del período (desde Movimiento si existe, si no del SaldoMensual)
+    const precioUnit = mv && mv.qty > 0
+      ? mv.totalBsEntrada / mv.qty          // promedio del período como proxy del último precio
+      : Number(r.precioUnit);
+    // precioUnitProm = promedio ponderado desde acumulado Bs / qty
+    const precioUnitProm = mv && mv.qty > 0
+      ? mv.totalBsEntrada / mv.qty
+      : Number((r as any).precioUnitProm ?? r.precioUnit);
+    const saldoFinal = Number(r.saldoFinal);
+    return {
+      productoId: r.productoId,
+      productoCodigo: r.producto.codigo,
+      productoNombre: r.producto.nombre,
+      unidad: r.producto.unidad,
+      grupo: r.producto.categoria.parent?.nombre ?? r.producto.categoria.nombre,
+      subGrupo: r.producto.categoria.parent ? r.producto.categoria.nombre : null,
+      saldoInicial:   Number(r.saldoInicial),
+      ingresoQty:     Number(r.ingresoQty),
+      salidaQty:      Number(r.salidaQty),
+      saldoFinal,
+      precioUnit,
+      totalBs:        saldoFinal * precioUnit,
+      precioUnitProm,
+      totalBsProm:    saldoFinal * precioUnitProm,
+    };
+  });
 
   const resumen = items.reduce(
     (acc, i) => ({
@@ -1214,4 +1268,70 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
   );
 
   return { anio, mes, esCerrado, resumen, items };
+}
+
+// ─── Recalcular precios promedio en registros existentes ─────────────────────
+// Recorre todos los SaldoMensual con ingresoQty > 0 y recalcula ingresosBs,
+// precioUnit (último de compra) y precioUnitProm desde los Movimiento reales.
+// Útil para rellenar los campos nuevos en registros históricos ya existentes.
+
+export async function recalcularPreciosProm() {
+  const saldos = await prisma.saldoMensual.findMany({
+    where: { ingresoQty: { gt: 0 } },
+    select: { id: true, productoId: true, anio: true, mes: true, ingresoQty: true, saldoFinal: true },
+  });
+
+  let actualizados = 0;
+
+  for (const saldo of saldos) {
+    const startOfMonth = new Date(Date.UTC(saldo.anio, saldo.mes - 1, 1));
+    const endOfMonth   = new Date(Date.UTC(saldo.anio, saldo.mes, 1));
+
+    const entradas = await prisma.movimiento.findMany({
+      where: {
+        productoId: saldo.productoId,
+        tipo: "ENTRADA",
+        OR: [
+          { periodoAnio: saldo.anio, periodoMes: saldo.mes },
+          { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+        ],
+      },
+      select: { cantidad: true, precioUnit: true, entradaBs: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (entradas.length === 0) continue;
+
+    // Acumular ingresosBs y determinar último precio
+    let ingresosBs    = new Prisma.Decimal(0);
+    let lastPrecioUnit = new Prisma.Decimal(0);
+    let totalQty      = new Prisma.Decimal(0);
+
+    for (const e of entradas) {
+      const bs  = new Prisma.Decimal(e.entradaBs);
+      const qty = new Prisma.Decimal(e.cantidad);
+      ingresosBs    = ingresosBs.add(bs);
+      totalQty      = totalQty.add(qty);
+      lastPrecioUnit = new Prisma.Decimal(e.precioUnit);
+    }
+
+    const saldoFinal     = new Prisma.Decimal(saldo.saldoFinal);
+    const precioUnitProm = totalQty.gt(0) ? ingresosBs.div(totalQty) : lastPrecioUnit;
+
+    await (prisma.saldoMensual.update as any)({
+      where: { id: saldo.id },
+      data: {
+        precioUnit:     lastPrecioUnit,
+        totalBs:        saldoFinal.mul(lastPrecioUnit),
+        ingresosBs,
+        precioUnitProm,
+        totalBsProm:    saldoFinal.mul(precioUnitProm),
+      },
+    });
+
+    actualizados++;
+  }
+
+  logger.info({ actualizados }, "Precios promedio recalculados");
+  return { actualizados };
 }

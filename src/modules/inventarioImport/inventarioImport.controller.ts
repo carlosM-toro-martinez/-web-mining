@@ -20,6 +20,7 @@ import {
   cerrarMes,
   getCierres,
   getPreviewPeriodo,
+  recalcularPreciosProm,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -312,6 +313,15 @@ export const inventarioImportController = {
       }
       const data = await getPreviewPeriodo(parsed.data.anio, parsed.data.mes);
       res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async recalcularPreciosProm(_req: AuthRequest, res: Response) {
+    try {
+      const result = await recalcularPreciosProm();
+      res.json({ success: true, data: result });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
     }

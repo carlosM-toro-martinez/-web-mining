@@ -111,26 +111,43 @@ export const valesService = {
   },
 
   async getVales(query: ValeQueryDTO, userId: number, userRole: string) {
-    const page = Number(query.page ?? 1);
+    const page  = Number(query.page ?? 1);
     const limit = Number(query.limit ?? 10);
-    const skip = (page - 1) * limit;
+    const skip  = (page - 1) * limit;
 
     // ADMIN y SUPERINTENDENTE ven todos los vales; el resto solo los propios
     const where: any = ROLES_SUPERVISORES.includes(userRole)
       ? {}
       : { OR: [{ solicitanteId: userId }, { superintendenteId: userId }, { almaceneroId: userId }] };
 
-    if (query.estado) where.estado = query.estado;
+    if (query.estado)       where.estado       = query.estado;
     if (query.solicitanteId) where.solicitanteId = Number(query.solicitanteId);
 
+    // Filtro por período (mes exacto tiene precedencia sobre rango libre)
+    if (query.anio && query.mes) {
+      const start = new Date(Date.UTC(query.anio, query.mes - 1, 1));
+      const end   = new Date(Date.UTC(query.anio, query.mes, 1));
+      where.OR = [
+        { fechaOperacion: { gte: start, lt: end } },
+        { fechaOperacion: null, createdAt: { gte: start, lt: end } },
+      ];
+    } else if (query.fechaInicio || query.fechaFin) {
+      const range: any = {};
+      if (query.fechaInicio) range.gte = new Date(Date.UTC(query.fechaInicio.getUTCFullYear(), query.fechaInicio.getUTCMonth(), query.fechaInicio.getUTCDate()));
+      if (query.fechaFin)    range.lte = new Date(Date.UTC(query.fechaFin.getUTCFullYear(),    query.fechaFin.getUTCMonth(),    query.fechaFin.getUTCDate(),    23, 59, 59, 999));
+      where.OR = [
+        { fechaOperacion: range },
+        { fechaOperacion: null, createdAt: range },
+      ];
+    }
+
+    if (query.sinPaginar) {
+      const vales = await prisma.vale.findMany({ where, include: valeIncludeCompleto, orderBy: { createdAt: "desc" } });
+      return { vales, meta: { total: vales.length } };
+    }
+
     const [vales, total] = await Promise.all([
-      prisma.vale.findMany({
-        where,
-        skip,
-        take: limit,
-        include: valeIncludeCompleto,
-        orderBy: { createdAt: "desc" },
-      }),
+      prisma.vale.findMany({ where, skip, take: limit, include: valeIncludeCompleto, orderBy: { createdAt: "desc" } }),
       prisma.vale.count({ where }),
     ]);
 
@@ -334,17 +351,26 @@ export const valesService = {
           },
         });
 
-        const nuevaSalida = new Prisma.Decimal(saldo?.salidaQty ?? 0).add(cantidad);
-        const nuevoFinal = new Prisma.Decimal(saldo?.saldoFinal ?? 0).sub(cantidad);
-        const precioSaldo = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnitRetro);
-        await prisma.saldoMensual.upsert({
+        const nuevaSalida    = new Prisma.Decimal(saldo?.salidaQty ?? 0).add(cantidad);
+        const nuevoFinal     = new Prisma.Decimal(saldo?.saldoFinal ?? 0).sub(cantidad);
+        const precioSaldo    = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnitRetro);
+        const precioSaldoProm = saldo ? new Prisma.Decimal((saldo as any).precioUnitProm ?? 0) : precioSaldo;
+        await (prisma.saldoMensual.upsert as any)({
           where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
-          update: { salidaQty: nuevaSalida, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+          update: {
+            salidaQty:   nuevaSalida,
+            saldoFinal:  nuevoFinal,
+            totalBs:     nuevoFinal.mul(precioSaldo),
+            totalBsProm: nuevoFinal.mul(precioSaldoProm),
+          },
           create: {
             productoId: item.productoId, anio: periodoAnio!, mes: periodoMes!,
-            saldoInicial: 0, ingresoQty: 0,
-            salidaQty: cantidad, saldoFinal: nuevoFinal,
-            precioUnit: precioSaldo, totalBs: nuevoFinal.mul(precioSaldo),
+            saldoInicial: 0, ingresoQty: 0, ingresosBs: 0, precioUnitProm: 0,
+            salidaQty:   cantidad,
+            saldoFinal:  nuevoFinal,
+            precioUnit:  precioSaldo,
+            totalBs:     nuevoFinal.mul(precioSaldo),
+            totalBsProm: nuevoFinal.mul(precioSaldoProm),
           },
         });
 
@@ -587,11 +613,17 @@ export const valesService = {
         });
 
         if (saldo) {
-          const nuevaSalida = new Prisma.Decimal(saldo.salidaQty).sub(entregado);
-          const nuevoFinal  = new Prisma.Decimal(saldo.saldoFinal).add(entregado);
-          await prisma.saldoMensual.update({
+          const nuevaSalida    = new Prisma.Decimal(saldo.salidaQty).sub(entregado);
+          const nuevoFinal     = new Prisma.Decimal(saldo.saldoFinal).add(entregado);
+          const precioUnitProm = new Prisma.Decimal((saldo as any).precioUnitProm ?? 0);
+          await (prisma.saldoMensual.update as any)({
             where: { id: saldo.id },
-            data: { salidaQty: nuevaSalida, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioUnit) },
+            data: {
+              salidaQty:   nuevaSalida,
+              saldoFinal:  nuevoFinal,
+              totalBs:     nuevoFinal.mul(precioUnit),
+              totalBsProm: nuevoFinal.mul(precioUnitProm),
+            },
           });
         }
       } else {

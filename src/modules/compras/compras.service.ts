@@ -97,48 +97,53 @@ export const comprasService = {
   },
 
   async getCompras(query: CompraQueryDTO, userId: number) {
-    const page = Number(query.page ?? 1);
+    const page  = Number(query.page ?? 1);
     const limit = Number(query.limit ?? 10);
-    const skip = (page - 1) * limit;
+    const skip  = (page - 1) * limit;
 
     const where: any = {};
+    if (query.estado)      where.estado      = query.estado;
+    if (query.proveedorId) where.proveedorId = query.proveedorId;
 
-    if (query.estado) {
-      where.estado = query.estado;
+    // Filtro por período (mes exacto tiene precedencia sobre rango libre)
+    if (query.anio && query.mes) {
+      const start = new Date(Date.UTC(query.anio, query.mes - 1, 1));
+      const end   = new Date(Date.UTC(query.anio, query.mes, 1));
+      where.OR = [
+        { fechaOperacion: { gte: start, lt: end } },
+        { fechaOperacion: null, createdAt: { gte: start, lt: end } },
+      ];
+    } else if (query.fechaInicio || query.fechaFin) {
+      const range: any = {};
+      if (query.fechaInicio) range.gte = new Date(Date.UTC(query.fechaInicio.getUTCFullYear(), query.fechaInicio.getUTCMonth(), query.fechaInicio.getUTCDate()));
+      if (query.fechaFin)    range.lte = new Date(Date.UTC(query.fechaFin.getUTCFullYear(),    query.fechaFin.getUTCMonth(),    query.fechaFin.getUTCDate(),    23, 59, 59, 999));
+      where.OR = [
+        { fechaOperacion: range },
+        { fechaOperacion: null, createdAt: range },
+      ];
     }
 
-    if (query.proveedorId) {
-      where.proveedorId = query.proveedorId;
+    const include = {
+      proveedor: true,
+      usuarioRegistro: { select: { id: true, nombre: true, email: true } },
+      usuarioRecibe:   { select: { id: true, nombre: true, email: true } },
+      anulacion: { include: { usuario: { select: { id: true, nombre: true, email: true } } } },
+      items: {
+        include: { producto: { include: { stock: true } } },
+      },
+    };
+
+    if (query.sinPaginar) {
+      const compras = await prisma.compra.findMany({ where, include, orderBy: { createdAt: "desc" } });
+      return { compras, meta: { total: compras.length } };
     }
 
     const [compras, total] = await Promise.all([
-      prisma.compra.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          proveedor: true,
-          usuarioRegistro: { select: { id: true, nombre: true, email: true } },
-          usuarioRecibe: { select: { id: true, nombre: true, email: true } },
-          items: {
-            include: {
-              producto: {
-                include: {
-                  stock: true,
-                },
-              },
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
+      prisma.compra.findMany({ where, skip, take: limit, include, orderBy: { createdAt: "desc" } }),
       prisma.compra.count({ where }),
     ]);
 
-    return {
-      compras,
-      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    };
+    return { compras, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
   async getCompraById(id: string) {
@@ -258,17 +263,33 @@ export const comprasService = {
             },
           });
 
-          const nuevoIngreso = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
-          const nuevoFinal = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
-          const precioSaldo = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnit);
-          await prisma.saldoMensual.upsert({
+          const nuevoIngreso   = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
+          const nuevoFinal     = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
+          const precioUnitDec  = new Prisma.Decimal(precioUnit);
+          // Acumulado Bs de entradas → permite calcular precio promedio ponderado
+          const newIngresosBs    = new Prisma.Decimal((saldo as any)?.ingresosBs ?? 0).add(precioUnitDec.mul(cantidadRecibidaAhora));
+          const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : precioUnitDec;
+          await (prisma.saldoMensual.upsert as any)({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
-            update: { ingresoQty: nuevoIngreso, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+            update: {
+              ingresoQty:     nuevoIngreso,
+              saldoFinal:     nuevoFinal,
+              precioUnit:     precioUnitDec,
+              totalBs:        nuevoFinal.mul(precioUnitDec),
+              ingresosBs:     newIngresosBs,
+              precioUnitProm: newPrecioUnitProm,
+              totalBsProm:    nuevoFinal.mul(newPrecioUnitProm),
+            },
             create: {
               productoId: item.productoId, anio: periodoAnio!, mes: periodoMes!,
               saldoInicial: 0, salidaQty: 0,
-              ingresoQty: cantidadRecibidaAhora, saldoFinal: nuevoFinal,
-              precioUnit: precioSaldo, totalBs: nuevoFinal.mul(precioSaldo),
+              ingresoQty:     cantidadRecibidaAhora,
+              saldoFinal:     nuevoFinal,
+              precioUnit:     precioUnitDec,
+              totalBs:        nuevoFinal.mul(precioUnitDec),
+              ingresosBs:     precioUnitDec.mul(cantidadRecibidaAhora),
+              precioUnitProm: precioUnitDec,
+              totalBsProm:    nuevoFinal.mul(precioUnitDec),
             },
           });
 
@@ -431,12 +452,24 @@ export const comprasService = {
         });
 
         if (saldo) {
-          const nuevoIngreso = new Prisma.Decimal(saldo.ingresoQty).sub(recibido);
-          const nuevoFinal   = new Prisma.Decimal(saldo.saldoFinal).sub(recibido);
-          const precioSaldo  = new Prisma.Decimal(saldo.precioUnit);
+          const nuevoIngreso   = new Prisma.Decimal(saldo.ingresoQty).sub(recibido);
+          const nuevoFinal     = new Prisma.Decimal(saldo.saldoFinal).sub(recibido);
+          const precioSaldo    = new Prisma.Decimal(saldo.precioUnit);
+          const newIngresosBs  = Prisma.Decimal.max(
+            new Prisma.Decimal((saldo as any).ingresosBs ?? 0).sub(precioUnit.mul(recibido)),
+            new Prisma.Decimal(0),
+          );
+          const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : new Prisma.Decimal(0);
           await prisma.saldoMensual.update({
             where: { id: saldo.id },
-            data: { ingresoQty: nuevoIngreso, saldoFinal: nuevoFinal, totalBs: nuevoFinal.mul(precioSaldo) },
+            data: {
+              ingresoQty:     nuevoIngreso,
+              saldoFinal:     nuevoFinal,
+              totalBs:        nuevoFinal.mul(precioSaldo),
+              ingresosBs:     newIngresosBs,
+              precioUnitProm: newPrecioUnitProm,
+              totalBsProm:    nuevoFinal.mul(newPrecioUnitProm),
+            } as any,
           });
         }
       } else {

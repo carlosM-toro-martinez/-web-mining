@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 import { valesService } from "./vales.service.js";
+import { valeQuerySchema } from "./vales.schema.js";
 
 export const valesController = {
   async createVale(req: AuthRequest, res: Response) {
@@ -16,7 +17,8 @@ export const valesController = {
 
   async getVales(req: AuthRequest, res: Response) {
     try {
-      const result = await valesService.getVales(req.query as any, req.user!.id, String(req.user!.role ?? ""));
+      const query = valeQuerySchema.parse(req.query);
+      const result = await valesService.getVales(query, req.user!.id, String(req.user!.role ?? ""));
       res.json({ success: true, data: result.vales, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

@@ -229,7 +229,12 @@ export const reportesService = {
     if (query.estado) where.estado = query.estado;
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
-    if (dateRange) where.createdAt = dateRange;
+    if (dateRange) {
+      where.OR = [
+        { fechaOperacion: dateRange },
+        { fechaOperacion: null, createdAt: dateRange },
+      ];
+    }
 
     const include = {
       proveedor: { select: { id: true, nombre: true } },
@@ -266,7 +271,12 @@ export const reportesService = {
     if (query.estado) where.estado = query.estado;
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
-    if (dateRange) where.createdAt = dateRange;
+    if (dateRange) {
+      where.OR = [
+        { fechaOperacion: dateRange },
+        { fechaOperacion: null, createdAt: dateRange },
+      ];
+    }
 
     const include = {
       proveedor: true,
@@ -551,45 +561,49 @@ export const reportesService = {
       rangoMeses.map(async ({ anio, mes }) => {
         const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-        const registros = await prisma.saldoMensual.findMany({
-          where: { anio, mes },
+        // Movimientos de ENTRADA del período, con fallback a createdAt para datos sin periodoAnio
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth = new Date(Date.UTC(anio, mes, 1));
+
+        const movimientos = await prisma.movimiento.findMany({
+          where: {
+            tipo: "ENTRADA",
+            OR: [
+              { periodoAnio: anio, periodoMes: mes },
+              { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+            ],
+          },
           include: {
             producto: {
               include: { categoria: { include: { parent: true } } },
             },
           },
-          orderBy: { producto: { codigo: "asc" } },
         });
+
+        // Agregar por producto (puede haber múltiples movimientos del mismo producto en el mes)
+        const prodMap = new Map<number, { producto: typeof movimientos[0]["producto"]; ingresoQty: number; totalBsEntrada: number }>();
+        for (const mov of movimientos) {
+          const pid = mov.productoId;
+          if (!prodMap.has(pid)) {
+            prodMap.set(pid, { producto: mov.producto, ingresoQty: 0, totalBsEntrada: 0 });
+          }
+          const entry = prodMap.get(pid)!;
+          entry.ingresoQty += Number(mov.cantidad);
+          entry.totalBsEntrada += Number(mov.entradaBs);
+        }
 
         const grupoMap = new Map<
           number,
           {
             codigo: string;
             nombre: string;
-            subGrupos: Map<
-              number,
-              {
-                codigo: string;
-                nombre: string;
-                productos: Array<{
-                  codigo: string;
-                  nombre: string;
-                  unidad: string;
-                  ingresoQty: number;
-                  precioUnit: number;
-                  totalBsEntrada: number;
-                }>;
-              }
-            >;
+            subGrupos: Map<number, { codigo: string; nombre: string; productos: Array<{ codigo: string; nombre: string; unidad: string; ingresoQty: number; precioUnit: number; totalBsEntrada: number }> }>;
             totalBsEntrada: number;
           }
         >();
 
-        for (const r of registros) {
-          const ingresoQty = Number(r.ingresoQty);
-          if (ingresoQty === 0) continue;
-
-          const cat = r.producto.categoria;
+        for (const { producto, ingresoQty, totalBsEntrada } of prodMap.values()) {
+          const cat = producto.categoria;
           const esSubGrupo = cat.parent !== null;
           const grupo = esSubGrupo ? cat.parent! : cat;
           const subGrupo = esSubGrupo ? cat : null;
@@ -609,13 +623,12 @@ export const reportesService = {
             });
           }
 
-          const precioUnit = Number(r.precioUnit);
-          const totalBsEntrada = ingresoQty * precioUnit;
+          const precioUnit = ingresoQty > 0 ? totalBsEntrada / ingresoQty : 0;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
-            codigo: r.producto.codigo,
-            nombre: r.producto.nombre,
-            unidad: r.producto.unidad,
+            codigo: producto.codigo,
+            nombre: producto.nombre,
+            unidad: producto.unidad,
             ingresoQty,
             precioUnit,
             totalBsEntrada,
@@ -629,7 +642,12 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsEntrada: g.totalBsEntrada,
-            subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
+            subGrupos: [...g.subGrupos.values()]
+              .sort((a, b) => a.codigo.localeCompare(b.codigo))
+              .map((sg) => ({
+                ...sg,
+                productos: sg.productos.sort((a, b) => a.codigo.localeCompare(b.codigo)),
+              })),
           }));
 
         const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0);
@@ -650,45 +668,48 @@ export const reportesService = {
       rangoMeses.map(async ({ anio, mes }) => {
         const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-        const registros = await prisma.saldoMensual.findMany({
-          where: { anio, mes },
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth = new Date(Date.UTC(anio, mes, 1));
+
+        const movimientos = await prisma.movimiento.findMany({
+          where: {
+            tipo: "SALIDA",
+            OR: [
+              { periodoAnio: anio, periodoMes: mes },
+              { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+            ],
+          },
           include: {
             producto: {
               include: { categoria: { include: { parent: true } } },
             },
           },
-          orderBy: { producto: { codigo: "asc" } },
         });
+
+        // Agregar por producto
+        const prodMap = new Map<number, { producto: typeof movimientos[0]["producto"]; salidaQty: number; totalBsSalida: number }>();
+        for (const mov of movimientos) {
+          const pid = mov.productoId;
+          if (!prodMap.has(pid)) {
+            prodMap.set(pid, { producto: mov.producto, salidaQty: 0, totalBsSalida: 0 });
+          }
+          const entry = prodMap.get(pid)!;
+          entry.salidaQty += Number(mov.cantidad);
+          entry.totalBsSalida += Number(mov.salidaBs);
+        }
 
         const grupoMap = new Map<
           number,
           {
             codigo: string;
             nombre: string;
-            subGrupos: Map<
-              number,
-              {
-                codigo: string;
-                nombre: string;
-                productos: Array<{
-                  codigo: string;
-                  nombre: string;
-                  unidad: string;
-                  salidaQty: number;
-                  precioUnit: number;
-                  totalBsSalida: number;
-                }>;
-              }
-            >;
+            subGrupos: Map<number, { codigo: string; nombre: string; productos: Array<{ codigo: string; nombre: string; unidad: string; salidaQty: number; precioUnit: number; totalBsSalida: number }> }>;
             totalBsSalida: number;
           }
         >();
 
-        for (const r of registros) {
-          const salidaQty = Number(r.salidaQty);
-          if (salidaQty === 0) continue;
-
-          const cat = r.producto.categoria;
+        for (const { producto, salidaQty, totalBsSalida } of prodMap.values()) {
+          const cat = producto.categoria;
           const esSubGrupo = cat.parent !== null;
           const grupo = esSubGrupo ? cat.parent! : cat;
           const subGrupo = esSubGrupo ? cat : null;
@@ -708,13 +729,12 @@ export const reportesService = {
             });
           }
 
-          const precioUnit = Number(r.precioUnit);
-          const totalBsSalida = salidaQty * precioUnit;
+          const precioUnit = salidaQty > 0 ? totalBsSalida / salidaQty : 0;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
-            codigo: r.producto.codigo,
-            nombre: r.producto.nombre,
-            unidad: r.producto.unidad,
+            codigo: producto.codigo,
+            nombre: producto.nombre,
+            unidad: producto.unidad,
             salidaQty,
             precioUnit,
             totalBsSalida,
@@ -728,7 +748,12 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsSalida: g.totalBsSalida,
-            subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
+            subGrupos: [...g.subGrupos.values()]
+              .sort((a, b) => a.codigo.localeCompare(b.codigo))
+              .map((sg) => ({
+                ...sg,
+                productos: sg.productos.sort((a, b) => a.codigo.localeCompare(b.codigo)),
+              })),
           }));
 
         const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsSalida, 0);
@@ -739,5 +764,114 @@ export const reportesService = {
 
     logger.info({ anioInicio, mesInicio, anioFin, mesFin, totalMeses: meses.length }, "Salidas almacén por rango generado");
     return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getComprasProveedor(query: ComprasResumenQueryDTO) {
+    const IVA = 0.13;
+
+    const where: any = {};
+    if (query.estado) where.estado = query.estado;
+    if (query.proveedorId) where.proveedorId = query.proveedorId;
+    const dateRange = buildDateRange(query);
+    if (dateRange) {
+      where.OR = [
+        { fechaOperacion: dateRange },
+        { fechaOperacion: null, createdAt: dateRange },
+      ];
+    }
+
+    const include = {
+      proveedor: { select: { id: true, nombre: true, razonSocial: true, nit: true, contacto: true, lugar: true } },
+      usuarioRegistro: { select: { id: true, nombre: true } },
+      usuarioRecibe: { select: { id: true, nombre: true } },
+      anulacion: { include: { usuario: { select: { id: true, nombre: true } } } },
+      items: {
+        include: {
+          producto: { select: { id: true, codigo: true, nombre: true, unidad: true } },
+        },
+        orderBy: { id: "asc" as const },
+      },
+    };
+
+    const mapCompra = (c: any) => {
+      const descuentoPct = Number(c.descuento ?? 0);
+      const items = c.items.map((item: any) => {
+        const cantidadRecibida = Number(item.cantidadRecibida);
+        const precioUnit       = Number(item.precioUnit);
+        const totalBs          = cantidadRecibida * precioUnit;
+        const totalSinIVA      = totalBs * (1 - IVA);
+        return {
+          productoId:       item.productoId,
+          codigo:           item.producto.codigo,
+          nombre:           item.producto.nombre,
+          unidad:           item.producto.unidad,
+          cantidadPedida:   Number(item.cantidadPedida),
+          cantidadRecibida,
+          precioUnit,
+          totalBs:          Math.round(totalBs * 100) / 100,
+          totalSinIVA:      Math.round(totalSinIVA * 100) / 100,
+        };
+      });
+
+      const subtotalBs   = items.reduce((acc: number, i: any) => acc + i.totalBs, 0);
+      const descuentoBs  = subtotalBs * (descuentoPct / 100);
+      const totalBs      = subtotalBs - descuentoBs;
+      const totalSinIVA  = Math.round(totalBs * (1 - IVA) * 100) / 100;
+
+      return {
+        id:             c.id,
+        estado:         c.estado,
+        numeroFactura:  c.numeroFactura ?? null,
+        observacion:    c.observacion ?? null,
+        fechaOperacion: c.fechaOperacion ?? null,
+        createdAt:      c.createdAt,
+        recibidoAt:     c.recibidoAt ?? null,
+        descuento:      descuentoPct,
+        proveedor:      c.proveedor,
+        usuarioRegistro: c.usuarioRegistro,
+        usuarioRecibe:  c.usuarioRecibe ?? null,
+        anulacion:      c.anulacion
+          ? { motivo: c.anulacion.motivo, creadoAt: c.anulacion.createdAt, usuario: c.anulacion.usuario }
+          : null,
+        items,
+        subtotalBs:    Math.round(subtotalBs * 100) / 100,
+        descuentoBs:   Math.round(descuentoBs * 100) / 100,
+        totalBs:       Math.round(totalBs * 100) / 100,
+        totalSinIVA,
+      };
+    };
+
+    if (query.sinPaginar) {
+      const compras = await prisma.compra.findMany({
+        where,
+        orderBy: [{ proveedor: { nombre: "asc" } }, { fechaOperacion: "asc" }, { createdAt: "asc" }],
+        include,
+      });
+      const data        = compras.map(mapCompra);
+      const totalGeneral      = data.reduce((acc, c) => acc + c.totalBs, 0);
+      const totalGeneralSinIVA = Math.round(totalGeneral * (1 - IVA) * 100) / 100;
+      logger.info({ query }, "Reporte compras-proveedor sin paginación generado");
+      return { compras: data, meta: { total: data.length }, totalGeneral: Math.round(totalGeneral * 100) / 100, totalGeneralSinIVA };
+    }
+
+    const page  = query.page || 1;
+    const limit = query.limit || 20;
+    const skip  = (page - 1) * limit;
+
+    const [compras, total] = await Promise.all([
+      prisma.compra.findMany({
+        where, skip, take: limit,
+        orderBy: [{ proveedor: { nombre: "asc" } }, { fechaOperacion: "asc" }, { createdAt: "asc" }],
+        include,
+      }),
+      prisma.compra.count({ where }),
+    ]);
+
+    const data             = compras.map(mapCompra);
+    const totalGeneral     = data.reduce((acc, c) => acc + c.totalBs, 0);
+    const totalGeneralSinIVA = Math.round(totalGeneral * (1 - IVA) * 100) / 100;
+
+    logger.info({ query }, "Reporte compras-proveedor generado");
+    return { compras: data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) }, totalGeneral: Math.round(totalGeneral * 100) / 100, totalGeneralSinIVA };
   },
 };

@@ -124,19 +124,22 @@ model Producto {
 }
 
 model SaldoMensual {
-  id           String   @id @default(uuid())
-  productoId   Int
-  anio         Int
-  mes          Int
-  saldoInicial Decimal  @default(0) @db.Decimal(14, 4)
-  ingresoQty   Decimal  @default(0) @db.Decimal(14, 4)
-  salidaQty    Decimal  @default(0) @db.Decimal(14, 4)
-  saldoFinal   Decimal  @default(0) @db.Decimal(14, 4)
-  precioUnit   Decimal  @default(0) @db.Decimal(14, 4)
-  totalBs      Decimal  @default(0) @db.Decimal(14, 4)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  producto     Producto @relation(fields: [productoId], references: [id])
+  id             String   @id @default(uuid())
+  productoId     Int
+  anio           Int
+  mes            Int
+  saldoInicial   Decimal  @default(0) @db.Decimal(14, 4)
+  ingresoQty     Decimal  @default(0) @db.Decimal(14, 4)
+  salidaQty      Decimal  @default(0) @db.Decimal(14, 4)
+  saldoFinal     Decimal  @default(0) @db.Decimal(14, 4)
+  precioUnit     Decimal  @default(0) @db.Decimal(14, 4)  // último precio de compra del período
+  totalBs        Decimal  @default(0) @db.Decimal(14, 4)  // saldoFinal × precioUnit
+  ingresosBs     Decimal  @default(0) @db.Decimal(14, 4)  // suma(cantidad × precioUnit) de todas las entradas → para calcular promedio
+  precioUnitProm Decimal  @default(0) @db.Decimal(14, 4)  // promedio ponderado = ingresosBs / ingresoQty
+  totalBsProm    Decimal  @default(0) @db.Decimal(14, 4)  // saldoFinal × precioUnitProm
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  producto       Producto @relation(fields: [productoId], references: [id])
 
   @@unique([productoId, anio, mes])
   @@index([anio, mes])
