@@ -830,7 +830,7 @@ export async function inicializarPeriodo(anio: number, mes: number) {
     } else if (producto.stock) {
       saldoInicial   = new Prisma.Decimal(producto.stock.cantidad);
       precioUnit     = new Prisma.Decimal(producto.stock.precioUnit);
-      precioUnitProm = new Prisma.Decimal(producto.stock.precioProm ?? producto.stock.precioUnit);
+      precioUnitProm = new Prisma.Decimal(producto.stock.precioUnit);
     } else {
       saldoInicial   = new Prisma.Decimal(0);
       precioUnit     = new Prisma.Decimal(0);
