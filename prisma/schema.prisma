@@ -316,18 +316,19 @@ model EppAsignacion {
 ////////////////////////////////
 
 model Employee {
-  id           Int               @id @default(autoincrement())
-  nombre       String
-  documento    String?           @unique
-  cargo        String?
-  deviceUserId String            @unique
-  activo       Boolean           @default(true)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  syncStatus   SyncStatus        @default(PENDING)
-  logs         AsistenciaLog[]
-  horarios     EmpleadoHorario[]
-  ausencias    AusenciaEmpleado[]
+  id             Int               @id @default(autoincrement())
+  nombre         String
+  documento      String?           @unique
+  cargo          String?
+  tipoPersonal   TipoPersonal      @default(OBRERO)
+  deviceUserId   String            @unique
+  activo         Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  syncStatus     SyncStatus        @default(PENDING)
+  logs           AsistenciaLog[]
+  horarios       EmpleadoHorario[]
+  ausencias      AusenciaEmpleado[]
 }
 
 model Horario {
@@ -474,6 +475,11 @@ enum SyncStatus {
   PENDING
   SYNCED
   ERROR
+}
+
+enum TipoPersonal {
+  OBRERO
+  TECNICO_EMPLEADO
 }
 
 enum SyncAction {

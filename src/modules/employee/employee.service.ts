@@ -12,22 +12,14 @@ const ZK_IP = process.env.ZK_IP ?? "";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-function toResponse(emp: {
-  id: number;
-  nombre: string;
-  documento: string | null;
-  cargo?: string | null | undefined;
-  deviceUserId: string;
-  activo: boolean;
-  syncStatus: string;
-  createdAt: Date;
-  updatedAt: Date;
-}): EmployeeResponse {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toResponse(emp: any): EmployeeResponse {
   return {
     id: emp.id,
     nombre: emp.nombre,
     documento: emp.documento,
     cargo: emp.cargo ?? null,
+    tipoPersonal: emp.tipoPersonal ?? "OBRERO",
     deviceUserId: emp.deviceUserId,
     activo: emp.activo,
     syncStatus: emp.syncStatus as EmployeeResponse["syncStatus"],
@@ -78,11 +70,13 @@ export async function createEmployee(data: CreateEmployeeInput): Promise<Employe
     if (docExists) throw new HttpError(`Ya existe un empleado con documento "${data.documento}"`, 409);
   }
 
-  const employee = await prisma.employee.create({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const employee = await (prisma.employee.create as any)({
     data: {
       nombre: data.nombre,
       documento: data.documento ?? null,
       cargo: data.cargo ?? null,
+      tipoPersonal: data.tipoPersonal ?? "OBRERO",
       deviceUserId,
       syncStatus: "PENDING",
     },
@@ -113,6 +107,9 @@ export async function getAllEmployees(query: EmployeeQuery): Promise<{
   }
   if (query.activo !== undefined) {
     where["activo"] = query.activo;
+  }
+  if (query.tipoPersonal !== undefined) {
+    where["tipoPersonal"] = query.tipoPersonal;
   }
 
   const [employees, total] = await Promise.all([
@@ -152,12 +149,14 @@ export async function updateEmployee(
     if (docExists) throw new HttpError(`Ya existe otro empleado con documento "${data.documento}"`, 409);
   }
 
-  const employee = await prisma.employee.update({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const employee = await (prisma.employee.update as any)({
     where: { id },
     data: {
       ...(data.nombre !== undefined && { nombre: data.nombre }),
       ...(data.documento !== undefined && { documento: data.documento }),
       ...(data.cargo !== undefined && { cargo: data.cargo }),
+      ...(data.tipoPersonal !== undefined && { tipoPersonal: data.tipoPersonal }),
       ...(data.activo !== undefined && { activo: data.activo }),
     },
   });

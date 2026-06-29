@@ -1,9 +1,12 @@
 import { z } from "zod";
 
+const tipoPersonalEnum = z.enum(["OBRERO", "TECNICO_EMPLEADO"]);
+
 export const createEmployeeSchema = z.object({
   nombre: z.string().min(1).max(100),
   documento: z.string().min(1).max(50).nullable().optional(),
   cargo: z.string().min(1).max(100).nullable().optional(),
+  tipoPersonal: tipoPersonalEnum.optional(),
   deviceUserId: z.string().min(1).max(20).optional(),
 });
 
@@ -11,12 +14,14 @@ export const updateEmployeeSchema = z.object({
   nombre: z.string().min(1).max(100).optional(),
   documento: z.string().min(1).max(50).nullable().optional(),
   cargo: z.string().min(1).max(100).nullable().optional(),
+  tipoPersonal: tipoPersonalEnum.optional(),
   activo: z.boolean().optional(),
 });
 
 export const employeeQuerySchema = z.object({
   search: z.string().optional(),
   activo: z.coerce.boolean().optional(),
+  tipoPersonal: tipoPersonalEnum.optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
