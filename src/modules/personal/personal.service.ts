@@ -502,7 +502,7 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
     }
 
     resultados.push({
-      empleado: { id: emp.id, nombre: emp.nombre, cargo: emp.cargo ?? null },
+      empleado: { id: emp.id, nombre: emp.nombre, cargo: emp.cargo ?? null, tipoPersonal: (emp as any).tipoPersonal ?? "OBRERO" },
       horarioActual: emp.horarios[0]?.horario
         ? { nombre: emp.horarios[0].horario.nombre, entrada: emp.horarios[0].horario.horaEntrada, salida: emp.horarios[0].horario.horaSalida }
         : null,
