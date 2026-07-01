@@ -561,17 +561,22 @@ export const reportesService = {
       rangoMeses.map(async ({ anio, mes }) => {
         const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-        // Movimientos de ENTRADA del período, con fallback a createdAt para datos sin periodoAnio
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
-        const endOfMonth = new Date(Date.UTC(anio, mes, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const movimientos = await prisma.movimiento.findMany({
+        // Fuente: CompraItem con precio real de compra, excluyendo compras anuladas.
+        // La fecha se toma de fechaOperacion, luego recibidoAt, luego createdAt (igual que otros reportes).
+        const compraItems = await prisma.compraItem.findMany({
           where: {
-            tipo: "ENTRADA",
-            OR: [
-              { periodoAnio: anio, periodoMes: mes },
-              { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
-            ],
+            cantidadRecibida: { gt: 0 },
+            compra: {
+              estado: { not: "ANULADA" },
+              OR: [
+                { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
           },
           include: {
             producto: {
@@ -580,16 +585,22 @@ export const reportesService = {
           },
         });
 
-        // Agregar por producto (puede haber múltiples movimientos del mismo producto en el mes)
-        const prodMap = new Map<number, { producto: typeof movimientos[0]["producto"]; ingresoQty: number; totalBsEntrada: number }>();
-        for (const mov of movimientos) {
-          const pid = mov.productoId;
+        // Agregar por producto usando el precioUnit real de cada CompraItem
+        const prodMap = new Map<
+          number,
+          { producto: (typeof compraItems)[0]["producto"]; ingresoQty: number; ingresosBs: number }
+        >();
+
+        for (const item of compraItems) {
+          const pid = item.productoId;
           if (!prodMap.has(pid)) {
-            prodMap.set(pid, { producto: mov.producto, ingresoQty: 0, totalBsEntrada: 0 });
+            prodMap.set(pid, { producto: item.producto, ingresoQty: 0, ingresosBs: 0 });
           }
           const entry = prodMap.get(pid)!;
-          entry.ingresoQty += Number(mov.cantidad);
-          entry.totalBsEntrada += Number(mov.entradaBs);
+          const qty    = Number(item.cantidadRecibida);
+          const precio = Number(item.precioUnit);
+          entry.ingresoQty += qty;
+          entry.ingresosBs += qty * precio;
         }
 
         const grupoMap = new Map<
@@ -597,16 +608,20 @@ export const reportesService = {
           {
             codigo: string;
             nombre: string;
-            subGrupos: Map<number, { codigo: string; nombre: string; productos: Array<{ codigo: string; nombre: string; unidad: string; ingresoQty: number; precioUnit: number; totalBsEntrada: number }> }>;
+            subGrupos: Map<number, {
+              codigo: string;
+              nombre: string;
+              productos: Array<{ codigo: string; nombre: string; unidad: string; ingresoQty: number; precioUnit: number; totalBsEntrada: number }>;
+            }>;
             totalBsEntrada: number;
           }
         >();
 
-        for (const { producto, ingresoQty, totalBsEntrada } of prodMap.values()) {
-          const cat = producto.categoria;
+        for (const { producto, ingresoQty, ingresosBs } of prodMap.values()) {
+          const cat       = producto.categoria;
           const esSubGrupo = cat.parent !== null;
-          const grupo = esSubGrupo ? cat.parent! : cat;
-          const subGrupo = esSubGrupo ? cat : null;
+          const grupo     = esSubGrupo ? cat.parent! : cat;
+          const subGrupo  = esSubGrupo ? cat : null;
 
           if (!grupoMap.has(grupo.id)) {
             grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBsEntrada: 0 });
@@ -623,7 +638,9 @@ export const reportesService = {
             });
           }
 
-          const precioUnit = ingresoQty > 0 ? totalBsEntrada / ingresoQty : 0;
+          // precioUnit = promedio ponderado real de las compras del período
+          const precioUnit     = Math.round((ingresosBs / ingresoQty) * 100) / 100;
+          const totalBsEntrada = Math.round(ingresosBs * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: producto.codigo,
