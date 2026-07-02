@@ -194,7 +194,16 @@ export const comprasService = {
     }
 
     if (compra.estado === "COMPLETADO") {
-      throw new HttpError("La compra ya está completada", 409);
+      const compraActual = await prisma.compra.findUnique({
+        where: { id },
+        include: {
+          proveedor: true,
+          usuarioRegistro: { select: { id: true, nombre: true, email: true } },
+          usuarioRecibe: { select: { id: true, nombre: true, email: true } },
+          items: { include: { producto: true } },
+        },
+      });
+      return { compra: compraActual!, movimientos: [] };
     }
 
     // Validar que todas las cantidades sean válidas

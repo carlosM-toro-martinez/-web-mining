@@ -1199,46 +1199,58 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
   const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
   const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-  const [saldos, movimientos] = await Promise.all([
+  const movFilter = {
+    OR: [
+      { periodoAnio: anio, periodoMes: mes },
+      { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+    ],
+  };
+
+  const [saldos, entradasMovs, salidasMovs] = await Promise.all([
     prisma.saldoMensual.findMany({
       where: { anio, mes },
       include: { producto: { include: { categoria: { include: { parent: true } } } } },
       orderBy: { producto: { codigo: "asc" } },
     }),
-    // Precio real: calcular desde Movimiento.entradaBs (SaldoMensual.precioUnit puede ser 0)
     prisma.movimiento.findMany({
-      where: {
-        tipo: "ENTRADA",
-        OR: [
-          { periodoAnio: anio, periodoMes: mes },
-          { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
-        ],
-      },
+      where: { tipo: "ENTRADA", ...movFilter },
       select: { productoId: true, cantidad: true, entradaBs: true },
+    }),
+    prisma.movimiento.findMany({
+      where: { tipo: "SALIDA", ...movFilter },
+      select: { productoId: true, cantidad: true },
     }),
   ]);
 
-  // Mapa productoId → precio promedio ponderado del período
-  const precioMap = new Map<number, { totalBsEntrada: number; qty: number }>();
-  for (const mov of movimientos) {
+  // Mapa productoId → entradas (cantidad y Bs para precio promedio)
+  const entradaMap = new Map<number, { totalBsEntrada: number; qty: number }>();
+  for (const mov of entradasMovs) {
     const pid = mov.productoId;
-    if (!precioMap.has(pid)) precioMap.set(pid, { totalBsEntrada: 0, qty: 0 });
-    const e = precioMap.get(pid)!;
+    if (!entradaMap.has(pid)) entradaMap.set(pid, { totalBsEntrada: 0, qty: 0 });
+    const e = entradaMap.get(pid)!;
     e.totalBsEntrada += Number(mov.entradaBs);
     e.qty            += Number(mov.cantidad);
   }
 
+  // Mapa productoId → salidas (cantidad real desde Movimiento, no desde SaldoMensual)
+  const salidaMap = new Map<number, number>();
+  for (const mov of salidasMovs) {
+    salidaMap.set(mov.productoId, (salidaMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+  }
+
   const items = saldos.map((r) => {
-    const mv         = precioMap.get(r.productoId);
-    // precioUnit = último precio de compra del período (desde Movimiento si existe, si no del SaldoMensual)
-    const precioUnit = mv && mv.qty > 0
-      ? mv.totalBsEntrada / mv.qty          // promedio del período como proxy del último precio
+    const entrada    = entradaMap.get(r.productoId);
+    const ingresoQty = entrada ? entrada.qty : Number(r.ingresoQty);
+    const salidaQty  = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : Number(r.salidaQty);
+    const saldoInicial = Number(r.saldoInicial);
+    const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
+
+    const precioUnit = entrada && entrada.qty > 0
+      ? entrada.totalBsEntrada / entrada.qty
       : Number(r.precioUnit);
-    // precioUnitProm = promedio ponderado desde acumulado Bs / qty
-    const precioUnitProm = mv && mv.qty > 0
-      ? mv.totalBsEntrada / mv.qty
+    const precioUnitProm = entrada && entrada.qty > 0
+      ? entrada.totalBsEntrada / entrada.qty
       : Number((r as any).precioUnitProm ?? r.precioUnit);
-    const saldoFinal = Number(r.saldoFinal);
     return {
       productoId: r.productoId,
       productoCodigo: r.producto.codigo,
@@ -1246,9 +1258,9 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
       unidad: r.producto.unidad,
       grupo: r.producto.categoria.parent?.nombre ?? r.producto.categoria.nombre,
       subGrupo: r.producto.categoria.parent ? r.producto.categoria.nombre : null,
-      saldoInicial:   Number(r.saldoInicial),
-      ingresoQty:     Number(r.ingresoQty),
-      salidaQty:      Number(r.salidaQty),
+      saldoInicial,
+      ingresoQty,
+      salidaQty,
       saldoFinal,
       precioUnit,
       totalBs:        saldoFinal * precioUnit,
