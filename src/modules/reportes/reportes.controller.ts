@@ -148,4 +148,32 @@ export const reportesController = {
       }
     }
   },
+
+  async getAnulacionesEntradas(req: Request, res: Response) {
+    try {
+      const parsed = periodoRangoQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Se requieren parámetros anioInicio, mesInicio, anioFin y mesFin válidos" });
+      }
+      const result = await reportesService.getAnulacionesEntradas(parsed.data);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
+      else res.status(500).json({ error: "Error interno del servidor" });
+    }
+  },
+
+  async getAnulacionesSalidas(req: Request, res: Response) {
+    try {
+      const parsed = periodoRangoQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Se requieren parámetros anioInicio, mesInicio, anioFin y mesFin válidos" });
+      }
+      const result = await reportesService.getAnulacionesSalidas(parsed.data);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
+      else res.status(500).json({ error: "Error interno del servidor" });
+    }
+  },
 };

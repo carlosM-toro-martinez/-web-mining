@@ -189,7 +189,7 @@ export const reportesService = {
 
   async getValesResumen(query: ValesResumenQueryDTO) {
     const where: any = {};
-    if (query.estado) where.estado = query.estado;
+    where.estado = query.estado ? query.estado : { not: "ANULADO" };
     if (query.solicitanteId) where.solicitanteId = query.solicitanteId;
     const dateRange = buildDateRange(query);
     if (dateRange) where.createdAt = dateRange;
@@ -226,7 +226,7 @@ export const reportesService = {
 
   async getComprasResumen(query: ComprasResumenQueryDTO) {
     const where: any = {};
-    if (query.estado) where.estado = query.estado;
+    where.estado = query.estado ? query.estado : { not: "ANULADA" };
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
     if (dateRange) {
@@ -268,7 +268,7 @@ export const reportesService = {
 
   async getComprasDetalle(query: ComprasResumenQueryDTO) {
     const where: any = {};
-    if (query.estado) where.estado = query.estado;
+    where.estado = query.estado ? query.estado : { not: "ANULADA" };
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
     if (dateRange) {
@@ -378,14 +378,56 @@ export const reportesService = {
       rangoMeses.map(async ({ anio, mes }) => {
         const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-        const registros = await prisma.saldoMensual.findMany({
-          where: { anio, mes },
-          include: {
-            producto: {
-              include: { categoria: { include: { parent: true } } },
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const movFilter = {
+          OR: [
+            { periodoAnio: anio, periodoMes: mes },
+            { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+          ],
+        };
+
+        const [registros, compraItemsRaw, salidasMovs] = await Promise.all([
+          prisma.saldoMensual.findMany({
+            where: { anio, mes },
+            include: { producto: { include: { categoria: { include: { parent: true } } } } },
+          }),
+          prisma.compraItem.findMany({
+            where: {
+              cantidadRecibida: { gt: 0 },
+              compra: {
+                estado: { not: "ANULADA" },
+                OR: [
+                  { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+                ],
+              },
             },
-          },
-        });
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+          }),
+          prisma.movimiento.findMany({
+            where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
+            select: { productoId: true, cantidad: true, salidaBs: true },
+          }),
+        ]);
+
+        const ingresoMap = new Map<number, { qty: number; bs: number }>();
+        for (const item of compraItemsRaw) {
+          const e = ingresoMap.get(item.productoId) ?? { qty: 0, bs: 0 };
+          e.qty += Number(item.cantidadRecibida);
+          e.bs  += Number(item.cantidadRecibida) * Number(item.precioUnit);
+          ingresoMap.set(item.productoId, e);
+        }
+
+        const salidaMap = new Map<number, { qty: number; bs: number }>();
+        for (const mov of salidasMovs) {
+          const e = salidaMap.get(mov.productoId) ?? { qty: 0, bs: 0 };
+          e.qty += Number(mov.cantidad);
+          e.bs  += Number(mov.salidaBs);
+          salidaMap.set(mov.productoId, e);
+        }
 
         const grupoMap = new Map<
           number,
@@ -415,11 +457,17 @@ export const reportesService = {
             });
           }
 
+          const precioUnit   = Number(r.precioUnit);
+          const saldoInicial = Number(r.saldoInicial);
+          const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
+          const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
+          const saldoFinalQty = saldoInicial + ingresos.qty - salidas.qty;
+
           const entry = grupoMap.get(grupoId)!;
-          entry.saldoInicial += Number(r.saldoInicial) * Number(r.precioUnit);
-          entry.ingresoMateriales += Number(r.ingresoQty) * Number(r.precioUnit);
-          entry.salidaMateriales += Number(r.salidaQty) * Number(r.precioUnit);
-          entry.saldoFinal += Number(r.totalBs);
+          entry.saldoInicial      += saldoInicial * precioUnit;
+          entry.ingresoMateriales += ingresos.bs;
+          entry.salidaMateriales  += salidas.bs;
+          entry.saldoFinal        += saldoFinalQty * precioUnit;
         }
 
         const grupos = [...grupoMap.values()].sort((a, b) =>
@@ -452,17 +500,51 @@ export const reportesService = {
       rangoMeses.map(async ({ anio, mes }) => {
         const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
 
-        const registros = await prisma.saldoMensual.findMany({
-          where: { anio, mes },
-          include: {
-            producto: {
-              include: {
-                categoria: { include: { parent: true } },
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const movFilter = {
+          OR: [
+            { periodoAnio: anio, periodoMes: mes },
+            { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+          ],
+        };
+
+        const [registros, compraItemsRaw, salidasMovs] = await Promise.all([
+          prisma.saldoMensual.findMany({
+            where: { anio, mes },
+            include: { producto: { include: { categoria: { include: { parent: true } } } } },
+            orderBy: { producto: { codigo: "asc" } },
+          }),
+          prisma.compraItem.findMany({
+            where: {
+              cantidadRecibida: { gt: 0 },
+              compra: {
+                estado: { not: "ANULADA" },
+                OR: [
+                  { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+                ],
               },
             },
-          },
-          orderBy: { producto: { codigo: "asc" } },
-        });
+            select: { productoId: true, cantidadRecibida: true },
+          }),
+          prisma.movimiento.findMany({
+            where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
+            select: { productoId: true, cantidad: true },
+          }),
+        ]);
+
+        const ingresoMap = new Map<number, number>();
+        for (const item of compraItemsRaw) {
+          ingresoMap.set(item.productoId, (ingresoMap.get(item.productoId) ?? 0) + Number(item.cantidadRecibida));
+        }
+
+        const salidaMap = new Map<number, number>();
+        for (const mov of salidasMovs) {
+          salidaMap.set(mov.productoId, (salidaMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+        }
 
         const grupoMap = new Map<
           number,
@@ -498,37 +580,36 @@ export const reportesService = {
           const subGrupo = esSubGrupo ? cat : null;
 
           if (!grupoMap.has(grupo.id)) {
-            grupoMap.set(grupo.id, {
-              codigo: grupo.codigo,
-              nombre: grupo.nombre,
-              subGrupos: new Map(),
-              totalBs: 0,
-            });
+            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBs: 0 });
           }
 
-          const grupoEntry = grupoMap.get(grupo.id)!;
-          const subGrupoId = subGrupo?.id ?? grupo.id;
-          const subGrupoCodigo = subGrupo?.codigo ?? grupo.codigo;
-          const subGrupoNombre = subGrupo?.nombre ?? grupo.nombre;
+          const grupoEntry   = grupoMap.get(grupo.id)!;
+          const subGrupoId   = subGrupo?.id ?? grupo.id;
 
           if (!grupoEntry.subGrupos.has(subGrupoId)) {
             grupoEntry.subGrupos.set(subGrupoId, {
-              codigo: subGrupoCodigo,
-              nombre: subGrupoNombre,
+              codigo: subGrupo?.codigo ?? grupo.codigo,
+              nombre: subGrupo?.nombre ?? grupo.nombre,
               productos: [],
             });
           }
 
-          const totalBs = Number(r.totalBs);
+          const ingresoQty   = ingresoMap.get(r.productoId) ?? Number(r.ingresoQty);
+          const salidaQty    = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : Number(r.salidaQty);
+          const saldoInicial = Number(r.saldoInicial);
+          const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
+          const precioUnit   = Number(r.precioUnit);
+          const totalBs      = saldoFinal * precioUnit;
+
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: r.producto.codigo,
             nombre: r.producto.nombre,
             unidad: r.producto.unidad,
-            saldoInicial: Number(r.saldoInicial),
-            ingresoQty: Number(r.ingresoQty),
-            salidaQty: Number(r.salidaQty),
-            saldoFinal: Number(r.saldoFinal),
-            precioUnit: Number(r.precioUnit),
+            saldoInicial,
+            ingresoQty,
+            salidaQty,
+            saldoFinal,
+            precioUnit,
             totalBs,
           });
           grupoEntry.totalBs += totalBs;
@@ -691,6 +772,7 @@ export const reportesService = {
         const movimientos = await prisma.movimiento.findMany({
           where: {
             tipo: "SALIDA",
+            referencia: { not: "ANULACION_COMPRA" },
             OR: [
               { periodoAnio: anio, periodoMes: mes },
               { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
@@ -703,16 +785,23 @@ export const reportesService = {
           },
         });
 
+        // Precios históricos del SaldoMensual del período
+        const saldosMes = await prisma.saldoMensual.findMany({
+          where: { anio, mes },
+          select: { productoId: true, precioUnit: true },
+        });
+        const precioHistoricoMap = new Map<number, number>(
+          saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
+        );
+
         // Agregar por producto
-        const prodMap = new Map<number, { producto: typeof movimientos[0]["producto"]; salidaQty: number; totalBsSalida: number }>();
+        const prodMap = new Map<number, { producto: typeof movimientos[0]["producto"]; salidaQty: number }>();
         for (const mov of movimientos) {
           const pid = mov.productoId;
           if (!prodMap.has(pid)) {
-            prodMap.set(pid, { producto: mov.producto, salidaQty: 0, totalBsSalida: 0 });
+            prodMap.set(pid, { producto: mov.producto, salidaQty: 0 });
           }
-          const entry = prodMap.get(pid)!;
-          entry.salidaQty += Number(mov.cantidad);
-          entry.totalBsSalida += Number(mov.salidaBs);
+          prodMap.get(pid)!.salidaQty += Number(mov.cantidad);
         }
 
         const grupoMap = new Map<
@@ -725,7 +814,7 @@ export const reportesService = {
           }
         >();
 
-        for (const { producto, salidaQty, totalBsSalida } of prodMap.values()) {
+        for (const { producto, salidaQty } of prodMap.values()) {
           const cat = producto.categoria;
           const esSubGrupo = cat.parent !== null;
           const grupo = esSubGrupo ? cat.parent! : cat;
@@ -746,7 +835,9 @@ export const reportesService = {
             });
           }
 
-          const precioUnit = salidaQty > 0 ? totalBsSalida / salidaQty : 0;
+          // Usar precio histórico del SaldoMensual del período
+          const precioUnit = precioHistoricoMap.get(producto.id) ?? 0;
+          const totalBsSalida = Math.round(salidaQty * precioUnit * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: producto.codigo,
@@ -787,7 +878,7 @@ export const reportesService = {
     const IVA = 0.13;
 
     const where: any = {};
-    if (query.estado) where.estado = query.estado;
+    where.estado = query.estado ? query.estado : { not: "ANULADA" };
     if (query.proveedorId) where.proveedorId = query.proveedorId;
     const dateRange = buildDateRange(query);
     if (dateRange) {
@@ -890,5 +981,137 @@ export const reportesService = {
 
     logger.info({ query }, "Reporte compras-proveedor generado");
     return { compras: data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) }, totalGeneral: Math.round(totalGeneral * 100) / 100, totalGeneralSinIVA };
+  },
+
+  async getAnulacionesEntradas(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const compras = await prisma.compra.findMany({
+          where: {
+            estado: "ANULADA",
+            OR: [
+              { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+              { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+              { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+            ],
+          },
+          include: {
+            proveedor: { select: { id: true, nombre: true, razonSocial: true, nit: true } },
+            usuarioRegistro: { select: { id: true, nombre: true } },
+            usuarioRecibe: { select: { id: true, nombre: true } },
+            anulacion: { include: { usuario: { select: { id: true, nombre: true } } } },
+            items: {
+              include: { producto: { select: { id: true, codigo: true, nombre: true, unidad: true } } },
+              orderBy: { id: "asc" as const },
+            },
+          },
+          orderBy: [{ fechaOperacion: "asc" }, { createdAt: "asc" }],
+        });
+
+        const data = compras.map((c: any) => {
+          const items = c.items.map((item: any) => ({
+            productoId:       item.productoId,
+            codigo:           item.producto.codigo,
+            nombre:           item.producto.nombre,
+            unidad:           item.producto.unidad,
+            cantidadPedida:   Number(item.cantidadPedida),
+            cantidadRecibida: Number(item.cantidadRecibida),
+            precioUnit:       Number(item.precioUnit),
+            totalBs:          Number(item.cantidadRecibida) * Number(item.precioUnit),
+          }));
+          const totalBs = items.reduce((acc: number, i: any) => acc + i.totalBs, 0);
+          return {
+            id:             c.id,
+            numeroFactura:  c.numeroFactura ?? null,
+            observacion:    c.observacion ?? null,
+            fechaOperacion: c.fechaOperacion ?? null,
+            createdAt:      c.createdAt,
+            recibidoAt:     c.recibidoAt ?? null,
+            proveedor:      c.proveedor,
+            usuarioRegistro: c.usuarioRegistro,
+            usuarioRecibe:  c.usuarioRecibe ?? null,
+            anulacion:      c.anulacion
+              ? { motivo: c.anulacion.motivo, creadoAt: c.anulacion.createdAt, usuario: c.anulacion.usuario }
+              : null,
+            items,
+            totalBs: Math.round(totalBs * 100) / 100,
+          };
+        });
+
+        const totalGeneral = data.reduce((acc, c) => acc + c.totalBs, 0);
+        return { anio, mes, compras: data, total: data.length, totalGeneral: Math.round(totalGeneral * 100) / 100 };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Anulaciones entradas generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getAnulacionesSalidas(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const vales = await prisma.vale.findMany({
+          where: {
+            estado: "ANULADO",
+            OR: [
+              { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+              { fechaOperacion: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+            ],
+          },
+          include: {
+            solicitante:      { select: { id: true, nombre: true } },
+            superintendente:  { select: { id: true, nombre: true } },
+            almacenero:       { select: { id: true, nombre: true } },
+            anulacion:        { include: { usuario: { select: { id: true, nombre: true } } } },
+            items: {
+              include: { producto: { select: { id: true, codigo: true, nombre: true, unidad: true } } },
+            },
+          },
+          orderBy: [{ fechaOperacion: "asc" }, { createdAt: "asc" }],
+        });
+
+        const data = (vales as any[]).map((v) => {
+          const items = v.items.map((item: any) => ({
+            productoId:        item.productoId,
+            codigo:            item.producto.codigo,
+            nombre:            item.producto.nombre,
+            unidad:            item.producto.unidad,
+            cantidadSolicitada: Number(item.cantidadSolicitada),
+            cantidadEntregada:  Number(item.cantidadEntregada ?? 0),
+          }));
+          return {
+            id:              v.id,
+            numeroVale:      v.numeroVale ?? null,
+            observacion:     v.observacion ?? null,
+            fechaOperacion:  v.fechaOperacion ?? null,
+            createdAt:       v.createdAt,
+            solicitante:     v.solicitante,
+            superintendente: v.superintendente ?? null,
+            almacenero:      v.almacenero ?? null,
+            anulacion:       v.anulacion
+              ? { motivo: v.anulacion.motivo, creadoAt: v.anulacion.createdAt, usuario: v.anulacion.usuario }
+              : null,
+            items,
+          };
+        });
+
+        return { anio, mes, vales: data, total: data.length };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Anulaciones salidas generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
 };

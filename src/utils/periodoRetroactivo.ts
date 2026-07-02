@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma.js";
+import { HttpError } from "../errors/http.error.js";
 
 export interface PeriodoRetroactivo {
   esRetroactivo: true;
@@ -12,39 +13,43 @@ export interface PeriodoNormal {
 
 export type DeteccionPeriodo = PeriodoRetroactivo | PeriodoNormal;
 
+export async function verificarMesAbierto(anio: number, mes: number): Promise<void> {
+  const cierre = await prisma.cierreMes.findUnique({
+    where: { anio_mes: { anio, mes } },
+    select: { id: true },
+  });
+  if (cierre) {
+    throw new HttpError(`El período ${mes}/${anio} está cerrado y no permite modificaciones`, 409);
+  }
+}
+
 /**
  * Determina si una fechaOperacion corresponde a un período retroactivo.
- *
- * Es retroactivo cuando:
- *  1. La fechaOperacion es un mes anterior al mes actual (pasado), O
- *  2. El período está explícitamente cerrado en CierreMes (aunque sea el mes actual)
- *
- * Si fechaOperacion es null/undefined → no retroactivo (operación normal).
+ * Lanza HttpError 409 si el período ya está cerrado — ninguna operación
+ * puede modificar un mes cerrado.
  */
 export async function detectarPeriodo(fechaOperacion: Date | null | undefined): Promise<DeteccionPeriodo> {
   if (!fechaOperacion) return { esRetroactivo: false };
 
   const anioOp = fechaOperacion.getFullYear();
-  const mesOp = fechaOperacion.getMonth() + 1;
+  const mesOp  = fechaOperacion.getMonth() + 1;
 
-  const ahora = new Date();
+  const ahora      = new Date();
   const anioActual = ahora.getFullYear();
-  const mesActual = ahora.getMonth() + 1;
+  const mesActual  = ahora.getMonth() + 1;
 
-  const esMesPasado =
-    anioOp < anioActual || (anioOp === anioActual && mesOp < mesActual);
+  const esMesPasado = anioOp < anioActual || (anioOp === anioActual && mesOp < mesActual);
 
-  if (esMesPasado) {
-    return { esRetroactivo: true, periodoAnio: anioOp, periodoMes: mesOp };
-  }
-
-  // Aunque sea el mes actual, si está cerrado explícitamente → retroactivo
   const cierre = await prisma.cierreMes.findUnique({
     where: { anio_mes: { anio: anioOp, mes: mesOp } },
     select: { id: true },
   });
 
   if (cierre) {
+    throw new HttpError(`El período ${mesOp}/${anioOp} está cerrado y no permite modificaciones`, 409);
+  }
+
+  if (esMesPasado) {
     return { esRetroactivo: true, periodoAnio: anioOp, periodoMes: mesOp };
   }
 

@@ -39,4 +39,10 @@ router.get("/salidas-almacen", reportesController.getSalidasAlmacen);
 // Compras detalladas por proveedor y factura con totalSinIVA (total − 13% IVA)
 router.get("/compras-proveedor", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasProveedor);
 
+// Anulaciones de entradas (compras anuladas) por período
+router.get("/anulaciones-entradas", authorize("ADMIN", "ALMACENERO"), reportesController.getAnulacionesEntradas);
+
+// Anulaciones de salidas (vales anulados) por período
+router.get("/anulaciones-salidas", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), reportesController.getAnulacionesSalidas);
+
 export default router;

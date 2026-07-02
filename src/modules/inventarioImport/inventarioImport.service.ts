@@ -3,6 +3,7 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { parseCatalogoExcel } from "./inventarioImport.parser.js";
 import { HttpError } from "../../errors/http.error.js";
+import { verificarMesAbierto } from "../../utils/periodoRetroactivo.js";
 import { productoService } from "../producto/producto.service.js";
 import type {
   CatalogoImportResult,
@@ -171,6 +172,7 @@ export async function importarCatalogo(
     // 4. Upsert SaldoMensual si se proporcionó anio+mes
     if (cargarSaldo && row.cantidad !== undefined) {
       const { anio, mes } = opciones!;
+      await verificarMesAbierto(anio!, mes!);
       const precio = row.precioUnit ?? 0;
       const totalBs = row.cantidad * precio;
 
@@ -459,6 +461,8 @@ export async function updateSaldoMensualItem(
     where: { id },
     select: {
       id: true,
+      anio: true,
+      mes: true,
       saldoInicial: true,
       ingresoQty: true,
       salidaQty: true,
@@ -467,6 +471,7 @@ export async function updateSaldoMensualItem(
     },
   });
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+  await verificarMesAbierto(existing.anio, existing.mes);
 
   const newSaldoInicial = data.saldoInicial !== undefined ? data.saldoInicial : Number(existing.saldoInicial);
   const newIngresoQty = data.ingresoQty !== undefined ? data.ingresoQty : Number(existing.ingresoQty);
@@ -513,6 +518,7 @@ export async function deleteSaldoMensualItem(
     select: { id: true, productoId: true, anio: true, mes: true },
   });
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+  await verificarMesAbierto(existing.anio, existing.mes);
 
   await prisma.saldoMensual.delete({ where: { id } });
 
@@ -803,6 +809,8 @@ export async function sincronizarStockDesdeSaldoMensual(
 // del período para que el bincard muestre valores correctos de inmediato.
 
 export async function inicializarPeriodo(anio: number, mes: number) {
+  await verificarMesAbierto(anio, mes);
+
   const mesPrev = mes === 1 ? 12 : mes - 1;
   const anioPrev = mes === 1 ? anio - 1 : anio;
 
