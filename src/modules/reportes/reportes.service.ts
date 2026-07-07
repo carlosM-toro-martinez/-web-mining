@@ -1263,61 +1263,83 @@ export const reportesService = {
 
         const totalInventarioDebe = saldoInventarioAnterior + comprasImporteBs;
 
-        // HABER: salidas grouped by centroCosto (main account), then by CuentaContable (sub-centro)
-        type SubCentroEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; sectorCodigo: string | null; totalBs: number };
-        type CuentaGrupo = { centroCostoCodigo: string; centroCostoNombre: string; subCentros: Map<number, SubCentroEntry>; totalBs: number };
+        // HABER: salidas grouped by Sector (primary) → CentroCosto (secondary) → CuentaContable (lines)
+        type SubCuentaEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };
+        type CcEntry        = { centroCostoCodigo: string; centroCostoNombre: string; subCuentas: Map<number, SubCuentaEntry>; totalBs: number };
+        type SectorEntry    = { sectorId: number | null; sectorCodigo: string | null; sectorNombre: string | null; centroCostos: Map<number, CcEntry>; totalBs: number };
 
-        const cuentaGrupoMap = new Map<number, CuentaGrupo>();
+        // Use -1 as map key for movements with no sector
+        const sectorMap = new Map<number, SectorEntry>();
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
-          const precio     = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
-          const importeBs  = Number(mov.cantidad) * precio;
-          const ccId       = mov.cuenta.centroCostoId;
+          const precio    = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const importeBs = Number(mov.cantidad) * precio;
+          const sectorKey = mov.cuenta.sectorId ?? -1;
 
-          if (!cuentaGrupoMap.has(ccId)) {
-            cuentaGrupoMap.set(ccId, {
+          if (!sectorMap.has(sectorKey)) {
+            sectorMap.set(sectorKey, {
+              sectorId:     mov.cuenta.sectorId ?? null,
+              sectorCodigo: mov.cuenta.sector?.codigo ?? null,
+              sectorNombre: mov.cuenta.sector?.nombre ?? null,
+              centroCostos: new Map(),
+              totalBs:      0,
+            });
+          }
+          const sectorEntry = sectorMap.get(sectorKey)!;
+          sectorEntry.totalBs += importeBs;
+
+          const ccId = mov.cuenta.centroCostoId;
+          if (!sectorEntry.centroCostos.has(ccId)) {
+            sectorEntry.centroCostos.set(ccId, {
               centroCostoCodigo: mov.cuenta.centroCosto.codigo,
               centroCostoNombre: mov.cuenta.centroCosto.nombre,
-              subCentros: new Map(),
+              subCuentas: new Map(),
               totalBs: 0,
             });
           }
-          const grupo = cuentaGrupoMap.get(ccId)!;
-          grupo.totalBs += importeBs;
+          const ccEntry = sectorEntry.centroCostos.get(ccId)!;
+          ccEntry.totalBs += importeBs;
 
-          if (!grupo.subCentros.has(mov.cuentaId)) {
-            grupo.subCentros.set(mov.cuentaId, {
-              cuentaId:         mov.cuentaId,
-              codigoCompleto:   mov.cuenta.codigoCompleto,
+          if (!ccEntry.subCuentas.has(mov.cuentaId)) {
+            ccEntry.subCuentas.set(mov.cuentaId, {
+              cuentaId:           mov.cuentaId,
+              codigoCompleto:     mov.cuenta.codigoCompleto,
               funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
               funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
-              sectorCodigo:     mov.cuenta.sector?.codigo ?? null,
-              totalBs:          0,
+              totalBs:            0,
             });
           }
-          grupo.subCentros.get(mov.cuentaId)!.totalBs += importeBs;
+          ccEntry.subCuentas.get(mov.cuentaId)!.totalBs += importeBs;
         }
 
-        const cuentasHaber = [...cuentaGrupoMap.values()]
-          .sort((a, b) => a.centroCostoCodigo.localeCompare(b.centroCostoCodigo, undefined, { numeric: true }))
-          .map((g) => ({
-            centroCostoCodigo: g.centroCostoCodigo,
-            centroCostoNombre: g.centroCostoNombre,
-            totalBs: Math.round(g.totalBs * 100) / 100,
-            subCentros: [...g.subCentros.values()]
-              .sort((a, b) => a.funcionGastoCodigo.localeCompare(b.funcionGastoCodigo, undefined, { numeric: true }))
-              .map((sc) => ({ ...sc, totalBs: Math.round(sc.totalBs * 100) / 100 })),
+        const sectoresHaber = [...sectorMap.values()]
+          .sort((a, b) => (a.sectorCodigo ?? "").localeCompare(b.sectorCodigo ?? "", undefined, { numeric: true }))
+          .map((s) => ({
+            sectorId:     s.sectorId,
+            sectorCodigo: s.sectorCodigo,
+            sectorNombre: s.sectorNombre,
+            totalBs:      Math.round(s.totalBs * 100) / 100,
+            centroCostos: [...s.centroCostos.values()]
+              .sort((a, b) => a.centroCostoCodigo.localeCompare(b.centroCostoCodigo, undefined, { numeric: true }))
+              .map((cc) => ({
+                centroCostoCodigo: cc.centroCostoCodigo,
+                centroCostoNombre: cc.centroCostoNombre,
+                totalBs:           Math.round(cc.totalBs * 100) / 100,
+                subCuentas:        [...cc.subCuentas.values()]
+                  .sort((a, b) => a.funcionGastoCodigo.localeCompare(b.funcionGastoCodigo, undefined, { numeric: true }))
+                  .map((sc) => ({ ...sc, totalBs: Math.round(sc.totalBs * 100) / 100 })),
+              })),
           }));
 
-        const totalSalidasHaber = Math.round(cuentasHaber.reduce((acc, g) => acc + g.totalBs, 0) * 100) / 100;
+        const totalSalidasHaber = Math.round(sectoresHaber.reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
 
         return {
           anio, mes, esCerrado,
           saldoInventarioAnterior: Math.round(saldoInventarioAnterior * 100) / 100,
           comprasImporteBs:        Math.round(comprasImporteBs * 100) / 100,
           totalInventarioDebe:     Math.round(totalInventarioDebe * 100) / 100,
-          cuentasHaber,
+          sectoresHaber,
           totalSalidasHaber,
         };
       }),
