@@ -1114,4 +1114,303 @@ export const reportesService = {
     logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Anulaciones salidas generado");
     return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
+
+  async getDetalleMateriales(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const [movimientos, saldosMes] = await Promise.all([
+          prisma.movimiento.findMany({
+            where: {
+              tipo: "SALIDA",
+              referencia: { not: "ANULACION_COMPRA" },
+              cuentaId: { not: null },
+              OR: [
+                { periodoAnio: anio, periodoMes: mes },
+                { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
+            include: {
+              cuenta: { include: { centroCosto: true, funcionGasto: true } },
+            },
+          }),
+          prisma.saldoMensual.findMany({
+            where: { anio, mes },
+            select: { productoId: true, precioUnit: true },
+          }),
+        ]);
+
+        const precioMap = new Map<number, number>(
+          saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
+        );
+
+        // Group by funcionGasto.codigo (SUB CENTRO) × centroCosto.codigo (SUB CUENTA)
+        const lineaMap = new Map<string, { subCuenta: string; subCentro: string; subCentroNombre: string; importeBs: number }>();
+
+        for (const mov of movimientos) {
+          if (!mov.cuenta) continue;
+          const subCuenta  = mov.cuenta.centroCosto.codigo;
+          const subCentro  = mov.cuenta.funcionGasto.codigo;
+          const key        = `${subCentro}|${subCuenta}`;
+          const precio     = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+
+          if (!lineaMap.has(key)) {
+            lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
+          }
+          lineaMap.get(key)!.importeBs += Number(mov.cantidad) * precio;
+        }
+
+        const lineas = [...lineaMap.values()]
+          .map((l) => ({ ...l, importeBs: Math.round(l.importeBs * 100) / 100 }))
+          .sort((a, b) => {
+            const c = a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true });
+            return c !== 0 ? c : a.subCuenta.localeCompare(b.subCuenta, undefined, { numeric: true });
+          });
+
+        // Subtotals per SUB CENTRO (across all sub-cuentas)
+        const subCentroMap = new Map<string, { subCentro: string; nombre: string; importeBs: number }>();
+        for (const l of lineas) {
+          if (!subCentroMap.has(l.subCentro)) {
+            subCentroMap.set(l.subCentro, { subCentro: l.subCentro, nombre: l.subCentroNombre, importeBs: 0 });
+          }
+          subCentroMap.get(l.subCentro)!.importeBs += l.importeBs;
+        }
+        const subtotalesPorSubCentro = [...subCentroMap.values()]
+          .map((s) => ({ ...s, importeBs: Math.round(s.importeBs * 100) / 100 }))
+          .sort((a, b) => a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true }));
+
+        const totalGeneral = Math.round(lineas.reduce((acc, l) => acc + l.importeBs, 0) * 100) / 100;
+
+        return { anio, mes, esCerrado, lineas, subtotalesPorSubCentro, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Detalle materiales generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getDiarioAlmacenes(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const prevMes  = mes === 1 ? 12 : mes - 1;
+        const prevAnio = mes === 1 ? anio - 1 : anio;
+
+        const [saldosPrevMes, saldosMesActual, compraItemsRaw, movimientos] = await Promise.all([
+          prisma.saldoMensual.findMany({
+            where: { anio: prevAnio, mes: prevMes },
+            select: { saldoFinal: true, precioUnit: true },
+          }),
+          prisma.saldoMensual.findMany({
+            where: { anio, mes },
+            select: { productoId: true, precioUnit: true, saldoInicial: true },
+          }),
+          prisma.compraItem.findMany({
+            where: {
+              cantidadRecibida: { gt: 0 },
+              compra: {
+                estado: { not: "ANULADA" },
+                OR: [
+                  { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+                ],
+              },
+            },
+            select: { cantidadRecibida: true, precioUnit: true },
+          }),
+          prisma.movimiento.findMany({
+            where: {
+              tipo: "SALIDA",
+              referencia: { not: "ANULACION_COMPRA" },
+              cuentaId: { not: null },
+              OR: [
+                { periodoAnio: anio, periodoMes: mes },
+                { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
+            include: {
+              cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
+            },
+          }),
+        ]);
+
+        const precioMap = new Map<number, number>(
+          saldosMesActual.map((s) => [s.productoId, Number(s.precioUnit)]),
+        );
+
+        // DEBE: saldo inventario anterior (prev month closing value)
+        const saldoInventarioAnterior = saldosPrevMes.length > 0
+          ? saldosPrevMes.reduce((acc, s) => acc + Number(s.saldoFinal) * Number(s.precioUnit), 0)
+          : saldosMesActual.reduce((acc, s) => acc + Number(s.saldoInicial) * Number(s.precioUnit), 0);
+
+        const comprasImporteBs = compraItemsRaw.reduce(
+          (acc, item) => acc + Number(item.cantidadRecibida) * Number(item.precioUnit),
+          0,
+        );
+
+        const totalInventarioDebe = saldoInventarioAnterior + comprasImporteBs;
+
+        // HABER: salidas grouped by centroCosto (main account), then by CuentaContable (sub-centro)
+        type SubCentroEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; sectorCodigo: string | null; totalBs: number };
+        type CuentaGrupo = { centroCostoCodigo: string; centroCostoNombre: string; subCentros: Map<number, SubCentroEntry>; totalBs: number };
+
+        const cuentaGrupoMap = new Map<number, CuentaGrupo>();
+
+        for (const mov of movimientos) {
+          if (!mov.cuenta || !mov.cuentaId) continue;
+          const precio     = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const importeBs  = Number(mov.cantidad) * precio;
+          const ccId       = mov.cuenta.centroCostoId;
+
+          if (!cuentaGrupoMap.has(ccId)) {
+            cuentaGrupoMap.set(ccId, {
+              centroCostoCodigo: mov.cuenta.centroCosto.codigo,
+              centroCostoNombre: mov.cuenta.centroCosto.nombre,
+              subCentros: new Map(),
+              totalBs: 0,
+            });
+          }
+          const grupo = cuentaGrupoMap.get(ccId)!;
+          grupo.totalBs += importeBs;
+
+          if (!grupo.subCentros.has(mov.cuentaId)) {
+            grupo.subCentros.set(mov.cuentaId, {
+              cuentaId:         mov.cuentaId,
+              codigoCompleto:   mov.cuenta.codigoCompleto,
+              funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
+              funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
+              sectorCodigo:     mov.cuenta.sector?.codigo ?? null,
+              totalBs:          0,
+            });
+          }
+          grupo.subCentros.get(mov.cuentaId)!.totalBs += importeBs;
+        }
+
+        const cuentasHaber = [...cuentaGrupoMap.values()]
+          .sort((a, b) => a.centroCostoCodigo.localeCompare(b.centroCostoCodigo, undefined, { numeric: true }))
+          .map((g) => ({
+            centroCostoCodigo: g.centroCostoCodigo,
+            centroCostoNombre: g.centroCostoNombre,
+            totalBs: Math.round(g.totalBs * 100) / 100,
+            subCentros: [...g.subCentros.values()]
+              .sort((a, b) => a.funcionGastoCodigo.localeCompare(b.funcionGastoCodigo, undefined, { numeric: true }))
+              .map((sc) => ({ ...sc, totalBs: Math.round(sc.totalBs * 100) / 100 })),
+          }));
+
+        const totalSalidasHaber = Math.round(cuentasHaber.reduce((acc, g) => acc + g.totalBs, 0) * 100) / 100;
+
+        return {
+          anio, mes, esCerrado,
+          saldoInventarioAnterior: Math.round(saldoInventarioAnterior * 100) / 100,
+          comprasImporteBs:        Math.round(comprasImporteBs * 100) / 100,
+          totalInventarioDebe:     Math.round(totalInventarioDebe * 100) / 100,
+          cuentasHaber,
+          totalSalidasHaber,
+        };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Diario almacenes generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getCuadroSuministros(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+    const IVA = 0.13;
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        const comprasRaw = await prisma.compra.findMany({
+          where: {
+            estado: { not: "ANULADA" },
+            OR: [
+              { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+              { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+              { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+            ],
+          },
+          include: {
+            proveedor: { select: { id: true, nombre: true, nit: true, razonSocial: true } },
+            items: {
+              where: { cantidadRecibida: { gt: 0 } },
+              include: { producto: { include: { categoria: { include: { parent: true } } } } },
+              orderBy: { id: "asc" as const },
+            },
+          },
+          orderBy: [{ proveedor: { nombre: "asc" } }, { fechaOperacion: "asc" }, { createdAt: "asc" }],
+        });
+
+        // Group by proveedor
+        const provMap = new Map<number, { proveedor: any; compras: any[]; totalBs: number }>();
+
+        for (const c of comprasRaw) {
+          if (!provMap.has(c.proveedorId)) {
+            provMap.set(c.proveedorId, { proveedor: c.proveedor, compras: [], totalBs: 0 });
+          }
+          const provEntry = provMap.get(c.proveedorId)!;
+
+          const items = c.items.map((item: any) => {
+            const cat     = item.producto.categoria;
+            const grupo   = cat.parent !== null ? cat.parent : cat;
+            const cantidad    = Number(item.cantidadRecibida);
+            const precioUnit  = Number(item.precioUnit);
+            const importeBs   = Math.round(cantidad * precioUnit * 100) / 100;
+            const importeSinIVA = Math.round(importeBs * (1 - IVA) * 100) / 100;
+            return {
+              productoId: item.productoId,
+              nombre:     item.producto.nombre,
+              unidad:     item.producto.unidad,
+              cantidad,
+              precioUnit,
+              importeBs,
+              importeSinIVA,
+              grupo: { codigo: grupo.codigo, nombre: grupo.nombre },
+            };
+          });
+
+          const subtotalBs = Math.round(items.reduce((acc: number, i: any) => acc + i.importeBs, 0) * 100) / 100;
+
+          provEntry.compras.push({
+            id: c.id,
+            numeroFactura:  c.numeroFactura ?? null,
+            fechaOperacion: c.fechaOperacion ?? null,
+            items,
+            subtotalBs,
+          });
+          provEntry.totalBs += subtotalBs;
+        }
+
+        const proveedores = [...provMap.values()].map((p) => ({
+          proveedor: p.proveedor,
+          compras:   p.compras,
+          totalBs:   Math.round(p.totalBs * 100) / 100,
+        }));
+
+        const totalGeneral = Math.round(proveedores.reduce((acc, p) => acc + p.totalBs, 0) * 100) / 100;
+
+        return { anio, mes, esCerrado, proveedores, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Cuadro suministros generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
 };

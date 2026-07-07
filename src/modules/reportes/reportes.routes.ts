@@ -39,6 +39,15 @@ router.get("/salidas-almacen", reportesController.getSalidasAlmacen);
 // Compras detalladas por proveedor y factura con totalSinIVA (total − 13% IVA)
 router.get("/compras-proveedor", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasProveedor);
 
+// Detalle de materiales: salidas agrupadas por sub-cuenta × sub-centro contable
+router.get("/detalle-materiales", authorize("ADMIN", "ALMACENERO"), reportesController.getDetalleMateriales);
+
+// Diario almacenes: libro diario contable DEBE (inventario) / HABER (cuentas de gasto)
+router.get("/diario-almacenes", authorize("ADMIN", "ALMACENERO"), reportesController.getDiarioAlmacenes);
+
+// Cuadro inventarios y suministros: compras por proveedor/mes con grupo de producto
+router.get("/cuadro-suministros", authorize("ADMIN", "ALMACENERO"), reportesController.getCuadroSuministros);
+
 // Anulaciones de entradas (compras anuladas) por período
 router.get("/anulaciones-entradas", authorize("ADMIN", "ALMACENERO"), reportesController.getAnulacionesEntradas);
 
