@@ -250,17 +250,42 @@ export const eppService = {
   // ── 5. Trabajadores con EPPs asignados ───────────────────────────────────
 
   async getTrabajadoresConEpp(query: TrabajadoresQueryDTO) {
+    // Fuente 1: EppAsignacion (registro formal con condición/estado)
     const asignacionWhere: any = {};
     if (query.soloActivos) asignacionWhere.fechaDevolucion = null;
 
-    // IDs de usuarios que tienen alguna asignación
-    const usuariosConAsignacion = await prisma.eppAsignacion.findMany({
-      where: asignacionWhere,
-      select: { usuarioId: true },
-      distinct: ["usuarioId"],
-    });
+    const [usuariosAsignacion, valesConEpp] = await Promise.all([
+      prisma.eppAsignacion.findMany({
+        where: asignacionWhere,
+        select: { usuarioId: true },
+        distinct: ["usuarioId"],
+      }),
+      // Fuente 2: vales COMPLETADO con items de productos EPP (historial real de entregas)
+      // Se omite si soloActivos, ya que los vales no tienen concepto de "devuelto"
+      query.soloActivos
+        ? Promise.resolve([] as { solicitanteId: number }[])
+        : prisma.vale.findMany({
+            where: {
+              estado: "COMPLETADO",
+              items: {
+                some: {
+                  cantidadEntregada: { gt: 0 },
+                  producto: { esEpp: true },
+                },
+              },
+            },
+            select: { solicitanteId: true },
+            distinct: ["solicitanteId"],
+          }),
+    ]);
 
-    const usuarioIds = usuariosConAsignacion.map((u) => u.usuarioId);
+    // Unión de ambas fuentes (sin duplicados)
+    const usuarioIdSet = new Set([
+      ...usuariosAsignacion.map((u) => u.usuarioId),
+      ...valesConEpp.map((v) => v.solicitanteId),
+    ]);
+
+    const usuarioIds = Array.from(usuarioIdSet);
     if (usuarioIds.length === 0) return { total: 0, trabajadores: [] };
 
     const userWhere: any = { id: { in: usuarioIds } };
@@ -283,25 +308,54 @@ export const eppService = {
       prisma.user.count({ where: userWhere }),
     ]);
 
-    // Para cada usuario, traer el resumen de asignaciones
+    // Resumen por usuario: combina asignaciones formales + entregas por vale
     const trabajadores = await Promise.all(
       usuarios.map(async (u) => {
-        const [activas, total_] = await Promise.all([
+        const [asignActivas, asignTotal, ultimaAsignacion, totalVales] = await Promise.all([
           prisma.eppAsignacion.count({ where: { usuarioId: u.id, fechaDevolucion: null } }),
           prisma.eppAsignacion.count({ where: { usuarioId: u.id } }),
+          prisma.eppAsignacion.findFirst({
+            where: { usuarioId: u.id },
+            orderBy: { fechaEntrega: "desc" },
+            select: { fechaEntrega: true, producto: { select: { nombre: true } } },
+          }),
+          prisma.valeItem.count({
+            where: {
+              cantidadEntregada: { gt: 0 },
+              producto: { esEpp: true },
+              vale: { solicitanteId: u.id, estado: "COMPLETADO" },
+            },
+          }),
         ]);
-        const ultimaAsignacion = await prisma.eppAsignacion.findFirst({
-          where: { usuarioId: u.id },
-          orderBy: { fechaEntrega: "desc" },
-          select: { fechaEntrega: true, producto: { select: { nombre: true } } },
-        });
+
+        // Última entrega: asignación formal o, si no hay, buscar en vales
+        let ultimaEntrega: { fecha: Date; producto: string } | null = null;
+        if (ultimaAsignacion) {
+          ultimaEntrega = { fecha: ultimaAsignacion.fechaEntrega, producto: ultimaAsignacion.producto.nombre };
+        } else {
+          const ultimoValeItem = await prisma.valeItem.findFirst({
+            where: {
+              cantidadEntregada: { gt: 0 },
+              producto: { esEpp: true },
+              vale: { solicitanteId: u.id, estado: "COMPLETADO" },
+            },
+            orderBy: { vale: { entregadoAt: "desc" } },
+            select: { producto: { select: { nombre: true } }, vale: { select: { entregadoAt: true, fechaOperacion: true, createdAt: true } } },
+          });
+          if (ultimoValeItem) {
+            ultimaEntrega = {
+              fecha: ultimoValeItem.vale.fechaOperacion ?? ultimoValeItem.vale.entregadoAt ?? ultimoValeItem.vale.createdAt,
+              producto: ultimoValeItem.producto.nombre,
+            };
+          }
+        }
+
         return {
-          usuario:          u,
-          asignacionesActivas: activas,
-          totalAsignaciones:   total_,
-          ultimaEntrega:    ultimaAsignacion
-            ? { fecha: ultimaAsignacion.fechaEntrega, producto: ultimaAsignacion.producto.nombre }
-            : null,
+          usuario:             u,
+          asignacionesActivas: asignActivas,
+          totalAsignaciones:   asignTotal,
+          totalEntregasVale:   totalVales,
+          ultimaEntrega,
         };
       }),
     );
