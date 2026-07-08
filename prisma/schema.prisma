@@ -302,13 +302,18 @@ model ValeItem {
 }
 
 model EppAsignacion {
-  id              String    @id @default(uuid())
+  id              String       @id @default(uuid())
   productoId      Int
   usuarioId       Int
-  fechaEntrega    DateTime  @default(now())
+  fechaEntrega    DateTime     @default(now())
   fechaDevolucion DateTime?
-  producto        Producto  @relation(fields: [productoId], references: [id])
-  usuario         User      @relation(fields: [usuarioId], references: [id])
+  condicion       CondicionEpp @default(EN_USO)
+  observacion     String?
+  producto        Producto     @relation(fields: [productoId], references: [id])
+  usuario         User         @relation(fields: [usuarioId], references: [id])
+
+  @@index([productoId])
+  @@index([usuarioId])
 }
 
 ////////////////////////////////
@@ -496,5 +501,13 @@ enum AusenciaTipo {
   FERIADO
   ABANDONO
   OTRO
+}
+
+enum CondicionEpp {
+  NUEVO
+  EN_USO
+  DEVUELTO_BUENO
+  DEVUELTO_USADO
+  BAJA
 }
 
