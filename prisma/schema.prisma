@@ -41,6 +41,11 @@ model User {
   valesSolicitados      Vale[]          @relation("Solicitante")
   valesAprobados        Vale[]          @relation("Supervisor")
   anulaciones           AnulacionVale[]
+  registrosHidricos    RegistroHidrico[]
+  registrosResiduo     RegistroResiduo[]
+  registrosRuido       RegistroRuido[]
+  registrosSuelo       RegistroSuelo[]
+  manifiestos          ManifiestoAmbiental[]
 }
 
 model Log {
@@ -317,6 +322,144 @@ model EppAsignacion {
 }
 
 ////////////////////////////////
+// AMBIENTAL
+////////////////////////////////
+
+model PuntoMonitoreo {
+  id          Int       @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  latitud     Float
+  longitud    Float
+  tipo        TipoPunto @default(GENERAL)
+  activo      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  registrosHidricos RegistroHidrico[]
+  registrosResiduo  RegistroResiduo[]
+  registrosRuido    RegistroRuido[]
+  registrosSuelo    RegistroSuelo[]
+
+  @@index([tipo])
+}
+
+model RegistroHidrico {
+  id                Int            @id @default(autoincrement())
+  puntoId           Int
+  fecha             DateTime
+  ph                Float?
+  turbidez          Float?
+  conductividad     Float?
+  oxigenoDisuelto   Float?
+  temperatura       Float?
+  coliformesFecales Float?
+  calidadAgua       CalidadAgua    @default(BUENA)
+  observaciones     String?
+  usuarioId         Int
+  createdAt         DateTime       @default(now())
+
+  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario User           @relation(fields: [usuarioId], references: [id])
+
+  @@index([puntoId])
+  @@index([fecha])
+}
+
+model RegistroResiduo {
+  id            Int         @id @default(autoincrement())
+  puntoId       Int?
+  fecha         DateTime
+  tipoResiduo   TipoResiduo
+  cantidad      Float
+  unidad        String
+  disposicion   String
+  empresa       String?
+  manifiestoNum String?
+  observaciones String?
+  usuarioId     Int
+  createdAt     DateTime    @default(now())
+
+  punto   PuntoMonitoreo? @relation(fields: [puntoId], references: [id])
+  usuario User            @relation(fields: [usuarioId], references: [id])
+
+  @@index([puntoId])
+  @@index([fecha])
+}
+
+model RegistroRuido {
+  id               Int            @id @default(autoincrement())
+  puntoId          Int
+  fecha            DateTime
+  nivelRuido       Float
+  limitePermitido  Float?
+  particulasPm10   Float?
+  particulasPm25   Float?
+  observaciones    String?
+  usuarioId        Int
+  createdAt        DateTime       @default(now())
+
+  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario User           @relation(fields: [usuarioId], references: [id])
+
+  @@index([puntoId])
+  @@index([fecha])
+}
+
+model RegistroSuelo {
+  id                  Int            @id @default(autoincrement())
+  puntoId             Int
+  fecha               DateTime
+  ph                  Float?
+  conductividad       Float?
+  materiaOrganica     Float?
+  especiesRegistradas String?
+  observaciones       String?
+  usuarioId           Int
+  createdAt           DateTime       @default(now())
+
+  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario User           @relation(fields: [usuarioId], references: [id])
+
+  @@index([puntoId])
+  @@index([fecha])
+}
+
+model PozoSeptico {
+  id              Int                   @id @default(autoincrement())
+  nombre          String
+  descripcion     String?
+  latitud         Float
+  longitud        Float
+  capacidadM3     Float?
+  estado          EstadoInfraestructura @default(BUENO)
+  ultimaLimpieza  DateTime?
+  proximaLimpieza DateTime?
+  observaciones   String?
+  activo          Boolean               @default(true)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+}
+
+model ManifiestoAmbiental {
+  id          Int       @id @default(autoincrement())
+  anio        Int
+  titulo      String
+  descripcion String?
+  objetivos   String?
+  compromisos String?
+  responsable String?
+  aprobadoAt  DateTime?
+  usuarioId   Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  usuario User @relation(fields: [usuarioId], references: [id])
+
+  @@index([anio])
+}
+
+////////////////////////////////
 // BIOMÉTRICO / ASISTENCIA
 ////////////////////////////////
 
@@ -447,6 +590,8 @@ enum Role {
   GEOLOGOADMIN
   GEOLOGO
   ADMINISTRADOR
+  MEDIOAMBIENTE
+  SEGURIDAD
 }
 
 enum TipoMovimiento {
@@ -509,5 +654,36 @@ enum CondicionEpp {
   DEVUELTO_BUENO
   DEVUELTO_USADO
   BAJA
+}
+
+enum TipoPunto {
+  HIDRICO
+  SUELO
+  RUIDO
+  RESIDUOS
+  POZO_SEPTICO
+  GENERAL
+}
+
+enum CalidadAgua {
+  EXCELENTE
+  BUENA
+  REGULAR
+  MALA
+  CRITICA
+}
+
+enum TipoResiduo {
+  SOLIDO_PELIGROSO
+  SOLIDO_NO_PELIGROSO
+  LIQUIDO_PELIGROSO
+  LIQUIDO_NO_PELIGROSO
+}
+
+enum EstadoInfraestructura {
+  BUENO
+  REGULAR
+  MALO
+  CRITICO
 }
 

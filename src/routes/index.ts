@@ -15,6 +15,7 @@ import pedidosRoutes from "../modules/pedidos/pedidos.routes.js";
 import inventarioImportRoutes from "../modules/inventarioImport/inventarioImport.routes.js";
 import personalRoutes from "../modules/personal/personal.routes.js";
 import eppRoutes from "../modules/epp/epp.routes.js";
+import ambientalRoutes from "../modules/ambiental/ambiental.routes.js";
 
 const router = Router();
 
@@ -40,5 +41,6 @@ router.use("/pedidos", pedidosRoutes);
 router.use("/inventario-import", inventarioImportRoutes);
 router.use("/personal", personalRoutes);
 router.use("/epp", eppRoutes);
+router.use("/ambiental", ambientalRoutes);
 
 export default router;

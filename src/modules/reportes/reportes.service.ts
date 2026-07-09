@@ -739,7 +739,8 @@ export const reportesService = {
           .map((g) => ({
             codigo: g.codigo,
             nombre: g.nombre,
-            totalBsEntrada: g.totalBsEntrada,
+            totalBsEntrada:         Math.round(g.totalBsEntrada * 100) / 100,
+            totalBsEntradaMenos13:  Math.round(g.totalBsEntrada * 0.87 * 100) / 100,
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -748,9 +749,10 @@ export const reportesService = {
               })),
           }));
 
-        const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0);
+        const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0) * 100) / 100;
+        const totalGeneralMenos13 = Math.round(totalGeneral * 0.87 * 100) / 100;
 
-        return { anio, mes, esCerrado, grupos, totalGeneral };
+        return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
     );
 
@@ -855,7 +857,8 @@ export const reportesService = {
           .map((g) => ({
             codigo: g.codigo,
             nombre: g.nombre,
-            totalBsSalida: g.totalBsSalida,
+            totalBsSalida:        Math.round(g.totalBsSalida * 100) / 100,
+            totalBsSalidaMenos13: Math.round(g.totalBsSalida * 0.87 * 100) / 100,
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -864,9 +867,10 @@ export const reportesService = {
               })),
           }));
 
-        const totalGeneral = grupos.reduce((acc, g) => acc + g.totalBsSalida, 0);
+        const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsSalida, 0) * 100) / 100;
+        const totalGeneralMenos13 = Math.round(totalGeneral * 0.87 * 100) / 100;
 
-        return { anio, mes, esCerrado, grupos, totalGeneral };
+        return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
     );
 
