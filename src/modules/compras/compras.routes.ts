@@ -64,10 +64,17 @@ router.patch(
   comprasController.recibirCompra,
 );
 
-// Anular compra (ADMIN, SUPERINTENDENTE)
+// Corregir precio de un item recibido (sin anular toda la compra) — solo ADMIN
+router.patch(
+  "/:compraId/items/:itemId/precio",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  comprasController.corregirPrecioItem,
+);
+
+// Anular compra (ADMIN, SUPERINTENDENTE, ALMACENERO)
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
   validateParams(idSchema),
   comprasController.anularCompra,
 );

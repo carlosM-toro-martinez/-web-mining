@@ -2,7 +2,7 @@ import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 import { comprasService } from "./compras.service.js";
-import { compraQuerySchema } from "./compras.schema.js";
+import { compraQuerySchema, corregirPrecioItemSchema } from "./compras.schema.js";
 
 export const comprasController = {
   async createCompra(req: AuthRequest, res: Response) {
@@ -64,6 +64,26 @@ export const comprasController = {
       const result = await comprasService.anularCompra(
         String(req.params.id),
         motivo.trim(),
+        req.user!.id,
+      );
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async corregirPrecioItem(req: AuthRequest, res: Response) {
+    try {
+      const { compraId, itemId } = req.params;
+      const parsed = corregirPrecioItemSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const result = await comprasService.corregirPrecioItem(
+        String(compraId),
+        String(itemId),
+        parsed.data.precioUnit,
         req.user!.id,
       );
       res.json({ success: true, data: result });

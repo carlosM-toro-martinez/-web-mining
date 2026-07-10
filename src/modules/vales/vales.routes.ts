@@ -112,8 +112,8 @@ router.patch(
 router.post("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
 router.patch("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
 
-// Anular vale
-router.post("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE"), validateParams(idSchema), valesController.anularVale);
-router.patch("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE"), validateParams(idSchema), valesController.anularVale);
+// Anular vale (ADMIN, SUPERINTENDENTE, ALMACENERO)
+router.post("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
+router.patch("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
 
 export default router;

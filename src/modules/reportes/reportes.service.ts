@@ -370,6 +370,98 @@ export const reportesService = {
     return { compras: data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) }, totalGeneral };
   },
 
+  async getSaldosIniciales(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+
+        const registros = await (prisma.saldoMensual.findMany as any)({
+          where: { anio, mes },
+          select: {
+            productoId: true,
+            saldoInicial: true,
+            precioUnit: true,
+            totalBsInicial: true,
+            producto: {
+              select: {
+                codigo: true,
+                nombre: true,
+                unidad: true,
+                categoria: { select: { nombre: true, codigo: true, parent: { select: { nombre: true, codigo: true } } } },
+              },
+            },
+          },
+          orderBy: { producto: { codigo: "asc" } },
+        }) as Array<{
+          productoId: number;
+          saldoInicial: unknown;
+          precioUnit: unknown;
+          totalBsInicial: unknown;
+          producto: {
+            codigo: string;
+            nombre: string;
+            unidad: string;
+            categoria: { nombre: string; codigo: string; parent: { nombre: string; codigo: string } | null };
+          };
+        }>;
+
+        const grupoMap = new Map<string, {
+          grupoCodigo: string;
+          grupoNombre: string;
+          productos: Array<{
+            codigo: string;
+            nombre: string;
+            unidad: string;
+            saldoInicial: number;
+            precioUnit: number;
+            totalBsInicial: number;
+            fuente: "corregido" | "calculado";
+          }>;
+          totalBsInicial: number;
+        }>();
+
+        for (const r of registros) {
+          const cat      = r.producto.categoria;
+          const grupo    = cat.parent ?? cat;
+          const key      = grupo.codigo;
+
+          if (!grupoMap.has(key)) {
+            grupoMap.set(key, { grupoCodigo: grupo.codigo, grupoNombre: grupo.nombre, productos: [], totalBsInicial: 0 });
+          }
+
+          const saldoInicial = Number(r.saldoInicial);
+          const precioUnit   = Number(r.precioUnit);
+          const fuente       = r.totalBsInicial !== null && r.totalBsInicial !== undefined
+            ? "corregido" as const
+            : "calculado" as const;
+          const totalBsInicial = fuente === "corregido"
+            ? Number(r.totalBsInicial)
+            : Math.round(saldoInicial * precioUnit * 100) / 100;
+
+          const entry = grupoMap.get(key)!;
+          entry.productos.push({ codigo: r.producto.codigo, nombre: r.producto.nombre, unidad: r.producto.unidad, saldoInicial, precioUnit, totalBsInicial, fuente });
+          entry.totalBsInicial += totalBsInicial;
+        }
+
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
+          .map((g) => ({ ...g, totalBsInicial: Math.round(g.totalBsInicial * 100) / 100 }));
+
+        const totalGeneral = Math.round(grupos.reduce((acc, g) => acc + g.totalBsInicial, 0) * 100) / 100;
+        const totalCorregidos = registros.filter((r) => r.totalBsInicial !== null && r.totalBsInicial !== undefined).length;
+        const totalCalculados = registros.length - totalCorregidos;
+
+        return { anio, mes, esCerrado, grupos, totalGeneral, meta: { totalProductos: registros.length, corregidos: totalCorregidos, calculados: totalCalculados } };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Saldos iniciales por rango generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
   async getBalanceMensual(query: PeriodoRangoQueryDTO) {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);

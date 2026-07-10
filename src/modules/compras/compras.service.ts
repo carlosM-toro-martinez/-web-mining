@@ -404,6 +404,66 @@ export const comprasService = {
     };
   },
 
+  async corregirPrecioItem(compraId: string, itemId: string, nuevoPrecioUnit: number, userId: number) {
+    const compra = await prisma.compra.findUnique({
+      where: { id: compraId },
+      select: { id: true, estado: true },
+    });
+    if (!compra) throw new HttpError("Compra no encontrada", 404);
+    if (compra.estado === "ANULADA") throw new HttpError("No se puede corregir una compra anulada", 409);
+
+    const item = await prisma.compraItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, compraId: true, productoId: true, cantidadRecibida: true, precioUnit: true },
+    });
+    if (!item) throw new HttpError("Item de compra no encontrado", 404);
+    if (item.compraId !== compraId) throw new HttpError("El item no pertenece a esta compra", 400);
+
+    const precioAnterior = Number(item.precioUnit);
+    const nuevoPrecio = new Prisma.Decimal(nuevoPrecioUnit);
+
+    await prisma.compraItem.update({
+      where: { id: itemId },
+      data: { precioUnit: nuevoPrecio },
+    });
+
+    const movimientos = await prisma.movimiento.findMany({
+      where: { referencia: "COMPRA", referenciaId: compraId, productoId: item.productoId, tipo: "ENTRADA" },
+      select: { id: true, cantidad: true, stockDespues: true },
+    });
+
+    for (const mov of movimientos) {
+      await prisma.movimiento.update({
+        where: { id: mov.id },
+        data: {
+          precioUnit: nuevoPrecio,
+          entradaBs: nuevoPrecio.mul(mov.cantidad),
+          saldoBs:   nuevoPrecio.mul(mov.stockDespues),
+        },
+      });
+    }
+
+    await prisma.log.create({
+      data: {
+        usuarioId: userId,
+        accion: "CORRECCION_PRECIO_COMPRA_ITEM",
+        data: { compraId, itemId, productoId: item.productoId, precioAnterior, nuevoPrecioUnit, movimientosAfectados: movimientos.length },
+      },
+    });
+
+    return {
+      itemId,
+      productoCodigo: null,
+      productoId: item.productoId,
+      precioAnterior,
+      nuevoPrecioUnit,
+      cantidadRecibida: Number(item.cantidadRecibida),
+      subtotalAnterior: Math.round(precioAnterior * Number(item.cantidadRecibida) * 100) / 100,
+      subtotalNuevo:    Math.round(nuevoPrecioUnit * Number(item.cantidadRecibida) * 100) / 100,
+      movimientosActualizados: movimientos.length,
+    };
+  },
+
   async anularCompra(id: string, motivo: string, userId: number) {
     const compra = await prisma.compra.findUnique({
       where: { id },

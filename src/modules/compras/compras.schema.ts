@@ -28,6 +28,11 @@ export const recibirCompraSchema = z
   })
   .strict();
 
+export const corregirPrecioItemSchema = z.object({
+  precioUnit: z.number().positive(),
+  observacion: z.string().optional(),
+}).strict();
+
 export const compraQuerySchema = z
   .object({
     estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO", "ANULADA"]).optional(),

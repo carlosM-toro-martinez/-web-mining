@@ -24,6 +24,9 @@ router.get("/compras", authorize("ADMIN", "ALMACENERO"), reportesController.getC
 // Detalle completo de compras con proveedor, items valorados y totales
 router.get("/compras-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasDetalle);
 
+// Saldos iniciales por mes: muestra totalBsInicial corregido o saldoInicial×precioUnit como fallback
+router.get("/saldos-iniciales", reportesController.getSaldosIniciales);
+
 // Balance mensual por grupo (?anio=2025&mes=9)
 router.get("/balance-mensual", reportesController.getBalanceMensual);
 
