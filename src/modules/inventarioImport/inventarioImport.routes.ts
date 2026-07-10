@@ -122,6 +122,26 @@ router.post(
   inventarioImportController.inicializarPeriodo,
 );
 
+// POST /api/inventario-import/saldo-mensual/ajuste-inicial/excel?anio=2025&mes=10
+// Carga masiva de totalBsInicial desde Excel. Columnas: "codigo" | "totalBsInicial"
+// Funciona en períodos cerrados. Solo ADMIN.
+router.post(
+  "/saldo-mensual/ajuste-inicial/excel",
+  authorize("ADMIN"),
+  upload.single("file"),
+  inventarioImportController.ajustarTotalBsInicialExcel,
+);
+
+// PATCH /api/inventario-import/saldo-mensual/:id/ajuste-inicial
+// Setea directamente el totalBsInicial de un registro (monto de apertura en Bs).
+// Funciona en períodos cerrados. Solo ADMIN.
+// Body: { "totalBsInicial": 304413.49 }
+router.patch(
+  "/saldo-mensual/:id/ajuste-inicial",
+  authorize("ADMIN"),
+  inventarioImportController.ajustarTotalBsInicial,
+);
+
 // PATCH /api/inventario-import/saldo-mensual/:id/ajuste-total
 // Corrige directamente totalBs (y opcionalmente totalBsProm) sin recalcular desde precioUnit.
 // Funciona en períodos cerrados. Solo ADMIN.

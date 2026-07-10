@@ -1,0 +1,1 @@
+ALTER TABLE "SaldoMensual" ADD COLUMN IF NOT EXISTS "totalBsInicial" DECIMAL(14,2);

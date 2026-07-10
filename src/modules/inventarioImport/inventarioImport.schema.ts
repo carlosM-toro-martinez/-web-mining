@@ -129,6 +129,15 @@ export const ajusteTotalBsSchema = z.object({
   totalBsProm: z.number().nonnegative().optional(),
 });
 
+export const ajusteTotalBsInicialSchema = z.object({
+  totalBsInicial: z.number().nonnegative(),
+});
+
+export const ajusteInicialExcelQuerySchema = z.object({
+  anio: z.coerce.number().int().min(2000).max(2100),
+  mes: z.coerce.number().int().min(1).max(12),
+});
+
 // ─── Sincronizar stock ────────────────────────────────────────────────────────
 
 export const sincronizarStockSchema = z

@@ -139,6 +139,7 @@ model SaldoMensual {
   saldoFinal     Decimal  @default(0) @db.Decimal(14, 4)
   precioUnit     Decimal  @default(0) @db.Decimal(14, 4)  // último precio de compra del período
   totalBs        Decimal  @default(0) @db.Decimal(14, 4)  // saldoFinal × precioUnit
+  totalBsInicial Decimal? @db.Decimal(14, 2)             // override manual del monto inicial en Bs
   ingresosBs     Decimal  @default(0) @db.Decimal(14, 4)  // suma(cantidad × precioUnit) de todas las entradas → para calcular promedio
   precioUnitProm Decimal  @default(0) @db.Decimal(14, 4)  // promedio ponderado = ingresosBs / ingresoQty
   totalBsProm    Decimal  @default(0) @db.Decimal(14, 4)  // saldoFinal × precioUnitProm

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import XLSX from "xlsx";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { parseCatalogoExcel } from "./inventarioImport.parser.js";
@@ -447,6 +448,9 @@ export async function getSaldoMensualById(id: string) {
     saldoFinal: Number(record.saldoFinal),
     precioUnit: Number(record.precioUnit),
     totalBs: Number(record.totalBs),
+    totalBsInicial: (record as any).totalBsInicial !== null && (record as any).totalBsInicial !== undefined
+      ? Number((record as any).totalBsInicial)
+      : null,
   };
 }
 
@@ -573,6 +577,148 @@ export async function ajustarTotalBsSaldoMensual(
   };
 }
 
+// ─── Saldo mensual – ajuste directo de totalBsInicial (ADMIN) ───────────────
+// Corrige el monto inicial en Bs almacenado. Funciona en períodos cerrados.
+
+export async function ajustarTotalBsInicialSaldoMensual(
+  id: string,
+  totalBsInicial: number,
+  userId: number,
+): Promise<{
+  id: string;
+  productoCodigo: string;
+  productoNombre: string;
+  anio: number;
+  mes: number;
+  saldoInicial: number;
+  precioUnit: number;
+  totalBsInicialAnterior: number | null;
+  totalBsInicialNuevo: number;
+}> {
+  const existing = await (prisma.saldoMensual.findUnique as any)({
+    where: { id },
+    select: {
+      id: true,
+      anio: true,
+      mes: true,
+      saldoInicial: true,
+      precioUnit: true,
+      totalBsInicial: true,
+      producto: { select: { codigo: true, nombre: true } },
+    },
+  }) as { id: string; anio: number; mes: number; saldoInicial: unknown; precioUnit: unknown; totalBsInicial: unknown; producto: { codigo: string; nombre: string } } | null;
+  if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+
+  await (prisma.saldoMensual.update as any)({ where: { id }, data: { totalBsInicial } });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "AJUSTE_TOTAL_BS_INICIAL_SALDO_MENSUAL",
+      data: JSON.parse(JSON.stringify({
+        id,
+        totalBsInicialAnterior: existing.totalBsInicial !== null ? Number(existing.totalBsInicial) : null,
+        totalBsInicialNuevo: totalBsInicial,
+      })),
+    },
+  });
+
+  return {
+    id,
+    productoCodigo: existing.producto.codigo,
+    productoNombre: existing.producto.nombre,
+    anio: existing.anio,
+    mes: existing.mes,
+    saldoInicial: Number(existing.saldoInicial),
+    precioUnit: Number(existing.precioUnit),
+    totalBsInicialAnterior: existing.totalBsInicial !== null ? Number(existing.totalBsInicial) : null,
+    totalBsInicialNuevo: totalBsInicial,
+  };
+}
+
+// ─── Saldo mensual – ajuste masivo de totalBsInicial desde Excel ─────────────
+// Excel: columna "codigo" y columna "totalBsInicial"
+// Se aplica a todos los productos del mes que matcheen por código.
+// Funciona en períodos cerrados. Solo ADMIN.
+
+export interface AjusteInicialExcelFila {
+  fila: number;
+  codigo: string;
+  totalBsInicial: number | null;
+  ok: boolean;
+  anterior?: number | null;
+  error?: string;
+}
+
+export async function ajustarTotalBsInicialDesdeExcel(
+  fileBuffer: Buffer,
+  anio: number,
+  mes: number,
+  userId: number,
+): Promise<{ procesados: number; exitosos: number; fallidos: number; resultados: AjusteInicialExcelFila[] }> {
+  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]!];
+  if (!sheet) throw new HttpError("El archivo Excel está vacío o no tiene hojas", 400);
+
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+  if (rows.length === 0) throw new HttpError("El Excel no contiene filas de datos", 400);
+
+  const resultados: AjusteInicialExcelFila[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const fila = i + 2;
+
+    const rawCodigo = row["codigo"] ?? row["CODIGO"] ?? row["Codigo"];
+    const rawTotal  = row["totalBsInicial"] ?? row["TOTALBSINICIAL"] ?? row["TotalBsInicial"] ?? row["total_bs_inicial"];
+
+    const codigo = typeof rawCodigo === "string" ? rawCodigo.trim() : String(rawCodigo ?? "").trim();
+    const totalBsInicial = typeof rawTotal === "number"
+      ? rawTotal
+      : typeof rawTotal === "string"
+        ? parseFloat(rawTotal.replace(/,/g, ""))
+        : NaN;
+
+    if (!codigo) {
+      resultados.push({ fila, codigo: "", totalBsInicial: null, ok: false, error: "Falta el código de producto" });
+      continue;
+    }
+    if (isNaN(totalBsInicial) || totalBsInicial < 0) {
+      resultados.push({ fila, codigo, totalBsInicial: null, ok: false, error: "totalBsInicial inválido o negativo" });
+      continue;
+    }
+
+    const saldo = await (prisma.saldoMensual.findFirst as any)({
+      where: { anio, mes, producto: { codigo } },
+      select: { id: true, totalBsInicial: true },
+    }) as { id: string; totalBsInicial: unknown } | null;
+
+    if (!saldo) {
+      resultados.push({ fila, codigo, totalBsInicial, ok: false, error: `Sin registro para ${codigo} en ${mes}/${anio}` });
+      continue;
+    }
+
+    const anterior = saldo.totalBsInicial !== null ? Number(saldo.totalBsInicial) : null;
+    await (prisma.saldoMensual.update as any)({ where: { id: saldo.id }, data: { totalBsInicial } });
+
+    resultados.push({ fila, codigo, totalBsInicial, ok: true, anterior });
+  }
+
+  const exitosos = resultados.filter(r => r.ok).length;
+  const fallidos = resultados.length - exitosos;
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "AJUSTE_TOTAL_BS_INICIAL_EXCEL",
+      data: { anio, mes, procesados: resultados.length, exitosos, fallidos },
+    },
+  });
+
+  logger.info({ anio, mes, exitosos, fallidos }, "Ajuste masivo totalBsInicial desde Excel");
+  return { procesados: resultados.length, exitosos, fallidos, resultados };
+}
+
 // ─── Saldo mensual – eliminar por id ─────────────────────────────────────────
 
 export async function deleteSaldoMensualItem(
@@ -630,6 +776,9 @@ export async function getSaldosMensualesCargados(anio: number, mes: number) {
     saldoFinal: Number(r.saldoFinal),
     precioUnit: Number(r.precioUnit),
     totalBs: Number(r.totalBs),
+    totalBsInicial: (r as any).totalBsInicial !== null && (r as any).totalBsInicial !== undefined
+      ? Number((r as any).totalBsInicial)
+      : null,
   }));
 }
 

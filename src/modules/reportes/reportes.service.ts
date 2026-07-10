@@ -462,9 +462,13 @@ export const reportesService = {
           const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
           const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
           const saldoFinalQty = saldoInicial + ingresos.qty - salidas.qty;
+          // totalBsInicial es un override manual para corregir precios irracionales truncados
+          const saldoInicialBs = (r as any).totalBsInicial !== null && (r as any).totalBsInicial !== undefined
+            ? Number((r as any).totalBsInicial)
+            : saldoInicial * precioUnit;
 
           const entry = grupoMap.get(grupoId)!;
-          entry.saldoInicial      += saldoInicial * precioUnit;
+          entry.saldoInicial      += saldoInicialBs;
           entry.ingresoMateriales += ingresos.bs;
           entry.salidaMateriales  += salidas.bs;
           entry.saldoFinal        += saldoFinalQty * precioUnit;
@@ -1213,14 +1217,14 @@ export const reportesService = {
         const prevAnio = mes === 1 ? anio - 1 : anio;
 
         const [saldosPrevMes, saldosMesActual, compraItemsRaw, movimientos] = await Promise.all([
-          prisma.saldoMensual.findMany({
+          (prisma.saldoMensual.findMany as any)({
             where: { anio: prevAnio, mes: prevMes },
-            select: { saldoFinal: true, precioUnit: true },
-          }),
-          prisma.saldoMensual.findMany({
+            select: { totalBs: true },
+          }) as Promise<{ totalBs: unknown }[]>,
+          (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
-            select: { productoId: true, precioUnit: true, saldoInicial: true },
-          }),
+            select: { productoId: true, precioUnit: true, saldoInicial: true, totalBsInicial: true },
+          }) as Promise<{ productoId: number; precioUnit: unknown; saldoInicial: unknown; totalBsInicial: unknown }[]>,
           prisma.compraItem.findMany({
             where: {
               cantidadRecibida: { gt: 0 },
@@ -1256,9 +1260,16 @@ export const reportesService = {
         );
 
         // DEBE: saldo inventario anterior (prev month closing value)
+        // Usa totalBs almacenado (evita error de decimales truncados en precioUnit)
+        // Fallback: cuando no hay mes anterior, usa totalBsInicial si está seteado
         const saldoInventarioAnterior = saldosPrevMes.length > 0
-          ? saldosPrevMes.reduce((acc, s) => acc + Number(s.saldoFinal) * Number(s.precioUnit), 0)
-          : saldosMesActual.reduce((acc, s) => acc + Number(s.saldoInicial) * Number(s.precioUnit), 0);
+          ? saldosPrevMes.reduce((acc, s) => acc + Number(s.totalBs), 0)
+          : saldosMesActual.reduce((acc, s) => {
+              const ini = s.totalBsInicial !== null && s.totalBsInicial !== undefined
+                ? Number(s.totalBsInicial)
+                : Number(s.saldoInicial) * Number(s.precioUnit);
+              return acc + ini;
+            }, 0);
 
         const comprasImporteBs = compraItemsRaw.reduce(
           (acc, item) => acc + Number(item.cantidadRecibida) * Number(item.precioUnit),

@@ -22,6 +22,8 @@ import {
   getPreviewPeriodo,
   recalcularPreciosProm,
   ajustarTotalBsSaldoMensual,
+  ajustarTotalBsInicialSaldoMensual,
+  ajustarTotalBsInicialDesdeExcel,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -37,6 +39,8 @@ import {
   inicializarPeriodoSchema,
   cerrarMesSchema,
   ajusteTotalBsSchema,
+  ajusteTotalBsInicialSchema,
+  ajusteInicialExcelQuerySchema,
 } from "./inventarioImport.schema.js";
 
 export const inventarioImportController = {
@@ -326,6 +330,54 @@ export const inventarioImportController = {
       res.json({ success: true, data: result });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Ajuste masivo de totalBsInicial desde Excel ────────────────────────
+
+  async ajustarTotalBsInicialExcel(req: AuthRequest, res: Response) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: "Se requiere un archivo Excel" });
+      }
+      const queryParsed = ajusteInicialExcelQuerySchema.safeParse(req.query);
+      if (!queryParsed.success) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes en la URL (?anio=2025&mes=10)" });
+      }
+      const data = await ajustarTotalBsInicialDesdeExcel(
+        req.file.buffer,
+        queryParsed.data.anio,
+        queryParsed.data.mes,
+        req.user!.id,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Ajuste del saldo inicial en Bs ─────────────────────────────────────
+
+  async ajustarTotalBsInicial(req: AuthRequest, res: Response) {
+    try {
+      const paramParsed = saldoMensualIdParamSchema.safeParse(req.params);
+      if (!paramParsed.success) {
+        return res.status(400).json({ success: false, error: "ID inválido" });
+      }
+      const bodyParsed = ajusteTotalBsInicialSchema.safeParse(req.body);
+      if (!bodyParsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: bodyParsed.error.flatten() });
+      }
+      const data = await ajustarTotalBsInicialSaldoMensual(
+        paramParsed.data.id,
+        bodyParsed.data.totalBsInicial,
+        req.user!.id,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
 
