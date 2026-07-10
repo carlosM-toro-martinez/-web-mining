@@ -21,6 +21,7 @@ import {
   getCierres,
   getPreviewPeriodo,
   recalcularPreciosProm,
+  ajustarTotalBsSaldoMensual,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -35,6 +36,7 @@ import {
   sincronizarStockSchema,
   inicializarPeriodoSchema,
   cerrarMesSchema,
+  ajusteTotalBsSchema,
 } from "./inventarioImport.schema.js";
 
 export const inventarioImportController = {
@@ -324,6 +326,26 @@ export const inventarioImportController = {
       res.json({ success: true, data: result });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Ajuste directo de totalBs ───────────────────────────────────────────
+
+  async ajustarTotalBs(req: AuthRequest, res: Response) {
+    try {
+      const paramParsed = saldoMensualIdParamSchema.safeParse(req.params);
+      if (!paramParsed.success) {
+        return res.status(400).json({ success: false, error: "ID inválido" });
+      }
+      const bodyParsed = ajusteTotalBsSchema.safeParse(req.body);
+      if (!bodyParsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: bodyParsed.error.flatten() });
+      }
+      const data = await ajustarTotalBsSaldoMensual(paramParsed.data.id, bodyParsed.data, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
 };

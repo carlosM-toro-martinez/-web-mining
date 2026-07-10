@@ -122,6 +122,16 @@ router.post(
   inventarioImportController.inicializarPeriodo,
 );
 
+// PATCH /api/inventario-import/saldo-mensual/:id/ajuste-total
+// Corrige directamente totalBs (y opcionalmente totalBsProm) sin recalcular desde precioUnit.
+// Funciona en períodos cerrados. Solo ADMIN.
+// Body: { "totalBs": 304413.49, "totalBsProm": 304413.49 }
+router.patch(
+  "/saldo-mensual/:id/ajuste-total",
+  authorize("ADMIN"),
+  inventarioImportController.ajustarTotalBs,
+);
+
 // GET  /api/inventario-import/saldo-mensual/:id
 // Obtener un registro por UUID.
 router.get(

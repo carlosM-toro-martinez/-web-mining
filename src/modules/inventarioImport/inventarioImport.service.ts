@@ -507,6 +507,72 @@ export async function updateSaldoMensualItem(
   return { ...formatSaldoMensual(record), accion: "actualizado" };
 }
 
+// ─── Saldo mensual – ajuste directo de totalBs (ADMIN) ──────────────────────
+// Permite corregir totalBs sin recalcular desde precioUnit.
+// Funciona en períodos cerrados (no llama verificarMesAbierto).
+
+export async function ajustarTotalBsSaldoMensual(
+  id: string,
+  data: { totalBs: number; totalBsProm?: number | undefined },
+  userId: number,
+): Promise<{
+  id: string;
+  productoCodigo: string;
+  productoNombre: string;
+  anio: number;
+  mes: number;
+  saldoFinal: number;
+  precioUnit: number;
+  totalBsAnterior: number;
+  totalBsNuevo: number;
+  totalBsPromNuevo: number | null;
+}> {
+  const existing = await prisma.saldoMensual.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      anio: true,
+      mes: true,
+      saldoFinal: true,
+      precioUnit: true,
+      totalBs: true,
+      producto: { select: { codigo: true, nombre: true } },
+    },
+  });
+  if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+
+  const updateData: Record<string, unknown> = { totalBs: data.totalBs };
+  if (data.totalBsProm !== undefined) updateData.totalBsProm = data.totalBsProm;
+
+  await (prisma.saldoMensual.update as any)({ where: { id }, data: updateData });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "AJUSTE_TOTAL_BS_SALDO_MENSUAL",
+      data: JSON.parse(JSON.stringify({
+        id,
+        totalBsAnterior: Number(existing.totalBs),
+        totalBsNuevo: data.totalBs,
+        totalBsPromNuevo: data.totalBsProm ?? null,
+      })),
+    },
+  });
+
+  return {
+    id,
+    productoCodigo: existing.producto.codigo,
+    productoNombre: existing.producto.nombre,
+    anio: existing.anio,
+    mes: existing.mes,
+    saldoFinal: Number(existing.saldoFinal),
+    precioUnit: Number(existing.precioUnit),
+    totalBsAnterior: Number(existing.totalBs),
+    totalBsNuevo: data.totalBs,
+    totalBsPromNuevo: data.totalBsProm ?? null,
+  };
+}
+
 // ─── Saldo mensual – eliminar por id ─────────────────────────────────────────
 
 export async function deleteSaldoMensualItem(

@@ -122,6 +122,13 @@ export const cerrarMesSchema = z.object({
   mes: z.number().int().min(1).max(12),
 });
 
+// ─── Ajuste directo de totalBs ───────────────────────────────────────────────
+
+export const ajusteTotalBsSchema = z.object({
+  totalBs: z.number().nonnegative(),
+  totalBsProm: z.number().nonnegative().optional(),
+});
+
 // ─── Sincronizar stock ────────────────────────────────────────────────────────
 
 export const sincronizarStockSchema = z
