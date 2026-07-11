@@ -616,7 +616,7 @@ export const reportesService = {
           ],
         };
 
-        const [registros, compraItemsRaw, salidasMovs] = await Promise.all([
+        const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovsInv] = await Promise.all([
           prisma.saldoMensual.findMany({
             where: { anio, mes },
             include: { producto: { include: { categoria: { include: { parent: true } } } } },
@@ -638,9 +638,20 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true },
+            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+          }),
+          prisma.movimiento.findMany({
+            where: { referencia: "ANULACION_VALE", ...movFilter },
+            select: { referenciaId: true },
           }),
         ]);
+
+        const valesAnuladosIdsInv = new Set(
+          anulacionValeMovsInv.map(m => m.referenciaId).filter((id): id is string => id !== null),
+        );
+        const salidasMovs = salidasMovsRaw.filter(
+          m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsInv.has(m.referenciaId)),
+        );
 
         const ingresoMap = new Map<number, number>();
         for (const item of compraItemsRaw) {
@@ -846,7 +857,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsEntrada:         Math.round(g.totalBsEntrada * 100) / 100,
-            totalBsEntradaMenos13:  Math.round(g.totalBsEntrada * 0.87 * 100) / 100,
+            totalBsEntradaMenos13:  Math.floor(g.totalBsEntrada * 0.87 * 100) / 100,
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -856,7 +867,7 @@ export const reportesService = {
           }));
 
         const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0) * 100) / 100;
-        const totalGeneralMenos13 = Math.round(totalGeneral * 0.87 * 100) / 100;
+        const totalGeneralMenos13 = Math.floor(totalGeneral * 0.87 * 100) / 100;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -877,27 +888,43 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth = new Date(Date.UTC(anio, mes, 1));
 
-        const movimientos = await prisma.movimiento.findMany({
-          where: {
-            tipo: "SALIDA",
-            referencia: { not: "ANULACION_COMPRA" },
-            OR: [
-              { periodoAnio: anio, periodoMes: mes },
-              { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
-            ],
-          },
-          include: {
-            producto: {
-              include: { categoria: { include: { parent: true } } },
-            },
-          },
-        });
+        const salidaMovFilter = {
+          OR: [
+            { periodoAnio: anio, periodoMes: mes },
+            { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+          ],
+        };
 
-        // Precios históricos del SaldoMensual del período
-        const saldosMes = await prisma.saldoMensual.findMany({
-          where: { anio, mes },
-          select: { productoId: true, precioUnit: true },
-        });
+        const [movimentosRaw, saldosMes, anulacionValeMovsSalidas] = await Promise.all([
+          prisma.movimiento.findMany({
+            where: {
+              tipo: "SALIDA",
+              referencia: { not: "ANULACION_COMPRA" },
+              ...salidaMovFilter,
+            },
+            include: {
+              producto: {
+                include: { categoria: { include: { parent: true } } },
+              },
+            },
+          }),
+          prisma.saldoMensual.findMany({
+            where: { anio, mes },
+            select: { productoId: true, precioUnit: true },
+          }),
+          prisma.movimiento.findMany({
+            where: { referencia: "ANULACION_VALE", ...salidaMovFilter },
+            select: { referenciaId: true },
+          }),
+        ]);
+
+        const valesAnuladosIdsSalidas = new Set(
+          anulacionValeMovsSalidas.map(m => m.referenciaId).filter((id): id is string => id !== null),
+        );
+        const movimientos = movimentosRaw.filter(
+          m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsSalidas.has(m.referenciaId)),
+        );
+
         const precioHistoricoMap = new Map<number, number>(
           saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
         );
@@ -964,7 +991,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsSalida:        Math.round(g.totalBsSalida * 100) / 100,
-            totalBsSalidaMenos13: Math.round(g.totalBsSalida * 0.87 * 100) / 100,
+            totalBsSalidaMenos13: Math.floor(g.totalBsSalida * 0.87 * 100) / 100,
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -974,7 +1001,7 @@ export const reportesService = {
           }));
 
         const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsSalida, 0) * 100) / 100;
-        const totalGeneralMenos13 = Math.round(totalGeneral * 0.87 * 100) / 100;
+        const totalGeneralMenos13 = Math.floor(totalGeneral * 0.87 * 100) / 100;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -1235,16 +1262,20 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const [movimientos, saldosMes] = await Promise.all([
+        const detalleMesFilter = {
+          OR: [
+            { periodoAnio: anio, periodoMes: mes },
+            { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+          ],
+        };
+
+        const [movimentosRaw, saldosMes, anulacionValeMovsDetalle] = await Promise.all([
           prisma.movimiento.findMany({
             where: {
               tipo: "SALIDA",
               referencia: { not: "ANULACION_COMPRA" },
               cuentaId: { not: null },
-              OR: [
-                { periodoAnio: anio, periodoMes: mes },
-                { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
-              ],
+              ...detalleMesFilter,
             },
             include: {
               cuenta: { include: { centroCosto: true, funcionGasto: true } },
@@ -1254,7 +1285,18 @@ export const reportesService = {
             where: { anio, mes },
             select: { productoId: true, precioUnit: true },
           }),
+          prisma.movimiento.findMany({
+            where: { referencia: "ANULACION_VALE", ...detalleMesFilter },
+            select: { referenciaId: true },
+          }),
         ]);
+
+        const valesAnuladosIdsDetalle = new Set(
+          anulacionValeMovsDetalle.map(m => m.referenciaId).filter((id): id is string => id !== null),
+        );
+        const movimientos = movimentosRaw.filter(
+          m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsDetalle.has(m.referenciaId)),
+        );
 
         const precioMap = new Map<number, number>(
           saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
