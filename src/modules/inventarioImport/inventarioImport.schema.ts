@@ -122,16 +122,32 @@ export const cerrarMesSchema = z.object({
   mes: z.number().int().min(1).max(12),
 });
 
-// ─── Ajuste directo de totalBs ───────────────────────────────────────────────
+// ─── Ajuste de campos de SaldoMensual ────────────────────────────────────────
+// Todos los campos son opcionales; se aplican solo los que se envíen.
+// Si se cambia saldoInicial se recalcula saldoFinal y se propaga a meses siguientes.
+// Si se cambia precioUnit se recalcula totalBs automáticamente (a menos que totalBs también se envíe).
 
-export const ajusteTotalBsSchema = z.object({
-  totalBs: z.number().nonnegative(),
-  totalBsProm: z.number().nonnegative().optional(),
-});
+export const ajusteCamposSaldoMensualSchema = z
+  .object({
+    totalBs:        z.number().nonnegative().optional(),
+    totalBsProm:    z.number().nonnegative().optional(),
+    totalBsInicial: z.number().nonnegative().optional(),
+    precioUnit:     z.number().positive().optional(),
+    saldoInicial:   z.number().int().nonnegative().optional(),
+  })
+  .refine(
+    (d) =>
+      d.totalBs !== undefined ||
+      d.totalBsProm !== undefined ||
+      d.totalBsInicial !== undefined ||
+      d.precioUnit !== undefined ||
+      d.saldoInicial !== undefined,
+    { message: "Debe proporcionarse al menos un campo para actualizar" },
+  );
 
-export const ajusteTotalBsInicialSchema = z.object({
-  totalBsInicial: z.number().nonnegative(),
-});
+// Aliases para compatibilidad con imports existentes en el controller
+export const ajusteTotalBsSchema         = ajusteCamposSaldoMensualSchema;
+export const ajusteTotalBsInicialSchema  = ajusteCamposSaldoMensualSchema;
 
 export const ajusteInicialExcelQuerySchema = z.object({
   anio: z.coerce.number().int().min(2000).max(2100),

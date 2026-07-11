@@ -21,8 +21,7 @@ import {
   getCierres,
   getPreviewPeriodo,
   recalcularPreciosProm,
-  ajustarTotalBsSaldoMensual,
-  ajustarTotalBsInicialSaldoMensual,
+  ajustarCamposSaldoMensual,
   ajustarTotalBsInicialDesdeExcel,
 } from "./inventarioImport.service.js";
 import {
@@ -38,8 +37,7 @@ import {
   sincronizarStockSchema,
   inicializarPeriodoSchema,
   cerrarMesSchema,
-  ajusteTotalBsSchema,
-  ajusteTotalBsInicialSchema,
+  ajusteCamposSaldoMensualSchema,
   ajusteInicialExcelQuerySchema,
 } from "./inventarioImport.schema.js";
 
@@ -357,7 +355,9 @@ export const inventarioImportController = {
     }
   },
 
-  // ─── Ajuste del saldo inicial en Bs ─────────────────────────────────────
+  // ─── Ajuste de campos de SaldoMensual (ajuste-inicial y ajuste-total) ─────
+  // Ambas rutas usan el mismo handler. Campos soportados:
+  //   totalBs, totalBsProm, totalBsInicial, precioUnit, saldoInicial
 
   async ajustarTotalBsInicial(req: AuthRequest, res: Response) {
     try {
@@ -365,15 +365,11 @@ export const inventarioImportController = {
       if (!paramParsed.success) {
         return res.status(400).json({ success: false, error: "ID inválido" });
       }
-      const bodyParsed = ajusteTotalBsInicialSchema.safeParse(req.body);
+      const bodyParsed = ajusteCamposSaldoMensualSchema.safeParse(req.body);
       if (!bodyParsed.success) {
         return res.status(400).json({ success: false, error: "Datos inválidos", details: bodyParsed.error.flatten() });
       }
-      const data = await ajustarTotalBsInicialSaldoMensual(
-        paramParsed.data.id,
-        bodyParsed.data.totalBsInicial,
-        req.user!.id,
-      );
+      const data = await ajustarCamposSaldoMensual(paramParsed.data.id, bodyParsed.data, req.user!.id);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
@@ -381,19 +377,17 @@ export const inventarioImportController = {
     }
   },
 
-  // ─── Ajuste directo de totalBs ───────────────────────────────────────────
-
   async ajustarTotalBs(req: AuthRequest, res: Response) {
     try {
       const paramParsed = saldoMensualIdParamSchema.safeParse(req.params);
       if (!paramParsed.success) {
         return res.status(400).json({ success: false, error: "ID inválido" });
       }
-      const bodyParsed = ajusteTotalBsSchema.safeParse(req.body);
+      const bodyParsed = ajusteCamposSaldoMensualSchema.safeParse(req.body);
       if (!bodyParsed.success) {
         return res.status(400).json({ success: false, error: "Datos inválidos", details: bodyParsed.error.flatten() });
       }
-      const data = await ajustarTotalBsSaldoMensual(paramParsed.data.id, bodyParsed.data, req.user!.id);
+      const data = await ajustarCamposSaldoMensual(paramParsed.data.id, bodyParsed.data, req.user!.id);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

@@ -480,7 +480,7 @@ export const reportesService = {
           ],
         };
 
-        const [registros, compraItemsRaw, salidasMovs] = await Promise.all([
+        const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovs] = await Promise.all([
           prisma.saldoMensual.findMany({
             where: { anio, mes },
             include: { producto: { include: { categoria: { include: { parent: true } } } } },
@@ -501,9 +501,20 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true, salidaBs: true },
+            select: { productoId: true, cantidad: true, salidaBs: true, referencia: true, referenciaId: true },
+          }),
+          prisma.movimiento.findMany({
+            where: { referencia: "ANULACION_VALE", ...movFilter },
+            select: { referenciaId: true },
           }),
         ]);
+
+        const valesAnuladosIdsBalance = new Set(
+          anulacionValeMovs.map(m => m.referenciaId).filter((id): id is string => id !== null),
+        );
+        const salidasMovs = salidasMovsRaw.filter(
+          m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsBalance.has(m.referenciaId)),
+        );
 
         const ingresoMap = new Map<number, { qty: number; bs: number }>();
         for (const item of compraItemsRaw) {
@@ -553,7 +564,6 @@ export const reportesService = {
           const saldoInicial = Number(r.saldoInicial);
           const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
           const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
-          const saldoFinalQty = saldoInicial + ingresos.qty - salidas.qty;
           // totalBsInicial es un override manual para corregir precios irracionales truncados
           const saldoInicialBs = (r as any).totalBsInicial !== null && (r as any).totalBsInicial !== undefined
             ? Number((r as any).totalBsInicial)
@@ -563,7 +573,7 @@ export const reportesService = {
           entry.saldoInicial      += saldoInicialBs;
           entry.ingresoMateriales += ingresos.bs;
           entry.salidaMateriales  += salidas.bs;
-          entry.saldoFinal        += saldoFinalQty * precioUnit;
+          entry.saldoFinal        += saldoInicialBs + ingresos.bs - salidas.bs;
         }
 
         const grupos = [...grupoMap.values()].sort((a, b) =>
@@ -1308,7 +1318,7 @@ export const reportesService = {
         const prevMes  = mes === 1 ? 12 : mes - 1;
         const prevAnio = mes === 1 ? anio - 1 : anio;
 
-        const [saldosPrevMes, saldosMesActual, compraItemsRaw, movimientos] = await Promise.all([
+        const [saldosPrevMes, saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio: prevAnio, mes: prevMes },
             select: { totalBs: true },
@@ -1345,7 +1355,24 @@ export const reportesService = {
               cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
             },
           }),
+          prisma.movimiento.findMany({
+            where: {
+              referencia: "ANULACION_VALE",
+              OR: [
+                { periodoAnio: anio, periodoMes: mes },
+                { periodoAnio: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
+            select: { referenciaId: true },
+          }),
         ]);
+
+        const valesAnuladosIdsDiario = new Set(
+          anulacionValeMovsDiario.map(m => m.referenciaId).filter((id): id is string => id !== null),
+        );
+        const movimientos = movimentosRaw.filter(
+          m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsDiario.has(m.referenciaId)),
+        );
 
         const precioMap = new Map<number, number>(
           saldosMesActual.map((s) => [s.productoId, Number(s.precioUnit)]),

@@ -511,143 +511,168 @@ export async function updateSaldoMensualItem(
   return { ...formatSaldoMensual(record), accion: "actualizado" };
 }
 
-// ─── Saldo mensual – ajuste directo de totalBs (ADMIN) ──────────────────────
-// Permite corregir totalBs sin recalcular desde precioUnit.
-// Funciona en períodos cerrados (no llama verificarMesAbierto).
+// ─── Saldo mensual – ajuste de campos (ADMIN) ───────────────────────────────
+// Permite corregir cualquier combinación de campos. Funciona en períodos cerrados.
+// - precioUnit  → recalcula totalBs = saldoFinal × nuevo_precioUnit (si totalBs no se envía)
+// - saldoInicial → recalcula saldoFinal y propaga el cambio a todos los meses siguientes
 
-export async function ajustarTotalBsSaldoMensual(
+type CamposSaldoMensual = {
+  totalBs?: number | undefined;
+  totalBsProm?: number | undefined;
+  totalBsInicial?: number | undefined;
+  precioUnit?: number | undefined;
+  saldoInicial?: number | undefined;
+};
+
+export async function ajustarCamposSaldoMensual(
   id: string,
-  data: { totalBs: number; totalBsProm?: number | undefined },
+  campos: CamposSaldoMensual,
   userId: number,
-): Promise<{
-  id: string;
-  productoCodigo: string;
-  productoNombre: string;
-  anio: number;
-  mes: number;
-  saldoFinal: number;
-  precioUnit: number;
-  totalBsAnterior: number;
-  totalBsNuevo: number;
-  totalBsPromNuevo: number | null;
-}> {
-  const existing = await prisma.saldoMensual.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      anio: true,
-      mes: true,
-      saldoFinal: true,
-      precioUnit: true,
-      totalBs: true,
-      producto: { select: { codigo: true, nombre: true } },
-    },
-  });
-  if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
-
-  const updateData: Record<string, unknown> = { totalBs: data.totalBs };
-  if (data.totalBsProm !== undefined) updateData.totalBsProm = data.totalBsProm;
-
-  await (prisma.saldoMensual.update as any)({ where: { id }, data: updateData });
-
-  await prisma.log.create({
-    data: {
-      usuarioId: userId,
-      accion: "AJUSTE_TOTAL_BS_SALDO_MENSUAL",
-      data: JSON.parse(JSON.stringify({
-        id,
-        totalBsAnterior: Number(existing.totalBs),
-        totalBsNuevo: data.totalBs,
-        totalBsPromNuevo: data.totalBsProm ?? null,
-      })),
-    },
-  });
-
-  return {
-    id,
-    productoCodigo: existing.producto.codigo,
-    productoNombre: existing.producto.nombre,
-    anio: existing.anio,
-    mes: existing.mes,
-    saldoFinal: Number(existing.saldoFinal),
-    precioUnit: Number(existing.precioUnit),
-    totalBsAnterior: Number(existing.totalBs),
-    totalBsNuevo: data.totalBs,
-    totalBsPromNuevo: data.totalBsProm ?? null,
-  };
-}
-
-// ─── Saldo mensual – ajuste directo de totalBsInicial (ADMIN) ───────────────
-// Corrige el monto inicial en Bs almacenado. Funciona en períodos cerrados.
-
-export async function ajustarTotalBsInicialSaldoMensual(
-  id: string,
-  totalBsInicial: number,
-  userId: number,
-): Promise<{
-  id: string;
-  productoCodigo: string;
-  productoNombre: string;
-  anio: number;
-  mes: number;
-  saldoInicial: number;
-  precioUnit: number;
-  totalBsInicialAnterior: number | null;
-  totalBsInicialNuevo: number;
-}> {
+) {
   const existing = await (prisma.saldoMensual.findUnique as any)({
     where: { id },
     select: {
-      id: true,
-      anio: true,
-      mes: true,
-      saldoInicial: true,
-      precioUnit: true,
-      totalBsInicial: true,
+      id: true, anio: true, mes: true, productoId: true,
+      saldoInicial: true, ingresoQty: true, salidaQty: true, saldoFinal: true,
+      precioUnit: true, totalBs: true, totalBsProm: true, totalBsInicial: true,
       producto: { select: { codigo: true, nombre: true } },
     },
-  }) as { id: string; anio: number; mes: number; saldoInicial: unknown; precioUnit: unknown; totalBsInicial: unknown; producto: { codigo: string; nombre: string } } | null;
+  }) as {
+    id: string; anio: number; mes: number; productoId: number;
+    saldoInicial: unknown; ingresoQty: unknown; salidaQty: unknown; saldoFinal: unknown;
+    precioUnit: unknown; totalBs: unknown; totalBsProm: unknown; totalBsInicial: unknown;
+    producto: { codigo: string; nombre: string };
+  } | null;
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
 
-  await (prisma.saldoMensual.update as any)({ where: { id }, data: { totalBsInicial } });
+  const precioUnitActivo = campos.precioUnit !== undefined
+    ? new Prisma.Decimal(campos.precioUnit)
+    : new Prisma.Decimal(existing.precioUnit as number);
+
+  const updateData: Record<string, unknown> = {};
+
+  if (campos.precioUnit !== undefined)     updateData.precioUnit     = campos.precioUnit;
+  if (campos.totalBsInicial !== undefined) updateData.totalBsInicial = campos.totalBsInicial;
+  if (campos.totalBsProm !== undefined)    updateData.totalBsProm    = campos.totalBsProm;
+
+  // saldoInicial → recalcular saldoFinal
+  let newSaldoFinal: Prisma.Decimal;
+  if (campos.saldoInicial !== undefined) {
+    newSaldoFinal = new Prisma.Decimal(campos.saldoInicial)
+      .add(existing.ingresoQty as number)
+      .sub(existing.salidaQty as number);
+    updateData.saldoInicial = campos.saldoInicial;
+    updateData.saldoFinal   = newSaldoFinal;
+  } else {
+    newSaldoFinal = new Prisma.Decimal(existing.saldoFinal as number);
+  }
+
+  // totalBs: si se envía explícitamente lo respetamos; si no, recalculamos cuando cambió precioUnit o saldoInicial
+  if (campos.totalBs !== undefined) {
+    updateData.totalBs = campos.totalBs;
+  } else if (campos.precioUnit !== undefined || campos.saldoInicial !== undefined) {
+    updateData.totalBs = newSaldoFinal.mul(precioUnitActivo);
+  }
+
+  await (prisma.saldoMensual.update as any)({ where: { id }, data: updateData });
+
+  // ── Cascade: propagar nuevo saldoFinal a los meses siguientes ──────────────
+  let mesesCascadeados = 0;
+  if (campos.saldoInicial !== undefined) {
+    let prevFinal = newSaldoFinal;
+    let cascAnio  = existing.anio;
+    let cascMes   = existing.mes;
+
+    for (let i = 0; i < 48; i++) {
+      cascMes = cascMes === 12 ? 1 : cascMes + 1;
+      if (cascMes === 1) cascAnio++;
+
+      const next = await (prisma.saldoMensual.findUnique as any)({
+        where: { productoId_anio_mes: { productoId: existing.productoId, anio: cascAnio, mes: cascMes } },
+        select: { id: true, ingresoQty: true, salidaQty: true, precioUnit: true },
+      }) as { id: string; ingresoQty: unknown; salidaQty: unknown; precioUnit: unknown } | null;
+
+      if (!next) break;
+
+      const nextFinal  = prevFinal.add(next.ingresoQty as number).sub(next.salidaQty as number);
+      const nextTotalBs = nextFinal.mul(next.precioUnit as number);
+
+      await (prisma.saldoMensual.update as any)({
+        where: { id: next.id },
+        data: { saldoInicial: prevFinal, saldoFinal: nextFinal, totalBs: nextTotalBs },
+      });
+
+      prevFinal = nextFinal;
+      mesesCascadeados++;
+    }
+  }
 
   await prisma.log.create({
     data: {
       usuarioId: userId,
-      accion: "AJUSTE_TOTAL_BS_INICIAL_SALDO_MENSUAL",
-      data: JSON.parse(JSON.stringify({
-        id,
-        totalBsInicialAnterior: existing.totalBsInicial !== null ? Number(existing.totalBsInicial) : null,
-        totalBsInicialNuevo: totalBsInicial,
-      })),
+      accion: "AJUSTE_CAMPOS_SALDO_MENSUAL",
+      data: JSON.parse(JSON.stringify({ id, campos, mesesCascadeados })),
     },
   });
 
+  logger.info({ id, campos, mesesCascadeados }, "Ajuste campos saldo mensual");
   return {
     id,
     productoCodigo: existing.producto.codigo,
     productoNombre: existing.producto.nombre,
     anio: existing.anio,
     mes: existing.mes,
-    saldoInicial: Number(existing.saldoInicial),
-    precioUnit: Number(existing.precioUnit),
-    totalBsInicialAnterior: existing.totalBsInicial !== null ? Number(existing.totalBsInicial) : null,
-    totalBsInicialNuevo: totalBsInicial,
+    camposActualizados: Object.keys(campos).filter(k => campos[k as keyof CamposSaldoMensual] !== undefined),
+    mesesCascadeados,
   };
 }
 
-// ─── Saldo mensual – ajuste masivo de totalBsInicial desde Excel ─────────────
-// Excel: columna "codigo" y columna "totalBsInicial"
-// Se aplica a todos los productos del mes que matcheen por código.
+// Aliases para compatibilidad con el controller
+export const ajustarTotalBsSaldoMensual        = (id: string, data: CamposSaldoMensual, userId: number) => ajustarCamposSaldoMensual(id, data, userId);
+export const ajustarTotalBsInicialSaldoMensual = (id: string, totalBsInicial: number, userId: number)   => ajustarCamposSaldoMensual(id, { totalBsInicial }, userId);
+
+// ─── Saldo mensual – ajuste masivo desde Excel ───────────────────────────────
+// Columna obligatoria: "codigo" (código del producto)
+// Columnas opcionales (cualquier combinación):
+//   "totalBsInicial" — monto de apertura en Bs (override)
+//   "precioUnit"     — precio unitario (recalcula totalBs automáticamente)
+//   "saldoInicial"   — cantidad de apertura (recalcula saldoFinal + cascade)
+// Los nombres de columna son insensibles a mayúsculas/tildes/espacios.
 // Funciona en períodos cerrados. Solo ADMIN.
 
 export interface AjusteInicialExcelFila {
   fila: number;
   codigo: string;
-  totalBsInicial: number | null;
+  campos: Record<string, number>;
   ok: boolean;
-  anterior?: number | null;
   error?: string;
+}
+
+function parseExcelNum(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") {
+    const s = raw.trim().replace(/\s/g, "");
+    // Detectar formato europeo: separador de miles "." y decimal ","
+    // Patrón: dígitos con puntos cada 3 + coma final → europeo
+    if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+      return parseFloat(s.replace(/\./g, "").replace(",", "."));
+    }
+    // Formato americano (comas como miles) o número simple
+    return parseFloat(s.replace(/,/g, ""));
+  }
+  return NaN;
+}
+
+function normKey(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[\s_-]/g, "");
+}
+
+function findCol(row: Record<string, unknown>, ...aliases: string[]): unknown {
+  const normAliases = aliases.map(normKey);
+  for (const [key, val] of Object.entries(row)) {
+    if (normAliases.includes(normKey(key))) return val;
+  }
+  return undefined;
 }
 
 export async function ajustarTotalBsInicialDesdeExcel(
@@ -669,39 +694,66 @@ export async function ajustarTotalBsInicialDesdeExcel(
     const row = rows[i]!;
     const fila = i + 2;
 
-    const rawCodigo = row["codigo"] ?? row["CODIGO"] ?? row["Codigo"];
-    const rawTotal  = row["totalBsInicial"] ?? row["TOTALBSINICIAL"] ?? row["TotalBsInicial"] ?? row["total_bs_inicial"];
-
-    const codigo = typeof rawCodigo === "string" ? rawCodigo.trim() : String(rawCodigo ?? "").trim();
-    const totalBsInicial = typeof rawTotal === "number"
-      ? rawTotal
-      : typeof rawTotal === "string"
-        ? parseFloat(rawTotal.replace(/,/g, ""))
-        : NaN;
+    const rawCodigo = findCol(row, "codigo", "cod", "code");
+    const codigo = typeof rawCodigo === "string"
+      ? rawCodigo.trim()
+      : String(rawCodigo ?? "").trim();
 
     if (!codigo) {
-      resultados.push({ fila, codigo: "", totalBsInicial: null, ok: false, error: "Falta el código de producto" });
+      resultados.push({ fila, codigo: "", campos: {}, ok: false, error: "Falta el código de producto" });
       continue;
     }
-    if (isNaN(totalBsInicial) || totalBsInicial < 0) {
-      resultados.push({ fila, codigo, totalBsInicial: null, ok: false, error: "totalBsInicial inválido o negativo" });
+
+    const campos: CamposSaldoMensual = {};
+
+    const rawTotalBsInicial = findCol(row, "totalBsInicial", "total_bs_inicial", "totalBsinicial", "monto inicial");
+    if (rawTotalBsInicial !== undefined) {
+      const v = parseExcelNum(rawTotalBsInicial);
+      if (isNaN(v) || v < 0) {
+        resultados.push({ fila, codigo, campos: {}, ok: false, error: "totalBsInicial inválido o negativo" });
+        continue;
+      }
+      campos.totalBsInicial = v;
+    }
+
+    const rawPrecioUnit = findCol(row, "precioUnit", "precio_unit", "preciounitario", "p. unit", "precio unitario", "precio");
+    if (rawPrecioUnit !== undefined) {
+      const v = parseExcelNum(rawPrecioUnit);
+      if (isNaN(v) || v <= 0) {
+        resultados.push({ fila, codigo, campos: {}, ok: false, error: "precioUnit inválido o no positivo" });
+        continue;
+      }
+      campos.precioUnit = v;
+    }
+
+    const rawSaldoInicial = findCol(row, "saldoInicial", "saldo_inicial", "saldoinicial", "saldo inicial", "cantidad inicial");
+    if (rawSaldoInicial !== undefined) {
+      const v = parseExcelNum(rawSaldoInicial);
+      if (isNaN(v) || v < 0) {
+        resultados.push({ fila, codigo, campos: {}, ok: false, error: "saldoInicial inválido o negativo" });
+        continue;
+      }
+      campos.saldoInicial = Math.round(v);
+    }
+
+    if (Object.keys(campos).length === 0) {
+      resultados.push({ fila, codigo, campos: {}, ok: false, error: "No se encontró ninguna columna de valor reconocida" });
       continue;
     }
 
     const saldo = await (prisma.saldoMensual.findFirst as any)({
       where: { anio, mes, producto: { codigo } },
-      select: { id: true, totalBsInicial: true },
-    }) as { id: string; totalBsInicial: unknown } | null;
+      select: { id: true },
+    }) as { id: string } | null;
 
     if (!saldo) {
-      resultados.push({ fila, codigo, totalBsInicial, ok: false, error: `Sin registro para ${codigo} en ${mes}/${anio}` });
+      resultados.push({ fila, codigo, campos: {}, ok: false, error: `Sin registro para ${codigo} en ${mes}/${anio}` });
       continue;
     }
 
-    const anterior = saldo.totalBsInicial !== null ? Number(saldo.totalBsInicial) : null;
-    await (prisma.saldoMensual.update as any)({ where: { id: saldo.id }, data: { totalBsInicial } });
+    await ajustarCamposSaldoMensual(saldo.id, campos, userId);
 
-    resultados.push({ fila, codigo, totalBsInicial, ok: true, anterior });
+    resultados.push({ fila, codigo, campos: campos as Record<string, number>, ok: true });
   }
 
   const exitosos = resultados.filter(r => r.ok).length;
@@ -710,12 +762,12 @@ export async function ajustarTotalBsInicialDesdeExcel(
   await prisma.log.create({
     data: {
       usuarioId: userId,
-      accion: "AJUSTE_TOTAL_BS_INICIAL_EXCEL",
+      accion: "AJUSTE_CAMPOS_EXCEL",
       data: { anio, mes, procesados: resultados.length, exitosos, fallidos },
     },
   });
 
-  logger.info({ anio, mes, exitosos, fallidos }, "Ajuste masivo totalBsInicial desde Excel");
+  logger.info({ anio, mes, exitosos, fallidos }, "Ajuste masivo campos saldo mensual desde Excel");
   return { procesados: resultados.length, exitosos, fallidos, resultados };
 }
 
@@ -1161,14 +1213,32 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
   const mesInicio = new Date(anio, mes - 1, 1);
   const mesFin = new Date(anio, mes, 1);
 
-  const movs = await prisma.movimiento.findMany({
-    where: {
-      OR: [
-        { createdAt: { gte: mesInicio, lt: mesFin }, esRetroactivo: false },
-        { esRetroactivo: true, periodoAnio: anio, periodoMes: mes },
-      ],
-    },
-    select: { productoId: true, tipo: true, cantidad: true, precioUnit: true },
+  const cierreMovWhere = {
+    OR: [
+      { createdAt: { gte: mesInicio, lt: mesFin }, esRetroactivo: false as const },
+      { esRetroactivo: true as const, periodoAnio: anio, periodoMes: mes },
+    ],
+  };
+
+  const [movsRaw, anulacionValeMovsCierre] = await Promise.all([
+    prisma.movimiento.findMany({
+      where: cierreMovWhere,
+      select: { productoId: true, tipo: true, cantidad: true, precioUnit: true, referencia: true, referenciaId: true },
+    }),
+    prisma.movimiento.findMany({
+      where: { referencia: "ANULACION_VALE", ...cierreMovWhere },
+      select: { referenciaId: true },
+    }),
+  ]);
+
+  const valesAnuladosIdsCierre = new Set(
+    anulacionValeMovsCierre.map(m => m.referenciaId).filter((id): id is string => id !== null),
+  );
+  // Excluir: ANULACION_VALE ENTRADAs (no son compras reales) y SALIDAs de vales anulados
+  const movs = movsRaw.filter(m => {
+    if (m.referencia === "ANULACION_VALE") return false;
+    if (m.tipo === "SALIDA" && m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsCierre.has(m.referenciaId)) return false;
+    return true;
   });
 
   const byProducto = new Map<number, { ingresoQty: Prisma.Decimal; salidaQty: Prisma.Decimal; precioUnit: Prisma.Decimal; ingresosBs: Prisma.Decimal }>();
@@ -1429,21 +1499,35 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
     ],
   };
 
-  const [saldos, entradasMovs, salidasMovs] = await Promise.all([
+  const [saldos, entradasMovs, salidasMovsRaw, anulacionValeMovs] = await Promise.all([
     prisma.saldoMensual.findMany({
       where: { anio, mes },
       include: { producto: { include: { categoria: { include: { parent: true } } } } },
       orderBy: { producto: { codigo: "asc" } },
     }),
+    // Excluir reversas de vales anulados — no son ingresos reales
     prisma.movimiento.findMany({
-      where: { tipo: "ENTRADA", ...movFilter },
+      where: { tipo: "ENTRADA", referencia: { not: "ANULACION_VALE" }, ...movFilter },
       select: { productoId: true, cantidad: true, entradaBs: true },
     }),
     prisma.movimiento.findMany({
       where: { tipo: "SALIDA", ...movFilter },
-      select: { productoId: true, cantidad: true },
+      select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+    }),
+    prisma.movimiento.findMany({
+      where: { referencia: "ANULACION_VALE", ...movFilter },
+      select: { referenciaId: true },
     }),
   ]);
+
+  // IDs de vales cuya entrega fue revertida en este período
+  const valesAnuladosIdsPreview = new Set(
+    anulacionValeMovs.map(m => m.referenciaId).filter((id): id is string => id !== null),
+  );
+  // Excluir SALIDAs de vales que fueron anulados (la reversa ANULACION_VALE ya fue excluida arriba)
+  const salidasMovs = salidasMovsRaw.filter(
+    m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsPreview.has(m.referenciaId)),
+  );
 
   // Mapa productoId → entradas (cantidad y Bs para precio promedio)
   const entradaMap = new Map<number, { totalBsEntrada: number; qty: number }>();
@@ -1455,7 +1539,7 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
     e.qty            += Number(mov.cantidad);
   }
 
-  // Mapa productoId → salidas (cantidad real desde Movimiento, no desde SaldoMensual)
+  // Mapa productoId → salidas (cantidad real desde Movimiento, sin vales anulados)
   const salidaMap = new Map<number, number>();
   for (const mov of salidasMovs) {
     salidaMap.set(mov.productoId, (salidaMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
