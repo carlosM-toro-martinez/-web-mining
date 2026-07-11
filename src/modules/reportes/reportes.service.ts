@@ -1497,7 +1497,6 @@ export const reportesService = {
             },
             include: {
               cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
-              producto: { select: { nombre: true, unidad: true } },
             },
           }),
           prisma.movimiento.findMany({
@@ -1613,18 +1612,20 @@ export const reportesService = {
 
         const totalSalidasHaber = Math.round(sectoresHaber.reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
 
-        // ── Agrupación por CuentaContable.codigoCompleto (para la imagen "Movimiento Almacenes") ──
+        // ── Agrupación por CuentaContable.codigoCompleto ──────────────────
         // Cada codigoCompleto = una línea de HABER en el diario.
-        // Si tiene sector (vehículo) → filas individuales de producto (transporte).
-        // Si no tiene sector → sub-líneas por funcionGasto (producción, obras, ambiente).
-        type FgHaberEntry = { codigo: string; nombre: string; totalBs: number };
+        // - No-transporte: sub-líneas por funcionGasto, con todos los centroCosto involucrados.
+        //   El frontend usa subCentro como código de línea (imagen 1) o
+        //   subCuentas.sort().join("-") + "-" + subCentro como "No DE CUENTA" (imagen 2).
+        // - Transporte: solo total (las imágenes no muestran detalle de vehículos aquí).
+        type LinHaberEntry = { subCentro: string; nombre: string; importeBs: number; subCuentas: string[] };
         type CcHaberEntry = {
           codigoCompleto:    string;
           centroCostoCodigo: string;
           centroCostoNombre: string;
+          sectorNombre:      string | null;
           esTransporte:      boolean;
-          funcionGastos:     Map<string, FgHaberEntry>;
-          detalles:          Array<{ productoNombre: string; unidad: string; cantidad: number; importeBs: number; vehiculo: string | null }>;
+          lineas:            Map<string, LinHaberEntry>;
           totalBs:           number;
           totalCantidad:     number;
         };
@@ -1642,9 +1643,9 @@ export const reportesService = {
               codigoCompleto:    cc,
               centroCostoCodigo: mov.cuenta.centroCosto.codigo,
               centroCostoNombre: mov.cuenta.centroCosto.nombre,
+              sectorNombre:      mov.cuenta.sector?.nombre ?? null,
               esTransporte,
-              funcionGastos:  new Map(),
-              detalles:       [],
+              lineas:         new Map(),
               totalBs:        0,
               totalCantidad:  0,
             });
@@ -1653,20 +1654,16 @@ export const reportesService = {
           ccEntry.totalBs += importeBs;
 
           if (esTransporte) {
-            ccEntry.detalles.push({
-              productoNombre: (mov as any).producto?.nombre ?? "",
-              unidad:         (mov as any).producto?.unidad ?? "",
-              cantidad:       Number(mov.cantidad),
-              importeBs:      Math.round(importeBs * 100) / 100,
-              vehiculo:       mov.cuenta.sector?.nombre ?? null,
-            });
             ccEntry.totalCantidad += Number(mov.cantidad);
           } else {
-            const fgCodigo = mov.cuenta.funcionGasto.codigo;
-            if (!ccEntry.funcionGastos.has(fgCodigo)) {
-              ccEntry.funcionGastos.set(fgCodigo, { codigo: fgCodigo, nombre: mov.cuenta.funcionGasto.nombre, totalBs: 0 });
+            const subCuenta = mov.cuenta.centroCosto.codigo;
+            const subCentro = mov.cuenta.funcionGasto.codigo;
+            if (!ccEntry.lineas.has(subCentro)) {
+              ccEntry.lineas.set(subCentro, { subCentro, nombre: mov.cuenta.funcionGasto.nombre, importeBs: 0, subCuentas: [] });
             }
-            ccEntry.funcionGastos.get(fgCodigo)!.totalBs += importeBs;
+            const lin = ccEntry.lineas.get(subCentro)!;
+            lin.importeBs += importeBs;
+            if (!lin.subCuentas.includes(subCuenta)) lin.subCuentas.push(subCuenta);
           }
         }
 
@@ -1677,17 +1674,22 @@ export const reportesService = {
               codigoCompleto:    entry.codigoCompleto,
               centroCostoCodigo: entry.centroCostoCodigo,
               centroCostoNombre: entry.centroCostoNombre,
+              sectorNombre:      entry.sectorNombre,
               esTransporte:      entry.esTransporte,
               totalBs:           Math.round(entry.totalBs * 100) / 100,
             };
             if (entry.esTransporte) {
-              return { ...base, totalCantidad: entry.totalCantidad, detalles: entry.detalles };
+              return { ...base, totalCantidad: entry.totalCantidad };
             }
             return {
               ...base,
-              funcionGastos: [...entry.funcionGastos.values()]
-                .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }))
-                .map((fg) => ({ ...fg, totalBs: Math.round(fg.totalBs * 100) / 100 })),
+              lineas: [...entry.lineas.values()]
+                .map((l) => ({
+                  ...l,
+                  importeBs:  Math.round(l.importeBs * 100) / 100,
+                  subCuentas: [...l.subCuentas].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+                }))
+                .sort((a, b) => a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true })),
             };
           });
         // ────────────────────────────────────────────────────────────────────
