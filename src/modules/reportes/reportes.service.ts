@@ -40,6 +40,14 @@ function generarRangoDeMeses(anioInicio: number, mesInicio: number, anioFin: num
   return meses;
 }
 
+// Calcula el monto sin IVA (13%) evitando errores de punto flotante en el límite exacto de .5.
+// Técnica: primero redondea el impuesto (donde 0.13_fp > 0.13 hace que el límite redondee arriba),
+// luego resta al total. Esto da el resultado matemático correcto en todos los casos.
+function menos13(total: number): number {
+  const iva = Math.round(total * 0.13 * 100) / 100;
+  return Math.round((total - iva) * 100) / 100;
+}
+
 export const reportesService = {
   async getBinCard(query: BinCardQueryDTO) {
     const where: any = {};
@@ -576,16 +584,17 @@ export const reportesService = {
           entry.saldoFinal        += saldoInicialBs + ingresos.bs - salidas.bs;
         }
 
-        const grupos = [...grupoMap.values()].sort((a, b) =>
-          a.grupoCodigo.localeCompare(b.grupoCodigo),
-        );
+        // ingresoMateriales se muestra sin IVA (13%) para coincidir con el cuadro contable
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
+          .map(g => ({ ...g, ingresoMateriales: menos13(g.ingresoMateriales) }));
 
         const totales = grupos.reduce(
           (acc, g) => ({
-            saldoInicial: acc.saldoInicial + g.saldoInicial,
-            ingresoMateriales: acc.ingresoMateriales + g.ingresoMateriales,
-            salidaMateriales: acc.salidaMateriales + g.salidaMateriales,
-            saldoFinal: acc.saldoFinal + g.saldoFinal,
+            saldoInicial:       acc.saldoInicial       + g.saldoInicial,
+            ingresoMateriales:  acc.ingresoMateriales  + g.ingresoMateriales,
+            salidaMateriales:   acc.salidaMateriales   + g.salidaMateriales,
+            saldoFinal:         acc.saldoFinal         + g.saldoFinal,
           }),
           { saldoInicial: 0, ingresoMateriales: 0, salidaMateriales: 0, saldoFinal: 0 },
         );
@@ -857,7 +866,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsEntrada:         Math.round(g.totalBsEntrada * 100) / 100,
-            totalBsEntradaMenos13:  Math.floor(g.totalBsEntrada * 0.87 * 100) / 100,
+            totalBsEntradaMenos13:  menos13(g.totalBsEntrada),
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -867,7 +876,7 @@ export const reportesService = {
           }));
 
         const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsEntrada, 0) * 100) / 100;
-        const totalGeneralMenos13 = Math.floor(totalGeneral * 0.87 * 100) / 100;
+        const totalGeneralMenos13 = menos13(totalGeneral);
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -991,7 +1000,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsSalida:        Math.round(g.totalBsSalida * 100) / 100,
-            totalBsSalidaMenos13: Math.floor(g.totalBsSalida * 0.87 * 100) / 100,
+            totalBsSalidaMenos13: menos13(g.totalBsSalida),
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -1001,7 +1010,7 @@ export const reportesService = {
           }));
 
         const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsSalida, 0) * 100) / 100;
-        const totalGeneralMenos13 = Math.floor(totalGeneral * 0.87 * 100) / 100;
+        const totalGeneralMenos13 = menos13(totalGeneral);
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -1278,7 +1287,8 @@ export const reportesService = {
               ...detalleMesFilter,
             },
             include: {
-              cuenta: { include: { centroCosto: true, funcionGasto: true } },
+              cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
+              producto: { select: { nombre: true, unidad: true } },
             },
           }),
           prisma.saldoMensual.findMany({
@@ -1339,7 +1349,99 @@ export const reportesService = {
 
         const totalGeneral = Math.round(lineas.reduce((acc, l) => acc + l.importeBs, 0) * 100) / 100;
 
-        return { anio, mes, esCerrado, lineas, subtotalesPorSubCentro, totalGeneral };
+        // ── Agrupación por CuentaContable (codigoCompleto) ──────────────────
+        // Cada CuentaContable es una "sección" del reporte de detalle de materiales.
+        // Si tiene sector (vehículo) → formato transporte con filas individuales.
+        // Si no tiene sector → formato agregado por subCuenta × subCentro.
+        type DetalleEntry = { productoNombre: string; unidad: string; cantidad: number; importeBs: number; vehiculo: string | null };
+        type LinDetalle = { subCuenta: string; subCentro: string; subCentroNombre: string; importeBs: number };
+        type CuentaDetalleEntry = {
+          codigoCompleto: string;
+          centroCostoCodigo: string;
+          centroCostoNombre: string;
+          funcionGastoCodigo: string;
+          funcionGastoNombre: string;
+          vehiculo: string | null;
+          esTransporte: boolean;
+          detalles: DetalleEntry[];
+          lineas: Map<string, LinDetalle>;
+          totalBs: number;
+          totalCantidad: number;
+        };
+        const cuentaDetalleMap = new Map<string, CuentaDetalleEntry>();
+
+        for (const mov of movimientos) {
+          if (!mov.cuenta) continue;
+          const precio = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const importeBs = Number(mov.cantidad) * precio;
+          const cc = mov.cuenta.codigoCompleto;
+          const esTransporte = mov.cuenta.sectorId !== null;
+
+          if (!cuentaDetalleMap.has(cc)) {
+            cuentaDetalleMap.set(cc, {
+              codigoCompleto: cc,
+              centroCostoCodigo: mov.cuenta.centroCosto.codigo,
+              centroCostoNombre: mov.cuenta.centroCosto.nombre,
+              funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
+              funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
+              vehiculo: mov.cuenta.sector?.nombre ?? null,
+              esTransporte,
+              detalles: [],
+              lineas: new Map(),
+              totalBs: 0,
+              totalCantidad: 0,
+            });
+          }
+          const ccEntry = cuentaDetalleMap.get(cc)!;
+          ccEntry.totalBs += importeBs;
+
+          if (esTransporte) {
+            ccEntry.detalles.push({
+              productoNombre: (mov as any).producto?.nombre ?? "",
+              unidad: (mov as any).producto?.unidad ?? "",
+              cantidad: Number(mov.cantidad),
+              importeBs: Math.round(importeBs * 100) / 100,
+              vehiculo: mov.cuenta.sector?.nombre ?? null,
+            });
+            ccEntry.totalCantidad += Number(mov.cantidad);
+          } else {
+            const subCuenta = mov.cuenta.centroCosto.codigo;
+            const subCentro = mov.cuenta.funcionGasto.codigo;
+            const key = `${subCentro}|${subCuenta}`;
+            if (!ccEntry.lineas.has(key)) {
+              ccEntry.lineas.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
+            }
+            ccEntry.lineas.get(key)!.importeBs += importeBs;
+          }
+        }
+
+        const porCuenta = [...cuentaDetalleMap.values()]
+          .sort((a, b) => a.codigoCompleto.localeCompare(b.codigoCompleto))
+          .map((entry) => {
+            const base = {
+              codigoCompleto:    entry.codigoCompleto,
+              centroCostoCodigo: entry.centroCostoCodigo,
+              centroCostoNombre: entry.centroCostoNombre,
+              funcionGastoCodigo: entry.funcionGastoCodigo,
+              funcionGastoNombre: entry.funcionGastoNombre,
+              vehiculo:          entry.vehiculo,
+              esTransporte:      entry.esTransporte,
+              totalBs:           Math.round(entry.totalBs * 100) / 100,
+            };
+            if (entry.esTransporte) {
+              return { ...base, totalCantidad: entry.totalCantidad, detalles: entry.detalles };
+            }
+            const lins = [...entry.lineas.values()]
+              .map((l) => ({ ...l, importeBs: Math.round(l.importeBs * 100) / 100 }))
+              .sort((a, b) => {
+                const c = a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true });
+                return c !== 0 ? c : a.subCuenta.localeCompare(b.subCuenta, undefined, { numeric: true });
+              });
+            return { ...base, lineas: lins };
+          });
+        // ────────────────────────────────────────────────────────────────────
+
+        return { anio, mes, esCerrado, lineas, subtotalesPorSubCentro, totalGeneral, porCuenta };
       }),
     );
 
@@ -1395,6 +1497,7 @@ export const reportesService = {
             },
             include: {
               cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
+              producto: { select: { nombre: true, unidad: true } },
             },
           }),
           prisma.movimiento.findMany({
@@ -1510,13 +1613,96 @@ export const reportesService = {
 
         const totalSalidasHaber = Math.round(sectoresHaber.reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
 
+        // ── Agrupación por CuentaContable.codigoCompleto (para la imagen "Movimiento Almacenes") ──
+        // Cada codigoCompleto = una línea de HABER en el diario.
+        // Si tiene sector (vehículo) → filas individuales de producto (transporte).
+        // Si no tiene sector → sub-líneas por funcionGasto (producción, obras, ambiente).
+        type FgHaberEntry = { codigo: string; nombre: string; totalBs: number };
+        type CcHaberEntry = {
+          codigoCompleto:    string;
+          centroCostoCodigo: string;
+          centroCostoNombre: string;
+          esTransporte:      boolean;
+          funcionGastos:     Map<string, FgHaberEntry>;
+          detalles:          Array<{ productoNombre: string; unidad: string; cantidad: number; importeBs: number; vehiculo: string | null }>;
+          totalBs:           number;
+          totalCantidad:     number;
+        };
+        const ccHaberMap = new Map<string, CcHaberEntry>();
+
+        for (const mov of movimientos) {
+          if (!mov.cuenta) continue;
+          const precio    = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const importeBs = Number(mov.cantidad) * precio;
+          const cc        = mov.cuenta.codigoCompleto;
+          const esTransporte = mov.cuenta.sectorId !== null;
+
+          if (!ccHaberMap.has(cc)) {
+            ccHaberMap.set(cc, {
+              codigoCompleto:    cc,
+              centroCostoCodigo: mov.cuenta.centroCosto.codigo,
+              centroCostoNombre: mov.cuenta.centroCosto.nombre,
+              esTransporte,
+              funcionGastos:  new Map(),
+              detalles:       [],
+              totalBs:        0,
+              totalCantidad:  0,
+            });
+          }
+          const ccEntry = ccHaberMap.get(cc)!;
+          ccEntry.totalBs += importeBs;
+
+          if (esTransporte) {
+            ccEntry.detalles.push({
+              productoNombre: (mov as any).producto?.nombre ?? "",
+              unidad:         (mov as any).producto?.unidad ?? "",
+              cantidad:       Number(mov.cantidad),
+              importeBs:      Math.round(importeBs * 100) / 100,
+              vehiculo:       mov.cuenta.sector?.nombre ?? null,
+            });
+            ccEntry.totalCantidad += Number(mov.cantidad);
+          } else {
+            const fgCodigo = mov.cuenta.funcionGasto.codigo;
+            if (!ccEntry.funcionGastos.has(fgCodigo)) {
+              ccEntry.funcionGastos.set(fgCodigo, { codigo: fgCodigo, nombre: mov.cuenta.funcionGasto.nombre, totalBs: 0 });
+            }
+            ccEntry.funcionGastos.get(fgCodigo)!.totalBs += importeBs;
+          }
+        }
+
+        const cuentasHaber = [...ccHaberMap.values()]
+          .sort((a, b) => a.codigoCompleto.localeCompare(b.codigoCompleto))
+          .map((entry) => {
+            const base = {
+              codigoCompleto:    entry.codigoCompleto,
+              centroCostoCodigo: entry.centroCostoCodigo,
+              centroCostoNombre: entry.centroCostoNombre,
+              esTransporte:      entry.esTransporte,
+              totalBs:           Math.round(entry.totalBs * 100) / 100,
+            };
+            if (entry.esTransporte) {
+              return { ...base, totalCantidad: entry.totalCantidad, detalles: entry.detalles };
+            }
+            return {
+              ...base,
+              funcionGastos: [...entry.funcionGastos.values()]
+                .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }))
+                .map((fg) => ({ ...fg, totalBs: Math.round(fg.totalBs * 100) / 100 })),
+            };
+          });
+        // ────────────────────────────────────────────────────────────────────
+
+        const comprasImporteBsRedondeado = Math.round(comprasImporteBs * 100) / 100;
+
         return {
           anio, mes, esCerrado,
           saldoInventarioAnterior: Math.round(saldoInventarioAnterior * 100) / 100,
-          comprasImporteBs:        Math.round(comprasImporteBs * 100) / 100,
+          comprasImporteBs:        comprasImporteBsRedondeado,
+          comprasSinIva:           menos13(comprasImporteBsRedondeado),
           totalInventarioDebe:     Math.round(totalInventarioDebe * 100) / 100,
           sectoresHaber,
           totalSalidasHaber,
+          cuentasHaber,
         };
       }),
     );
