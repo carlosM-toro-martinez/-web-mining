@@ -156,8 +156,8 @@ model Stock {
   productoId        Int      @unique
   cantidad          Decimal  @db.Decimal(12, 2)
   cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
-  precioUnit        Decimal  @db.Decimal(12, 2)
-  precioProm        Decimal  @db.Decimal(12, 2)
+  precioUnit        Decimal  @db.Decimal(14, 6)
+  precioProm        Decimal  @db.Decimal(14, 6)
   updatedAt         DateTime @updatedAt
   producto          Producto @relation(fields: [productoId], references: [id])
 }
@@ -168,7 +168,7 @@ model Movimiento {
   productoId        Int
   tipo              TipoMovimiento
   cantidad          Decimal         @db.Decimal(12, 2)
-  precioUnit        Decimal         @db.Decimal(12, 2)
+  precioUnit        Decimal         @db.Decimal(14, 6)
   entradaBs         Decimal         @default(0) @db.Decimal(12, 2)
   salidaBs          Decimal         @default(0) @db.Decimal(12, 2)
   saldoBs           Decimal         @db.Decimal(12, 2)
@@ -251,7 +251,7 @@ model CompraItem {
   productoId       Int
   cantidadPedida   Decimal  @db.Decimal(12, 2)
   cantidadRecibida Decimal  @default(0) @db.Decimal(12, 2)
-  precioUnit       Decimal  @db.Decimal(12, 2)
+  precioUnit       Decimal  @db.Decimal(14, 6)
   compra           Compra   @relation(fields: [compraId], references: [id])
   producto         Producto @relation(fields: [productoId], references: [id])
 }
