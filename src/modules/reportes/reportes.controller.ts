@@ -6,6 +6,7 @@ import {
   valesResumenQuerySchema,
   comprasResumenQuerySchema,
   periodoRangoQuerySchema,
+  salidasDetalleQuerySchema,
 } from "./reportes.schema.js";
 import { HttpError } from "../../errors/http.error.js";
 
@@ -226,6 +227,20 @@ export const reportesController = {
         return res.status(400).json({ success: false, error: "Se requieren parámetros anioInicio, mesInicio, anioFin y mesFin válidos" });
       }
       const result = await reportesService.getAnulacionesSalidas(parsed.data);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });
+      else res.status(500).json({ error: "Error interno del servidor" });
+    }
+  },
+
+  async getSalidasDetalle(req: Request, res: Response) {
+    try {
+      const parsed = salidasDetalleQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Parámetros inválidos: " + parsed.error.message });
+      }
+      const result = await reportesService.getSalidasDetalle(parsed.data);
       res.json({ success: true, data: result });
     } catch (error) {
       if (error instanceof HttpError) res.status(error.statusCode).json({ error: error.message });

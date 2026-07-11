@@ -6,6 +6,7 @@ import type {
   ValesResumenQueryDTO,
   ComprasResumenQueryDTO,
   PeriodoRangoQueryDTO,
+  SalidasDetalleQueryDTO,
 } from "./reportes.schema.js";
 import type { BinCardItem, BinCardValoradoItem, StockItem } from "./reportes.types.js";
 
@@ -1711,6 +1712,107 @@ export const reportesService = {
 
     logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Diario almacenes generado");
     return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getSalidasDetalle(query: SalidasDetalleQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin, cuentaId, funcionGastoCodigo, sectorCodigo, centroCostoCodigo, sinCuenta } = query;
+
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+    const periodoOR = rangoMeses.flatMap(({ anio, mes }) => {
+      const s = new Date(Date.UTC(anio, mes - 1, 1));
+      const e = new Date(Date.UTC(anio, mes, 1));
+      return [
+        { periodoAnio: anio, periodoMes: mes },
+        { periodoAnio: null as null, createdAt: { gte: s, lt: e } },
+      ];
+    });
+
+    const [movimentosRaw, anulaciones] = await Promise.all([
+      prisma.movimiento.findMany({
+        where: (() => {
+          const w: any = {
+            tipo: "SALIDA",
+            referencia: { not: "ANULACION_COMPRA" },
+            OR: periodoOR,
+          };
+          if (sinCuenta) {
+            w.cuentaId = null;
+          } else {
+            if (cuentaId) w.cuentaId = cuentaId;
+            const cf: any = {};
+            if (centroCostoCodigo) cf.centroCosto = { codigo: centroCostoCodigo };
+            if (funcionGastoCodigo) cf.funcionGasto = { codigo: funcionGastoCodigo };
+            if (sectorCodigo)       cf.sector       = { codigo: sectorCodigo };
+            if (Object.keys(cf).length > 0) w.cuenta = cf;
+          }
+          return w;
+        })(),
+        include: {
+          cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
+          producto: { select: { nombre: true, unidad: true, codigo: true } },
+          usuarioEntrega: { select: { nombre: true } },
+        },
+        orderBy: [{ periodoAnio: "asc" }, { periodoMes: "asc" }, { createdAt: "asc" }],
+      }),
+      prisma.movimiento.findMany({
+        where: { referencia: "ANULACION_VALE", OR: periodoOR },
+        select: { referenciaId: true },
+      }),
+    ]);
+
+    const valesAnuladosIds = new Set(
+      anulaciones.map(m => m.referenciaId).filter((id): id is string => id !== null),
+    );
+
+    const movimientos = movimentosRaw.filter(
+      m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIds.has(m.referenciaId)),
+    );
+
+    const items = movimientos.map(m => ({
+      id:             m.id,
+      fecha:          m.createdAt,
+      periodoAnio:    m.periodoAnio,
+      periodoMes:     m.periodoMes,
+      referencia:     m.referencia ?? null,
+      referenciaId:   m.referenciaId ?? null,
+      productoId:     m.productoId,
+      productoCodigo: m.producto.codigo,
+      productoNombre: m.producto.nombre,
+      productoUnidad: m.producto.unidad,
+      cantidad:       Number(m.cantidad),
+      precioUnit:     Number(m.precioUnit),
+      salidaBs:       Number(m.salidaBs),
+      cuenta: m.cuenta ? {
+        id:                 m.cuenta.id,
+        codigoCompleto:     m.cuenta.codigoCompleto,
+        centroCostoCodigo:  m.cuenta.centroCosto.codigo,
+        centroCostoNombre:  m.cuenta.centroCosto.nombre,
+        funcionGastoCodigo: m.cuenta.funcionGasto.codigo,
+        funcionGastoNombre: m.cuenta.funcionGasto.nombre,
+        sectorCodigo:       m.cuenta.sector?.codigo ?? null,
+        sectorNombre:       m.cuenta.sector?.nombre ?? null,
+      } : null,
+      usuarioEntrega: m.usuarioEntrega?.nombre ?? null,
+    }));
+
+    const totalBs              = Math.round(items.reduce((acc, m) => acc + m.salidaBs, 0) * 100) / 100;
+    const movimientosSinCuenta = items.filter(m => m.cuenta === null).length;
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Salidas detalle generado");
+    return {
+      anioInicio, mesInicio, anioFin, mesFin,
+      filtros: {
+        cuentaId:           cuentaId           ?? null,
+        funcionGastoCodigo: funcionGastoCodigo ?? null,
+        sectorCodigo:       sectorCodigo       ?? null,
+        centroCostoCodigo:  centroCostoCodigo  ?? null,
+        sinCuenta:          sinCuenta          ?? false,
+      },
+      totalMovimientos:   items.length,
+      movimientosSinCuenta,
+      totalBs,
+      movimientos:        items,
+    };
   },
 
   async getCuadroSuministros(query: PeriodoRangoQueryDTO) {

@@ -48,9 +48,22 @@ export const periodoRangoQuerySchema = z.object({
   mesFin: z.coerce.number().int().min(1).max(12),
 });
 
+export const salidasDetalleQuerySchema = z.object({
+  anioInicio:          z.coerce.number().int().min(2000),
+  mesInicio:           z.coerce.number().int().min(1).max(12),
+  anioFin:             z.coerce.number().int().min(2000),
+  mesFin:              z.coerce.number().int().min(1).max(12),
+  cuentaId:            z.coerce.number().int().optional(),
+  funcionGastoCodigo:  z.string().optional(),
+  sectorCodigo:        z.string().optional(),
+  centroCostoCodigo:   z.string().optional(),
+  sinCuenta:           z.string().optional().transform(v => v === "true"),
+});
+
 export type BinCardQueryDTO = z.infer<typeof binCardQuerySchema>;
 export type StockQueryDTO = z.infer<typeof stockQuerySchema>;
 export type ValesResumenQueryDTO = z.infer<typeof valesResumenQuerySchema>;
 export type ComprasResumenQueryDTO = z.infer<typeof comprasResumenQuerySchema>;
 export type PeriodoQueryDTO = z.infer<typeof periodoQuerySchema>;
 export type PeriodoRangoQueryDTO = z.infer<typeof periodoRangoQuerySchema>;
+export type SalidasDetalleQueryDTO = z.infer<typeof salidasDetalleQuerySchema>;

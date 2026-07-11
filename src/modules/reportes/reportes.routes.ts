@@ -57,4 +57,7 @@ router.get("/anulaciones-entradas", authorize("ADMIN", "ALMACENERO"), reportesCo
 // Anulaciones de salidas (vales anulados) por período
 router.get("/anulaciones-salidas", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), reportesController.getAnulacionesSalidas);
 
+// Salidas individuales auditables con filtros opcionales de cuenta contable
+router.get("/salidas-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getSalidasDetalle);
+
 export default router;
