@@ -1554,14 +1554,7 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const prevMes  = mes === 1 ? 12 : mes - 1;
-        const prevAnio = mes === 1 ? anio - 1 : anio;
-
-        const [saldosPrevMes, saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
-          (prisma.saldoMensual.findMany as any)({
-            where: { anio: prevAnio, mes: prevMes },
-            select: { totalBs: true },
-          }) as Promise<{ totalBs: unknown }[]>,
+        const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
             select: { productoId: true, precioUnit: true, saldoInicial: true, totalBsInicial: true },
@@ -1629,17 +1622,16 @@ export const reportesService = {
           [...compraAccDiario.entries()].map(([pid, { totalBs, qty }]) => [pid, qty > 0 ? totalBs / qty : 0]),
         );
 
-        // DEBE: saldo inventario anterior (prev month closing value)
-        // Usa totalBs almacenado (evita error de decimales truncados en precioUnit)
-        // Fallback: cuando no hay mes anterior, usa totalBsInicial si está seteado
-        const saldoInventarioAnterior = saldosPrevMes.length > 0
-          ? saldosPrevMes.reduce((acc, s) => acc + Number(s.totalBs), 0)
-          : saldosMesActual.reduce((acc, s) => {
-              const ini = s.totalBsInicial !== null && s.totalBsInicial !== undefined
-                ? Number(s.totalBsInicial)
-                : Number(s.saldoInicial) * Number(s.precioUnit);
-              return acc + ini;
-            }, 0);
+        // DEBE: saldo inventario al inicio del mes actual
+        // Usa totalBsInicial si está fijado; si no, saldoInicial × precioUnit del mes (con fallback a precio de compra)
+        const saldoInventarioAnterior = saldosMesActual.reduce((acc, s) => {
+          if (s.totalBsInicial !== null && s.totalBsInicial !== undefined) {
+            return acc + Number(s.totalBsInicial);
+          }
+          const _ps  = Number(s.precioUnit);
+          const precio = _ps > 0 ? _ps : (compraAvgDiario.get(s.productoId) ?? 0);
+          return acc + Number(s.saldoInicial) * precio;
+        }, 0);
 
         const comprasImporteBs = compraItemsRaw.reduce(
           (acc, item) => acc + Number(item.cantidadRecibida) * Number(item.precioUnit),
