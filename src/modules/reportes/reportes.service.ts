@@ -518,7 +518,7 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true, salidaBs: true, referencia: true, referenciaId: true },
+            select: { productoId: true, cantidad: true, precioUnit: true, referencia: true, referenciaId: true },
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...movFilter },
@@ -541,11 +541,23 @@ export const reportesService = {
           ingresoMap.set(item.productoId, e);
         }
 
+        // Precio del SaldoMensual de ese mes. Fallback al promedio de compras cuando precioUnit=0
+        // (ocurre en productos nuevos comprados y consumidos en el mismo mes con cierre incompleto).
+        const precioMesMap = new Map<number, number>(
+          registros.map((r: any) => {
+            const precio = Number(r.precioUnit);
+            if (precio > 0) return [r.productoId as number, precio];
+            const ing = ingresoMap.get(r.productoId as number);
+            return [r.productoId as number, ing && ing.qty > 0 ? ing.bs / ing.qty : 0];
+          }),
+        );
+
         const salidaMap = new Map<number, { qty: number; bs: number }>();
         for (const mov of salidasMovs) {
           const e = salidaMap.get(mov.productoId) ?? { qty: 0, bs: 0 };
+          const precioMes = precioMesMap.get(mov.productoId) ?? Number(mov.precioUnit);
           e.qty += Number(mov.cantidad);
-          e.bs  += Number(mov.salidaBs);
+          e.bs  += Number(mov.cantidad) * precioMes;
           salidaMap.set(mov.productoId, e);
         }
 
@@ -920,7 +932,7 @@ export const reportesService = {
           ],
         };
 
-        const [movimentosRaw, saldosMes, anulacionValeMovsSalidas] = await Promise.all([
+        const [movimentosRaw, saldosMes, anulacionValeMovsSalidas, compraItemsSalidas] = await Promise.all([
           prisma.movimiento.findMany({
             where: {
               tipo: "SALIDA",
@@ -941,6 +953,20 @@ export const reportesService = {
             where: { referencia: "ANULACION_VALE", ...salidaMovFilter },
             select: { referenciaId: true },
           }),
+          prisma.compraItem.findMany({
+            where: {
+              cantidadRecibida: { gt: 0 },
+              compra: {
+                estado: { not: "ANULADA" },
+                OR: [
+                  { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                  { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+                ],
+              },
+            },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+          }),
         ]);
 
         const valesAnuladosIdsSalidas = new Set(
@@ -950,8 +976,24 @@ export const reportesService = {
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsSalidas.has(m.referenciaId)),
         );
 
+        const compraAvgMapSalidas = new Map<number, number>();
+        for (const item of compraItemsSalidas) {
+          const e = compraAvgMapSalidas.get(item.productoId) ?? 0;
+          compraAvgMapSalidas.set(item.productoId, e + Number(item.cantidadRecibida) * Number(item.precioUnit));
+        }
+        const compraQtyMapSalidas = new Map<number, number>();
+        for (const item of compraItemsSalidas) {
+          compraQtyMapSalidas.set(item.productoId, (compraQtyMapSalidas.get(item.productoId) ?? 0) + Number(item.cantidadRecibida));
+        }
+
         const precioHistoricoMap = new Map<number, number>(
-          saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
+          saldosMes.map((s) => {
+            const precio = Number(s.precioUnit);
+            if (precio > 0) return [s.productoId, precio];
+            const totalBs = compraAvgMapSalidas.get(s.productoId) ?? 0;
+            const totalQty = compraQtyMapSalidas.get(s.productoId) ?? 0;
+            return [s.productoId, totalQty > 0 ? totalBs / totalQty : 0];
+          }),
         );
 
         // Agregar por producto
@@ -1336,7 +1378,7 @@ export const reportesService = {
           const subCuenta  = mov.cuenta.centroCosto.codigo;
           const subCentro  = mov.cuenta.funcionGasto.codigo;
           const key        = `${subCentro}|${subCuenta}`;
-          const precio     = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const precio     = precioMap.get(mov.productoId) || Number(mov.precioUnit);
 
           if (!lineaMap.has(key)) {
             lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
@@ -1388,7 +1430,7 @@ export const reportesService = {
 
         for (const mov of movimientos) {
           if (!mov.cuenta) continue;
-          const precio = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const precio = precioMap.get(mov.productoId) || Number(mov.precioUnit);
           const importeBs = Number(mov.cantidad) * precio;
           const cc = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
@@ -1567,7 +1609,7 @@ export const reportesService = {
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
-          const precio    = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const precio    = precioMap.get(mov.productoId) || Number(mov.precioUnit);
           const importeBs = Number(mov.cantidad) * precio;
           const sectorKey = mov.cuenta.sectorId ?? -1;
 
@@ -1649,7 +1691,7 @@ export const reportesService = {
 
         for (const mov of movimientos) {
           if (!mov.cuenta) continue;
-          const precio    = precioMap.get(mov.productoId) ?? Number(mov.precioUnit);
+          const precio    = precioMap.get(mov.productoId) || Number(mov.precioUnit);
           const importeBs = Number(mov.cantidad) * precio;
           const cc        = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
