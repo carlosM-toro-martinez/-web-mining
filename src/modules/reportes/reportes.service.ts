@@ -490,10 +490,18 @@ export const reportesService = {
         };
 
         const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovs] = await Promise.all([
-          prisma.saldoMensual.findMany({
+          (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
-            include: { producto: { include: { categoria: { include: { parent: true } } } } },
-          }),
+            select: {
+              productoId: true,
+              saldoInicial: true,
+              ingresoQty: true,
+              salidaQty: true,
+              precioUnit: true,
+              totalBsInicial: true,
+              producto: { select: { categoria: { select: { id: true, codigo: true, nombre: true, parent: { select: { id: true, codigo: true, nombre: true } } } } } },
+            },
+          }) as any[],
           prisma.compraItem.findMany({
             where: {
               cantidadRecibida: { gt: 0 },
@@ -573,9 +581,8 @@ export const reportesService = {
           const saldoInicial = Number(r.saldoInicial);
           const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
           const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
-          // totalBsInicial es un override manual para corregir precios irracionales truncados
-          const saldoInicialBs = (r as any).totalBsInicial !== null && (r as any).totalBsInicial !== undefined
-            ? Number((r as any).totalBsInicial)
+          const saldoInicialBs = r.totalBsInicial !== null && r.totalBsInicial !== undefined
+            ? Number(r.totalBsInicial)
             : saldoInicial * precioUnit;
 
           const entry = grupoMap.get(grupoId)!;
