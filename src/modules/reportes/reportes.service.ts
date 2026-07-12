@@ -671,7 +671,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -691,9 +691,17 @@ export const reportesService = {
         );
 
         const ingresoMap = new Map<number, number>();
+        const compraAccInv = new Map<number, { totalBs: number; qty: number }>();
         for (const item of compraItemsRaw) {
           ingresoMap.set(item.productoId, (ingresoMap.get(item.productoId) ?? 0) + Number(item.cantidadRecibida));
+          const e = compraAccInv.get(item.productoId) ?? { totalBs: 0, qty: 0 };
+          e.totalBs += Number(item.cantidadRecibida) * Number(item.precioUnit);
+          e.qty      += Number(item.cantidadRecibida);
+          compraAccInv.set(item.productoId, e);
         }
+        const compraAvgInv = new Map<number, number>(
+          [...compraAccInv.entries()].map(([pid, { totalBs, qty }]) => [pid, qty > 0 ? totalBs / qty : 0]),
+        );
 
         const salidaMap = new Map<number, number>();
         for (const mov of salidasMovs) {
@@ -752,7 +760,8 @@ export const reportesService = {
           const salidaQty    = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : Number(r.salidaQty);
           const saldoInicial = Number(r.saldoInicial);
           const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
-          const precioUnit   = Number(r.precioUnit);
+          const _precioSaldo = Number(r.precioUnit);
+          const precioUnit   = _precioSaldo > 0 ? _precioSaldo : (compraAvgInv.get(r.productoId) ?? 0);
           const totalBs      = saldoFinal * precioUnit;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
