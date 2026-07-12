@@ -585,10 +585,18 @@ export const reportesService = {
           entry.saldoFinal        += saldoInicialBs + ingresos.bs - salidas.bs;
         }
 
-        // ingresoMateriales se muestra sin IVA (13%) para coincidir con el cuadro contable
+        // ingresoMateriales se muestra sin IVA (13%) para coincidir con el cuadro contable.
+        // saldoFinal se recalcula con el ingreso ya sin IVA para que la ecuación cierre en pantalla.
         const grupos = [...grupoMap.values()]
           .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
-          .map(g => ({ ...g, ingresoMateriales: menos13(g.ingresoMateriales) }));
+          .map(g => {
+            const ingresoMateriales = menos13(g.ingresoMateriales);
+            return {
+              ...g,
+              ingresoMateriales,
+              saldoFinal: Math.round((g.saldoInicial + ingresoMateriales - g.salidaMateriales) * 100) / 100,
+            };
+          });
 
         const totales = grupos.reduce(
           (acc, g) => ({
