@@ -719,8 +719,8 @@ export async function ajustarTotalBsInicialDesdeExcel(
     const rawPrecioUnit = findCol(row, "precioUnit", "precio_unit", "preciounitario", "p. unit", "precio unitario", "precio");
     if (rawPrecioUnit !== undefined) {
       const v = parseExcelNum(rawPrecioUnit);
-      if (isNaN(v) || v <= 0) {
-        resultados.push({ fila, codigo, campos: {}, ok: false, error: "precioUnit inválido o no positivo" });
+      if (isNaN(v) || v < 0) {
+        resultados.push({ fila, codigo, campos: {}, ok: false, error: "precioUnit inválido (debe ser número >= 0)" });
         continue;
       }
       campos.precioUnit = v;

@@ -19,9 +19,9 @@ const JWT_SECRET = process.env.JWT_SECRET || "default_secret";
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || "refresh_secret";
 
 // Tiempos de expiración
-const ACCESS_TOKEN_EXPIRY = "8h"; // 3 horas
-const REFRESH_TOKEN_EXPIRY = "7d"; // 7 días
-const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 días en ms
+const ACCESS_TOKEN_EXPIRY = "30d";
+const REFRESH_TOKEN_EXPIRY = "365d";
+const REFRESH_TOKEN_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000; // 1 año en ms
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
