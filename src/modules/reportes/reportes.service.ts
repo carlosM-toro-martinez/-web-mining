@@ -593,15 +593,19 @@ export const reportesService = {
           const saldoInicial = Number(r.saldoInicial);
           const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
           const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
-          const saldoInicialBs = r.totalBsInicial !== null && r.totalBsInicial !== undefined
-            ? Number(r.totalBsInicial)
-            : saldoInicial * precioUnit;
+          // Redondear por producto antes de acumular (igual que saldos-iniciales)
+          // para evitar acumulación de errores de punto flotante en el total del grupo.
+          const saldoInicialBs  = r.totalBsInicial !== null && r.totalBsInicial !== undefined
+            ? Math.round(Number(r.totalBsInicial) * 100) / 100
+            : Math.round(saldoInicial * precioUnit * 100) / 100;
+          const ingresosBs      = Math.round(ingresos.bs * 100) / 100;
+          const salidasBs       = Math.round(salidas.bs * 100) / 100;
 
           const entry = grupoMap.get(grupoId)!;
           entry.saldoInicial      += saldoInicialBs;
-          entry.ingresoMateriales += ingresos.bs;
-          entry.salidaMateriales  += salidas.bs;
-          entry.saldoFinal        += saldoInicialBs + ingresos.bs - salidas.bs;
+          entry.ingresoMateriales += ingresosBs;
+          entry.salidaMateriales  += salidasBs;
+          entry.saldoFinal        += saldoInicialBs + ingresosBs - salidasBs;
         }
 
         // Entradas y salidas se muestran sin IVA (13%) para el cuadro contable.
