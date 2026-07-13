@@ -1425,7 +1425,7 @@ export const reportesService = {
           if (!lineaMap.has(key)) {
             lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
           }
-          lineaMap.get(key)!.importeBs += Number(mov.cantidad) * precio;
+          lineaMap.get(key)!.importeBs += menos13(Number(mov.cantidad) * precio);
         }
 
         const lineas = [...lineaMap.values()]
@@ -1474,7 +1474,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDetalle2 = precioMap.get(mov.productoId);
           const precio = (_psDetalle2 != null && _psDetalle2 > 0) ? _psDetalle2 : (compraAvgDetalle.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Number(mov.cantidad) * precio;
+          const importeBs = menos13(Number(mov.cantidad) * precio);
           const cc = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1658,7 +1658,7 @@ export const reportesService = {
           if (!mov.cuenta || !mov.cuentaId) continue;
           const _psDiario1 = precioMap.get(mov.productoId);
           const precio    = (_psDiario1 != null && _psDiario1 > 0) ? _psDiario1 : (compraAvgDiario.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Number(mov.cantidad) * precio;
+          const importeBs = menos13(Number(mov.cantidad) * precio);
           const sectorKey = mov.cuenta.sectorId ?? -1;
 
           if (!sectorMap.has(sectorKey)) {
@@ -1741,7 +1741,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDiario2 = precioMap.get(mov.productoId);
           const precio    = (_psDiario2 != null && _psDiario2 > 0) ? _psDiario2 : (compraAvgDiario.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Number(mov.cantidad) * precio;
+          const importeBs = menos13(Number(mov.cantidad) * precio);
           const cc        = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1821,7 +1821,7 @@ export const reportesService = {
   },
 
   async getSalidasDetalle(query: SalidasDetalleQueryDTO) {
-    const { anioInicio, mesInicio, anioFin, mesFin, cuentaId, funcionGastoCodigo, sectorCodigo, centroCostoCodigo, sinCuenta } = query;
+    const { anioInicio, mesInicio, anioFin, mesFin, cuentaId, funcionGastoCodigo, sectorCodigo, centroCostoCodigo, codigoCuenta, sinCuenta } = query;
 
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const periodoOR = rangoMeses.flatMap(({ anio, mes }) => {
@@ -1833,7 +1833,7 @@ export const reportesService = {
       ];
     });
 
-    const [movimentosRaw, anulaciones] = await Promise.all([
+    const [movimentosRaw, anulaciones, saldosRango] = await Promise.all([
       prisma.movimiento.findMany({
         where: (() => {
           const w: any = {
@@ -1846,9 +1846,10 @@ export const reportesService = {
           } else {
             if (cuentaId) w.cuentaId = cuentaId;
             const cf: any = {};
-            if (centroCostoCodigo) cf.centroCosto = { codigo: centroCostoCodigo };
-            if (funcionGastoCodigo) cf.funcionGasto = { codigo: funcionGastoCodigo };
-            if (sectorCodigo)       cf.sector       = { codigo: sectorCodigo };
+            if (centroCostoCodigo) cf.centroCosto      = { codigo: centroCostoCodigo };
+            if (funcionGastoCodigo) cf.funcionGasto    = { codigo: funcionGastoCodigo };
+            if (sectorCodigo)       cf.sector          = { codigo: sectorCodigo };
+            if (codigoCuenta)       cf.codigoCompleto  = { contains: codigoCuenta };
             if (Object.keys(cf).length > 0) w.cuenta = cf;
           }
           return w;
@@ -1864,7 +1865,19 @@ export const reportesService = {
         where: { referencia: "ANULACION_VALE", OR: periodoOR },
         select: { referenciaId: true },
       }),
+      // Precios del SaldoMensual para todos los meses del rango
+      prisma.saldoMensual.findMany({
+        where: { OR: rangoMeses.map(({ anio, mes }) => ({ anio, mes })) },
+        select: { productoId: true, anio: true, mes: true, precioUnit: true },
+      }),
     ]);
+
+    // key: `productoId_anio_mes` → precioUnit del SaldoMensual
+    const precioMesKey = (pid: number, anio: number, mes: number) => `${pid}_${anio}_${mes}`;
+    const precioMesMap = new Map<string, number>();
+    for (const s of saldosRango) {
+      precioMesMap.set(precioMesKey(s.productoId, s.anio, s.mes), Number(s.precioUnit));
+    }
 
     const valesAnuladosIds = new Set(
       anulaciones.map(m => m.referenciaId).filter((id): id is string => id !== null),
@@ -1874,32 +1887,41 @@ export const reportesService = {
       m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIds.has(m.referenciaId)),
     );
 
-    const items = movimientos.map(m => ({
-      id:             m.id,
-      fecha:          m.createdAt,
-      periodoAnio:    m.periodoAnio,
-      periodoMes:     m.periodoMes,
-      referencia:     m.referencia ?? null,
-      referenciaId:   m.referenciaId ?? null,
-      productoId:     m.productoId,
-      productoCodigo: m.producto.codigo,
-      productoNombre: m.producto.nombre,
-      productoUnidad: m.producto.unidad,
-      cantidad:       Number(m.cantidad),
-      precioUnit:     Number(m.precioUnit),
-      salidaBs:       Number(m.salidaBs),
-      cuenta: m.cuenta ? {
-        id:                 m.cuenta.id,
-        codigoCompleto:     m.cuenta.codigoCompleto,
-        centroCostoCodigo:  m.cuenta.centroCosto.codigo,
-        centroCostoNombre:  m.cuenta.centroCosto.nombre,
-        funcionGastoCodigo: m.cuenta.funcionGasto.codigo,
-        funcionGastoNombre: m.cuenta.funcionGasto.nombre,
-        sectorCodigo:       m.cuenta.sector?.codigo ?? null,
-        sectorNombre:       m.cuenta.sector?.nombre ?? null,
-      } : null,
-      usuarioEntrega: m.usuarioEntrega?.nombre ?? null,
-    }));
+    const items = movimientos.map(m => {
+      // Determinar el período del movimiento
+      const pAnio = m.periodoAnio ?? m.createdAt.getUTCFullYear();
+      const pMes  = m.periodoMes  ?? (m.createdAt.getUTCMonth() + 1);
+      // Precio: SaldoMensual del período → fallback al precio del movimiento
+      const precioSaldo = precioMesMap.get(precioMesKey(m.productoId, pAnio, pMes));
+      const precioUnit  = (precioSaldo != null && precioSaldo > 0) ? precioSaldo : Number(m.precioUnit);
+      const importeBs   = menos13(Math.round(Number(m.cantidad) * precioUnit * 100) / 100);
+      return {
+        id:             m.id,
+        fecha:          m.createdAt,
+        periodoAnio:    pAnio,
+        periodoMes:     pMes,
+        referencia:     m.referencia ?? null,
+        referenciaId:   m.referenciaId ?? null,
+        productoId:     m.productoId,
+        productoCodigo: m.producto.codigo,
+        productoNombre: m.producto.nombre,
+        productoUnidad: m.producto.unidad,
+        cantidad:       Number(m.cantidad),
+        precioUnit,
+        salidaBs:       importeBs,
+        cuenta: m.cuenta ? {
+          id:                 m.cuenta.id,
+          codigoCompleto:     m.cuenta.codigoCompleto,
+          centroCostoCodigo:  m.cuenta.centroCosto.codigo,
+          centroCostoNombre:  m.cuenta.centroCosto.nombre,
+          funcionGastoCodigo: m.cuenta.funcionGasto.codigo,
+          funcionGastoNombre: m.cuenta.funcionGasto.nombre,
+          sectorCodigo:       m.cuenta.sector?.codigo ?? null,
+          sectorNombre:       m.cuenta.sector?.nombre ?? null,
+        } : null,
+        usuarioEntrega: m.usuarioEntrega?.nombre ?? null,
+      };
+    });
 
     const totalBs              = Math.round(items.reduce((acc, m) => acc + m.salidaBs, 0) * 100) / 100;
     const movimientosSinCuenta = items.filter(m => m.cuenta === null).length;
@@ -1912,6 +1934,7 @@ export const reportesService = {
         funcionGastoCodigo: funcionGastoCodigo ?? null,
         sectorCodigo:       sectorCodigo       ?? null,
         centroCostoCodigo:  centroCostoCodigo  ?? null,
+        codigoCuenta:       codigoCuenta       ?? null,
         sinCuenta:          sinCuenta          ?? false,
       },
       totalMovimientos:   items.length,

@@ -57,6 +57,7 @@ export const salidasDetalleQuerySchema = z.object({
   funcionGastoCodigo:  z.string().optional(),
   sectorCodigo:        z.string().optional(),
   centroCostoCodigo:   z.string().optional(),
+  codigoCuenta:        z.string().optional(), // busca por contains en codigoCompleto, ej: "2801-236-22 001 008"
   sinCuenta:           z.string().optional().transform(v => v === "true"),
 });
 
