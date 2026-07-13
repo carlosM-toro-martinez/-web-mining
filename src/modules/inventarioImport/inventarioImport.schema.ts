@@ -132,7 +132,7 @@ export const ajusteCamposSaldoMensualSchema = z
     totalBs:        z.number().nonnegative().optional(),
     totalBsProm:    z.number().nonnegative().optional(),
     totalBsInicial: z.number().nonnegative().optional(),
-    precioUnit:     z.number().positive().optional(),
+    precioUnit:     z.number().nonnegative().optional(),
     saldoInicial:   z.number().int().nonnegative().optional(),
   })
   .refine(
