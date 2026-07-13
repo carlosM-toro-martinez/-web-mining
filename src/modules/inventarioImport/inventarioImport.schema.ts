@@ -154,6 +154,39 @@ export const ajusteInicialExcelQuerySchema = z.object({
   mes: z.coerce.number().int().min(1).max(12),
 });
 
+// ─── Ajuste masivo por mes (sin movimientos) ─────────────────────────────────
+
+const ajusteProductoItemSchema = z
+  .object({
+    productoId:    z.number().int().positive().optional(),
+    productoCodigo: z.string().min(1).optional(),
+    precioUnit:    z.number().positive().optional(),
+    saldoInicial:  z.number().int().nonnegative().optional(),
+    saldoFinal:    z.number().int().nonnegative().optional(),
+    ingresoQty:    z.number().int().nonnegative().optional(),
+    salidaQty:     z.number().int().nonnegative().optional(),
+    totalBs:       z.number().nonnegative().optional(),
+    totalBsInicial: z.number().nonnegative().optional(),
+  })
+  .refine(
+    (d) => d.productoId !== undefined || d.productoCodigo !== undefined,
+    { message: "Debe proporcionarse productoId o productoCodigo" },
+  )
+  .refine(
+    (d) =>
+      d.precioUnit    !== undefined || d.saldoInicial  !== undefined ||
+      d.saldoFinal    !== undefined || d.ingresoQty    !== undefined ||
+      d.salidaQty     !== undefined || d.totalBs       !== undefined ||
+      d.totalBsInicial !== undefined,
+    { message: "Debe proporcionarse al menos un campo a ajustar" },
+  );
+
+export const ajusteProductosMesSchema = z.object({
+  anio:      z.number().int().min(2000).max(2100),
+  mes:       z.number().int().min(1).max(12),
+  productos: z.array(ajusteProductoItemSchema).min(1),
+});
+
 // ─── Sincronizar stock ────────────────────────────────────────────────────────
 
 export const sincronizarStockSchema = z

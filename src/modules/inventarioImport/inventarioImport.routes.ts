@@ -219,4 +219,15 @@ router.post(
   inventarioImportController.recalcularPreciosProm,
 );
 
+// ─── Ajuste masivo de SaldoMensual por mes ────────────────────────────────────
+// POST /api/inventario-import/ajuste-productos-mes
+// Body: { anio, mes, productos: [{ productoId | productoCodigo, precioUnit?, saldoInicial?,
+//         saldoFinal?, ingresoQty?, salidaQty?, totalBs?, totalBsInicial? }] }
+// Solo ADMIN. Rechaza productos que tengan movimientos en ese mes.
+router.post(
+  "/ajuste-productos-mes",
+  authorize("ADMIN"),
+  inventarioImportController.ajusteProductosMes,
+);
+
 export default router;

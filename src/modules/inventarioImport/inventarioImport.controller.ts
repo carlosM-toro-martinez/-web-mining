@@ -23,6 +23,7 @@ import {
   recalcularPreciosProm,
   ajustarCamposSaldoMensual,
   ajustarTotalBsInicialDesdeExcel,
+  ajusteProductosMes,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -39,6 +40,7 @@ import {
   cerrarMesSchema,
   ajusteCamposSaldoMensualSchema,
   ajusteInicialExcelQuerySchema,
+  ajusteProductosMesSchema,
 } from "./inventarioImport.schema.js";
 
 export const inventarioImportController = {
@@ -389,6 +391,24 @@ export const inventarioImportController = {
       }
       const data = await ajustarCamposSaldoMensual(paramParsed.data.id, bodyParsed.data, req.user!.id);
       res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Ajuste masivo de SaldoMensual por mes ───────────────────────────────
+
+  async ajusteProductosMes(req: AuthRequest, res: Response) {
+    try {
+      const parsed = ajusteProductosMesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const { anio, mes, productos } = parsed.data;
+      const data = await ajusteProductosMes(anio, mes, productos as Parameters<typeof ajusteProductosMes>[2]);
+      const hayErrores = data.some((r) => !r.ok);
+      res.status(hayErrores ? 207 : 200).json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
       res.status(status).json({ success: false, error: (error as Error).message });

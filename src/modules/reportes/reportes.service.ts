@@ -604,16 +604,18 @@ export const reportesService = {
           entry.saldoFinal        += saldoInicialBs + ingresos.bs - salidas.bs;
         }
 
-        // ingresoMateriales se muestra sin IVA (13%) para coincidir con el cuadro contable.
-        // saldoFinal se recalcula con el ingreso ya sin IVA para que la ecuación cierre en pantalla.
+        // Entradas y salidas se muestran sin IVA (13%) para el cuadro contable.
+        // saldoFinal se recalcula con los valores ya sin IVA para que la ecuación cierre en pantalla.
         const grupos = [...grupoMap.values()]
           .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
           .map(g => {
             const ingresoMateriales = menos13(g.ingresoMateriales);
+            const salidaMateriales  = menos13(g.salidaMateriales);
             return {
               ...g,
               ingresoMateriales,
-              saldoFinal: Math.round((g.saldoInicial + ingresoMateriales - g.salidaMateriales) * 100) / 100,
+              salidaMateriales,
+              saldoFinal: Math.round((g.saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100,
             };
           });
 
@@ -1638,7 +1640,7 @@ export const reportesService = {
           0,
         );
 
-        const totalInventarioDebe = saldoInventarioAnterior + comprasImporteBs;
+        const totalInventarioDebe = saldoInventarioAnterior + menos13(comprasImporteBs);
 
         // HABER: salidas grouped by Sector (primary) → CentroCosto (secondary) → CuentaContable (lines)
         type SubCuentaEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };

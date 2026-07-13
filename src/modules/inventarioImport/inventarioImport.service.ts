@@ -1654,3 +1654,123 @@ export async function recalcularPreciosProm() {
   logger.info({ actualizados }, "Precios promedio recalculados");
   return { actualizados };
 }
+
+// ─── Ajuste masivo de SaldoMensual por mes (sin movimientos) ──────────────────
+// Permite corregir precio, stock y demás campos en productos que NO tienen
+// movimientos ese mes. Si el SaldoMensual no existe lo crea.
+// Solo ADMIN. Nunca toca meses con movimientos para el producto.
+
+type AjusteProductoItem = {
+  productoId?:    number;
+  productoCodigo?: string;
+  precioUnit?:    number;
+  saldoInicial?:  number;
+  saldoFinal?:    number;
+  ingresoQty?:    number;
+  salidaQty?:     number;
+  totalBs?:       number;
+  totalBsInicial?: number;
+};
+
+type AjusteProductoResultado =
+  | { productoId: number; productoCodigo: string; ok: true; accion: "creado" | "actualizado"; saldoMensual: Record<string, unknown> }
+  | { productoId: number | null; productoCodigo: string | null; ok: false; error: string };
+
+export async function ajusteProductosMes(
+  anio: number,
+  mes: number,
+  productos: AjusteProductoItem[],
+): Promise<AjusteProductoResultado[]> {
+  const mesInicio = new Date(anio, mes - 1, 1);
+  const mesFin    = new Date(anio, mes,     1);
+
+  const resultados: AjusteProductoResultado[] = [];
+
+  for (const item of productos) {
+    let productoId: number;
+    let productoCodigo: string;
+
+    try {
+      productoId = await resolveProductoId(item.productoId, item.productoCodigo);
+      const prod = await prisma.producto.findUnique({ where: { id: productoId }, select: { codigo: true } });
+      productoCodigo = prod?.codigo ?? String(productoId);
+    } catch {
+      resultados.push({
+        productoId:     item.productoId ?? null,
+        productoCodigo: item.productoCodigo ?? null,
+        ok: false,
+        error: "Producto no encontrado",
+      });
+      continue;
+    }
+
+    // Verificar que no tenga movimientos en el mes
+    const movCount = await prisma.movimiento.count({
+      where: {
+        productoId,
+        OR: [
+          { createdAt: { gte: mesInicio, lt: mesFin }, esRetroactivo: false },
+          { esRetroactivo: true, periodoAnio: anio, periodoMes: mes },
+        ],
+      },
+    });
+
+    if (movCount > 0) {
+      resultados.push({
+        productoId,
+        productoCodigo,
+        ok: false,
+        error: `Tiene ${movCount} movimiento(s) en ${mes}/${anio} — no se puede ajustar`,
+      });
+      continue;
+    }
+
+    // Leer el registro actual (si existe)
+    const existing = await (prisma.saldoMensual.findUnique as any)({
+      where: { productoId_anio_mes: { productoId, anio, mes } },
+      select: {
+        saldoInicial: true, ingresoQty: true, salidaQty: true,
+        saldoFinal:   true, precioUnit: true, totalBs: true,
+      },
+    }) as { saldoInicial: unknown; ingresoQty: unknown; salidaQty: unknown; saldoFinal: unknown; precioUnit: unknown; totalBs: unknown } | null;
+
+    // Valores base (existing o cero)
+    const baseSaldoInicial = item.saldoInicial  !== undefined ? item.saldoInicial  : Number(existing?.saldoInicial  ?? 0);
+    const baseIngresoQty   = item.ingresoQty    !== undefined ? item.ingresoQty    : Number(existing?.ingresoQty    ?? 0);
+    const baseSalidaQty    = item.salidaQty     !== undefined ? item.salidaQty     : Number(existing?.salidaQty     ?? 0);
+    const baseSaldoFinal   = item.saldoFinal    !== undefined ? item.saldoFinal    : baseSaldoInicial + baseIngresoQty - baseSalidaQty;
+    const basePrecioUnit   = item.precioUnit    !== undefined ? item.precioUnit    : Number(existing?.precioUnit     ?? 0);
+    const baseTotalBs      = item.totalBs       !== undefined ? item.totalBs       : baseSaldoFinal * basePrecioUnit;
+
+    const data: Record<string, unknown> = {
+      saldoInicial:  baseSaldoInicial,
+      ingresoQty:    baseIngresoQty,
+      salidaQty:     baseSalidaQty,
+      saldoFinal:    baseSaldoFinal,
+      precioUnit:    basePrecioUnit,
+      totalBs:       baseTotalBs,
+    };
+    if (item.totalBsInicial !== undefined) data.totalBsInicial = item.totalBsInicial;
+
+    let record: Record<string, unknown>;
+    let accion: "creado" | "actualizado";
+
+    if (existing) {
+      record = await (prisma.saldoMensual.update as any)({
+        where: { productoId_anio_mes: { productoId, anio, mes } },
+        data,
+      });
+      accion = "actualizado";
+    } else {
+      record = await (prisma.saldoMensual.create as any)({
+        data: { productoId, anio, mes, ingresosBs: 0, ...data },
+      });
+      accion = "creado";
+    }
+
+    resultados.push({ productoId, productoCodigo, ok: true, accion, saldoMensual: record });
+  }
+
+  logger.info({ anio, mes, total: productos.length, ok: resultados.filter(r => r.ok).length }, "Ajuste masivo SaldoMensual");
+  return resultados;
+}
