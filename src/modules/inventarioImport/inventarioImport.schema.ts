@@ -160,7 +160,7 @@ const ajusteProductoItemSchema = z
   .object({
     productoId:    z.number().int().positive().optional(),
     productoCodigo: z.string().min(1).optional(),
-    precioUnit:    z.number().positive().optional(),
+    precioUnit:    z.number().nonnegative().optional(),
     saldoInicial:  z.number().int().nonnegative().optional(),
     saldoFinal:    z.number().int().nonnegative().optional(),
     ingresoQty:    z.number().int().nonnegative().optional(),
