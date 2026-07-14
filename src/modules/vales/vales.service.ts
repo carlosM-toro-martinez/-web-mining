@@ -13,6 +13,12 @@ import type {
 
 const ROLES_SUPERVISORES = ["ADMIN", "SUPERINTENDENTE"];
 
+// Extrae el precio promedio de un SaldoMensual; si precioUnitProm es 0 o nulo, usa precioUnit como fallback.
+function precioPromDec(s: any): Prisma.Decimal {
+  const prom = new Prisma.Decimal(s.precioUnitProm ?? 0);
+  return prom.gt(0) ? prom : new Prisma.Decimal(s.precioUnit ?? 0);
+}
+
 const valeIncludeCompleto = {
   solicitante: { select: { id: true, nombre: true, email: true } },
   superintendente: { select: { id: true, nombre: true, email: true } },
@@ -324,7 +330,16 @@ export const valesService = {
 
         const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
         const stockDespuesRetro = stockAntesRetro.sub(cantidad);
-        const precioUnitRetro = saldo ? new Prisma.Decimal(saldo.precioUnit) : item.producto.stock?.precioUnit ?? new Prisma.Decimal(0);
+        let precioUnitRetro: Prisma.Decimal;
+        if (saldo) {
+          precioUnitRetro = precioPromDec(saldo);
+        } else {
+          const saldoReciente = await prisma.saldoMensual.findFirst({
+            where: { productoId: item.productoId },
+            orderBy: [{ anio: 'desc' }, { mes: 'desc' }],
+          });
+          precioUnitRetro = saldoReciente ? precioPromDec(saldoReciente) : new Prisma.Decimal(0);
+        }
 
         const movimiento = await prisma.movimiento.create({
           data: {
@@ -381,18 +396,23 @@ export const valesService = {
 
         movimientos.push(movimiento);
       } else {
+        const saldoActual = await prisma.saldoMensual.findFirst({
+          where: { productoId: item.productoId },
+          orderBy: [{ anio: 'desc' }, { mes: 'desc' }],
+        });
+        const precioUnitActual = saldoActual ? precioPromDec(saldoActual) : new Prisma.Decimal(0);
         const movimiento = await prisma.movimiento.create({
           data: {
             operationId: randomUUID(),
             productoId: item.productoId,
             tipo: "SALIDA",
             cantidad,
-            precioUnit: item.producto.stock!.precioUnit,
+            precioUnit: precioUnitActual,
             entradaBs: 0,
-            salidaBs: new Prisma.Decimal(item.producto.stock!.precioUnit).mul(cantidad),
+            salidaBs: new Prisma.Decimal(precioUnitActual).mul(cantidad),
             saldoBs: new Prisma.Decimal(item.producto.stock!.cantidad)
               .sub(cantidad)
-              .mul(item.producto.stock!.precioUnit),
+              .mul(precioUnitActual),
             stockAntes: item.producto.stock!.cantidad,
             stockDespues: new Prisma.Decimal(item.producto.stock!.cantidad).sub(cantidad),
             usuarioId: userId,
@@ -588,7 +608,7 @@ export const valesService = {
 
         const stockAntes  = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
         const stockDespues = stockAntes.add(entregado);
-        const precioUnit   = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(0);
+        const precioUnit   = saldo ? precioPromDec(saldo) : new Prisma.Decimal(0);
 
         await prisma.movimiento.create({
           data: {
@@ -631,16 +651,22 @@ export const valesService = {
         const stock = item.producto.stock;
         if (!stock) continue;
 
+        const saldoAnulacion = await prisma.saldoMensual.findFirst({
+          where: { productoId: item.productoId },
+          orderBy: [{ anio: 'desc' }, { mes: 'desc' }],
+        });
+        const precioAnulacion = saldoAnulacion ? precioPromDec(saldoAnulacion) : new Prisma.Decimal(0);
+
         await prisma.movimiento.create({
           data: {
             operationId: randomUUID(),
             productoId: item.productoId,
             tipo: "ENTRADA",
             cantidad: entregado,
-            precioUnit: stock.precioUnit,
-            entradaBs: new Prisma.Decimal(stock.precioUnit).mul(entregado),
+            precioUnit: precioAnulacion,
+            entradaBs: precioAnulacion.mul(entregado),
             salidaBs: 0,
-            saldoBs: new Prisma.Decimal(stock.cantidad).add(entregado).mul(stock.precioUnit),
+            saldoBs: new Prisma.Decimal(stock.cantidad).add(entregado).mul(precioAnulacion),
             stockAntes: stock.cantidad,
             stockDespues: new Prisma.Decimal(stock.cantidad).add(entregado),
             usuarioId: userId,

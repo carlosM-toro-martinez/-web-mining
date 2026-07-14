@@ -70,6 +70,30 @@ export const proveedoresService = {
   async getProveedorById(id: number) {
     return prisma.proveedor.findUnique({
       where: { id },
+      include: {
+        compras: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            numeroFactura: true,
+            estado: true,
+            observacion: true,
+            descuento: true,
+            fechaOperacion: true,
+            recibidoAt: true,
+            createdAt: true,
+            items: {
+              select: {
+                id: true,
+                cantidadPedida: true,
+                cantidadRecibida: true,
+                precioUnit: true,
+                producto: { select: { id: true, codigo: true, nombre: true, unidad: true } },
+              },
+            },
+          },
+        },
+      },
     });
   },
 

@@ -49,6 +49,7 @@ function menos13(total: number): number {
   return Math.round((total - iva) * 100) / 100;
 }
 
+
 export const reportesService = {
   async getBinCard(query: BinCardQueryDTO) {
     const where: any = {};
@@ -498,10 +499,12 @@ export const reportesService = {
               ingresoQty: true,
               salidaQty: true,
               precioUnit: true,
+              precioUnitProm: true,
               totalBsInicial: true,
               producto: { select: { categoria: { select: { id: true, codigo: true, nombre: true, parent: { select: { id: true, codigo: true, nombre: true } } } } } },
             },
           }) as any[],
+          // Fuente de ingresos: misma query que entradas-almacen (CompraItems reales)
           prisma.compraItem.findMany({
             where: {
               cantidadRecibida: { gt: 0 },
@@ -518,7 +521,7 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true, precioUnit: true, referencia: true, referenciaId: true },
+            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...movFilter },
@@ -533,32 +536,18 @@ export const reportesService = {
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsBalance.has(m.referenciaId)),
         );
 
-        const ingresoMap = new Map<number, { qty: number; bs: number }>();
+        // Igual que entradas-almacen: acumular qty y monto con-IVA por producto
+        const compraMap = new Map<number, { qty: number; bs: number }>();
         for (const item of compraItemsRaw) {
-          const e = ingresoMap.get(item.productoId) ?? { qty: 0, bs: 0 };
+          const e = compraMap.get(item.productoId) ?? { qty: 0, bs: 0 };
           e.qty += Number(item.cantidadRecibida);
           e.bs  += Number(item.cantidadRecibida) * Number(item.precioUnit);
-          ingresoMap.set(item.productoId, e);
+          compraMap.set(item.productoId, e);
         }
 
-        // Precio del SaldoMensual de ese mes. Fallback al promedio de compras cuando precioUnit=0
-        // (ocurre en productos nuevos comprados y consumidos en el mismo mes con cierre incompleto).
-        const precioMesMap = new Map<number, number>(
-          registros.map((r: any) => {
-            const precio = Number(r.precioUnit);
-            if (precio > 0) return [r.productoId as number, precio];
-            const ing = ingresoMap.get(r.productoId as number);
-            return [r.productoId as number, ing && ing.qty > 0 ? ing.bs / ing.qty : 0];
-          }),
-        );
-
-        const salidaMap = new Map<number, { qty: number; bs: number }>();
+        const salidaQtyMap = new Map<number, number>();
         for (const mov of salidasMovs) {
-          const e = salidaMap.get(mov.productoId) ?? { qty: 0, bs: 0 };
-          const precioMes = precioMesMap.get(mov.productoId) ?? Number(mov.precioUnit);
-          e.qty += Number(mov.cantidad);
-          e.bs  += Number(mov.cantidad) * precioMes;
-          salidaMap.set(mov.productoId, e);
+          salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
         }
 
         const grupoMap = new Map<
@@ -589,17 +578,25 @@ export const reportesService = {
             });
           }
 
-          const precioUnit   = Number(r.precioUnit);
+          const compra = compraMap.get(r.productoId);
+
+          // Precio del SaldoMensual: base para saldoInicial y salidas (independiente de compras del mes)
+          const precioSaldo = Number(r.precioUnitProm ?? 0) > 0 ? Number(r.precioUnitProm) : Number(r.precioUnit ?? 0);
+
           const saldoInicial = Number(r.saldoInicial);
-          const ingresos     = ingresoMap.get(r.productoId) ?? { qty: Number(r.ingresoQty), bs: Number(r.ingresoQty) * precioUnit };
-          const salidas      = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : { qty: Number(r.salidaQty), bs: Number(r.salidaQty) * precioUnit };
-          // Redondear por producto antes de acumular (igual que saldos-iniciales)
-          // para evitar acumulación de errores de punto flotante en el total del grupo.
-          const saldoInicialBs  = r.totalBsInicial !== null && r.totalBsInicial !== undefined
+          const salidaQty    = salidaQtyMap.has(r.productoId) ? salidaQtyMap.get(r.productoId)! : Number(r.salidaQty);
+
+          // saldoInicial usa totalBsInicial (dato histórico exacto) o saldoInicial × precioSaldo
+          const saldoInicialBs = r.totalBsInicial !== null && r.totalBsInicial !== undefined
             ? Math.round(Number(r.totalBsInicial) * 100) / 100
-            : Math.round(saldoInicial * precioUnit * 100) / 100;
-          const ingresosBs      = Math.round(ingresos.bs * 100) / 100;
-          const salidasBs       = Math.round(salidas.bs * 100) / 100;
+            : Math.round(saldoInicial * precioSaldo * 100) / 100;
+
+          // ingresosBs = menos13(Σ cantidadRecibida × precioUnit) de CompraItems — misma fuente que entradas-almacen
+          const ingresosBs = compra && compra.qty > 0
+            ? Math.round(menos13(compra.bs) * 100) / 100
+            : 0;
+
+          const salidasBs = Math.round(salidaQty * precioSaldo * 100) / 100;
 
           const entry = grupoMap.get(grupoId)!;
           entry.saldoInicial      += saldoInicialBs;
@@ -608,20 +605,14 @@ export const reportesService = {
           entry.saldoFinal        += saldoInicialBs + ingresosBs - salidasBs;
         }
 
-        // Entradas y salidas se muestran sin IVA (13%) para el cuadro contable.
-        // saldoFinal se recalcula con los valores ya sin IVA para que la ecuación cierre en pantalla.
         const grupos = [...grupoMap.values()]
           .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
-          .map(g => {
-            const ingresoMateriales = menos13(g.ingresoMateriales);
-            const salidaMateriales  = menos13(g.salidaMateriales);
-            return {
-              ...g,
-              ingresoMateriales,
-              salidaMateriales,
-              saldoFinal: Math.round((g.saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100,
-            };
-          });
+          .map(g => ({
+            ...g,
+            ingresoMateriales: Math.round(g.ingresoMateriales * 100) / 100,
+            salidaMateriales:  Math.round(g.salidaMateriales  * 100) / 100,
+            saldoFinal:        Math.round((g.saldoInicial + g.ingresoMateriales - g.salidaMateriales) * 100) / 100,
+          }));
 
         const totales = grupos.reduce(
           (acc, g) => ({
@@ -766,9 +757,16 @@ export const reportesService = {
           const salidaQty    = salidaMap.has(r.productoId) ? salidaMap.get(r.productoId)! : Number(r.salidaQty);
           const saldoInicial = Number(r.saldoInicial);
           const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
-          const _precioSaldo = Number(r.precioUnit);
-          const precioUnit   = _precioSaldo > 0 ? _precioSaldo : (compraAvgInv.get(r.productoId) ?? 0);
-          const totalBs      = saldoFinal * precioUnit;
+          const _precioProm  = Number(r.precioUnitProm ?? 0) > 0 ? Number(r.precioUnitProm) : Number(r.precioUnit ?? 0);
+          const precioUnit   = _precioProm > 0 ? _precioProm : menos13(compraAvgInv.get(r.productoId) ?? 0);
+
+          // totalBs en Bs directos (igual que balance-mensual) para que coincidan los totales
+          const saldoInicialBs = r.totalBsInicial !== null && r.totalBsInicial !== undefined
+            ? Math.round(Number(r.totalBsInicial) * 100) / 100
+            : Math.round(saldoInicial * precioUnit * 100) / 100;
+          const ingresosBs = Math.round(menos13(compraAccInv.get(r.productoId)?.totalBs ?? 0) * 100) / 100;
+          const salidasBs  = Math.round(salidaQty * precioUnit * 100) / 100;
+          const totalBs    = Math.round((saldoInicialBs + ingresosBs - salidasBs) * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: r.producto.codigo,
@@ -909,7 +907,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsEntrada:         Math.round(g.totalBsEntrada * 100) / 100,
-            totalBsEntradaMenos13:  menos13(g.totalBsEntrada),
+            totalBsEntradaMenos13:  menos13(Math.round(g.totalBsEntrada * 100) / 100),
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -962,7 +960,7 @@ export const reportesService = {
           }),
           prisma.saldoMensual.findMany({
             where: { anio, mes },
-            select: { productoId: true, precioUnit: true },
+            select: { productoId: true, precioUnit: true, precioUnitProm: true },
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...salidaMovFilter },
@@ -1002,12 +1000,12 @@ export const reportesService = {
         }
 
         const precioHistoricoMap = new Map<number, number>(
-          saldosMes.map((s) => {
-            const precio = Number(s.precioUnit);
-            if (precio > 0) return [s.productoId, precio];
+          saldosMes.map((s: any) => {
+            const prom = Number(s.precioUnitProm ?? 0) > 0 ? Number(s.precioUnitProm) : Number(s.precioUnit ?? 0);
+            if (prom > 0) return [s.productoId, prom];
             const totalBs = compraAvgMapSalidas.get(s.productoId) ?? 0;
             const totalQty = compraQtyMapSalidas.get(s.productoId) ?? 0;
-            return [s.productoId, totalQty > 0 ? totalBs / totalQty : 0];
+            return [s.productoId, totalQty > 0 ? menos13(totalBs / totalQty) : 0];
           }),
         );
 
@@ -1073,7 +1071,7 @@ export const reportesService = {
             codigo: g.codigo,
             nombre: g.nombre,
             totalBsSalida:        Math.round(g.totalBsSalida * 100) / 100,
-            totalBsSalidaMenos13: menos13(g.totalBsSalida),
+            totalBsSalidaMenos13: Math.round(g.totalBsSalida * 100) / 100,
             subGrupos: [...g.subGrupos.values()]
               .sort((a, b) => a.codigo.localeCompare(b.codigo))
               .map((sg) => ({
@@ -1083,7 +1081,7 @@ export const reportesService = {
           }));
 
         const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsSalida, 0) * 100) / 100;
-        const totalGeneralMenos13 = menos13(totalGeneral);
+        const totalGeneralMenos13 = totalGeneral;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -1366,7 +1364,7 @@ export const reportesService = {
           }),
           prisma.saldoMensual.findMany({
             where: { anio, mes },
-            select: { productoId: true, precioUnit: true },
+            select: { productoId: true, precioUnit: true, precioUnitProm: true },
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...detalleMesFilter },
@@ -1396,7 +1394,7 @@ export const reportesService = {
         );
 
         const precioMap = new Map<number, number>(
-          saldosMes.map((s) => [s.productoId, Number(s.precioUnit)]),
+          saldosMes.map((s: any) => [s.productoId, Number(s.precioUnitProm ?? 0) > 0 ? Number(s.precioUnitProm) : Number(s.precioUnit ?? 0)]),
         );
 
         // Compra-average fallback for products with precioUnit=0 in SaldoMensual
@@ -1425,7 +1423,7 @@ export const reportesService = {
           if (!lineaMap.has(key)) {
             lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
           }
-          lineaMap.get(key)!.importeBs += menos13(Number(mov.cantidad) * precio);
+          lineaMap.get(key)!.importeBs += Number(mov.cantidad) * precio;
         }
 
         const lineas = [...lineaMap.values()]
@@ -1474,7 +1472,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDetalle2 = precioMap.get(mov.productoId);
           const precio = (_psDetalle2 != null && _psDetalle2 > 0) ? _psDetalle2 : (compraAvgDetalle.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = menos13(Number(mov.cantidad) * precio);
+          const importeBs = Number(mov.cantidad) * precio;
           const cc = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1563,8 +1561,8 @@ export const reportesService = {
         const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
-            select: { productoId: true, precioUnit: true, saldoInicial: true, totalBsInicial: true },
-          }) as Promise<{ productoId: number; precioUnit: unknown; saldoInicial: unknown; totalBsInicial: unknown }[]>,
+            select: { productoId: true, precioUnit: true, precioUnitProm: true, saldoInicial: true, totalBsInicial: true },
+          }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown }[]>,
           prisma.compraItem.findMany({
             where: {
               cantidadRecibida: { gt: 0 },
@@ -1613,10 +1611,10 @@ export const reportesService = {
         );
 
         const precioMap = new Map<number, number>(
-          saldosMesActual.map((s) => [s.productoId, Number(s.precioUnit)]),
+          saldosMesActual.map((s: any) => [s.productoId, Number(s.precioUnitProm ?? 0) > 0 ? Number(s.precioUnitProm) : Number(s.precioUnit ?? 0)]),
         );
 
-        // Compra-average fallback for products with precioUnit=0 in SaldoMensual
+        // Compra-average fallback for products with precioUnitProm=0 in SaldoMensual
         const compraAccDiario = new Map<number, { totalBs: number; qty: number }>();
         for (const item of compraItemsRaw) {
           const e = compraAccDiario.get(item.productoId) ?? { totalBs: 0, qty: 0 };
@@ -1628,17 +1626,18 @@ export const reportesService = {
           [...compraAccDiario.entries()].map(([pid, { totalBs, qty }]) => [pid, qty > 0 ? totalBs / qty : 0]),
         );
 
-        // DEBE: saldo inventario al inicio del mes actual
-        // Usa totalBsInicial si está fijado; si no, saldoInicial × precioUnit del mes (con fallback a precio de compra)
-        const saldoInventarioAnterior = saldosMesActual.reduce((acc, s) => {
+        // DEBE: saldo inventario al inicio del mes (ex-IVA desde DB).
+        // Usa totalBsInicial si está fijado; si no, saldoInicial × precio ex-IVA del SaldoMensual.
+        const saldoInventarioAnterior = saldosMesActual.reduce((acc, s: any) => {
           if (s.totalBsInicial !== null && s.totalBsInicial !== undefined) {
             return acc + Number(s.totalBsInicial);
           }
-          const _ps  = Number(s.precioUnit);
+          const _ps  = Number(s.precioUnitProm ?? 0) > 0 ? Number(s.precioUnitProm) : Number(s.precioUnit ?? 0);
           const precio = _ps > 0 ? _ps : (compraAvgDiario.get(s.productoId) ?? 0);
           return acc + Number(s.saldoInicial) * precio;
         }, 0);
 
+        // comprasImporteBs viene de facturas (con IVA); se convierte a ex-IVA con ×0.87
         const comprasImporteBs = compraItemsRaw.reduce(
           (acc, item) => acc + Number(item.cantidadRecibida) * Number(item.precioUnit),
           0,
@@ -1658,7 +1657,7 @@ export const reportesService = {
           if (!mov.cuenta || !mov.cuentaId) continue;
           const _psDiario1 = precioMap.get(mov.productoId);
           const precio    = (_psDiario1 != null && _psDiario1 > 0) ? _psDiario1 : (compraAvgDiario.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = menos13(Number(mov.cantidad) * precio);
+          const importeBs = Number(mov.cantidad) * precio;
           const sectorKey = mov.cuenta.sectorId ?? -1;
 
           if (!sectorMap.has(sectorKey)) {
@@ -1741,7 +1740,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDiario2 = precioMap.get(mov.productoId);
           const precio    = (_psDiario2 != null && _psDiario2 > 0) ? _psDiario2 : (compraAvgDiario.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = menos13(Number(mov.cantidad) * precio);
+          const importeBs = Number(mov.cantidad) * precio;
           const cc        = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1868,7 +1867,7 @@ export const reportesService = {
       // Precios del SaldoMensual para todos los meses del rango
       prisma.saldoMensual.findMany({
         where: { OR: rangoMeses.map(({ anio, mes }) => ({ anio, mes })) },
-        select: { productoId: true, anio: true, mes: true, precioUnit: true },
+        select: { productoId: true, anio: true, mes: true, precioUnit: true, precioUnitProm: true },
       }),
     ]);
 
@@ -1876,7 +1875,8 @@ export const reportesService = {
     const precioMesKey = (pid: number, anio: number, mes: number) => `${pid}_${anio}_${mes}`;
     const precioMesMap = new Map<string, number>();
     for (const s of saldosRango) {
-      precioMesMap.set(precioMesKey(s.productoId, s.anio, s.mes), Number(s.precioUnit));
+      const prom = Number(s.precioUnitProm ?? 0) > 0 ? Number(s.precioUnitProm) : Number(s.precioUnit ?? 0);
+      precioMesMap.set(precioMesKey(s.productoId, s.anio, s.mes), prom > 0 ? prom : Number(s.precioUnit));
     }
 
     const valesAnuladosIds = new Set(
@@ -1894,7 +1894,7 @@ export const reportesService = {
       // Precio: SaldoMensual del período → fallback al precio del movimiento
       const precioSaldo = precioMesMap.get(precioMesKey(m.productoId, pAnio, pMes));
       const precioUnit  = (precioSaldo != null && precioSaldo > 0) ? precioSaldo : Number(m.precioUnit);
-      const importeBs   = menos13(Math.round(Number(m.cantidad) * precioUnit * 100) / 100);
+      const importeBs   = Math.round(Number(m.cantidad) * precioUnit * 100) / 100;
       return {
         id:             m.id,
         fecha:          m.createdAt,

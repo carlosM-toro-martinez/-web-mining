@@ -1250,9 +1250,10 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
       ingresosBs: new Prisma.Decimal(0),
     };
     if (mov.tipo === "ENTRADA") {
+      const precioSinIva = new Prisma.Decimal(mov.precioUnit).mul('0.87');
       e.ingresoQty = e.ingresoQty.add(mov.cantidad);
-      e.precioUnit = new Prisma.Decimal(mov.precioUnit); // último precio de compra
-      e.ingresosBs = e.ingresosBs.add(new Prisma.Decimal(mov.precioUnit).mul(mov.cantidad));
+      e.precioUnit = precioSinIva;
+      e.ingresosBs = e.ingresosBs.add(precioSinIva.mul(mov.cantidad));
     } else {
       e.salidaQty = e.salidaQty.add(mov.cantidad);
     }
@@ -1385,6 +1386,210 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
 
 export async function getCierres() {
   return prisma.cierreMes.findMany({ orderBy: [{ anio: "desc" }, { mes: "desc" }] });
+}
+
+// ─── Ajuste de precios sin IVA ────────────────────────────────────────────────
+// Recalcula precios en SaldoMensual a partir de CompraItems reales (fuente de verdad)
+// aplicando ×0.87 para quitar IVA, y propaga hacia meses siguientes.
+
+function compraItemsDelMes(startOfMonth: Date, endOfMonth: Date) {
+  return prisma.compraItem.findMany({
+    where: {
+      cantidadRecibida: { gt: 0 },
+      compra: {
+        estado: { not: "ANULADA" },
+        OR: [
+          { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+          { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+          { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+        ],
+      },
+    },
+    select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+  });
+}
+
+function buildCompraMapFromItems(items: Array<{ productoId: number; cantidadRecibida: unknown; precioUnit: unknown }>) {
+  const map = new Map<number, { qty: Prisma.Decimal; bs: Prisma.Decimal }>();
+  for (const item of items) {
+    const qty   = new Prisma.Decimal(item.cantidadRecibida as string);
+    const precio = new Prisma.Decimal(item.precioUnit as string);
+    const e     = map.get(item.productoId) ?? { qty: new Prisma.Decimal(0), bs: new Prisma.Decimal(0) };
+    e.qty = e.qty.add(qty);
+    e.bs  = e.bs.add(qty.mul(precio));
+    map.set(item.productoId, e);
+  }
+  return map;
+}
+
+export async function ajustarPreciosSinIva(anio: number, mes: number) {
+  const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+  const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+  const [saldos, comprasRaw] = await Promise.all([
+    (prisma.saldoMensual.findMany as any)({
+      where: { anio, mes },
+      select: {
+        id: true, productoId: true,
+        precioUnit: true, precioUnitProm: true,
+        saldoFinal: true,
+      },
+    }) as Promise<Array<{ id: string; productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoFinal: unknown }>>,
+    compraItemsDelMes(startOfMonth, endOfMonth),
+  ]);
+
+  // Precio promedio ponderado con-IVA por producto, calculado desde CompraItems reales
+  const compraMap = buildCompraMapFromItems(comprasRaw);
+
+  type Resumen = { productoId: number; accion: string; precioAnterior: number; precioNuevo: number };
+  const resumen: Resumen[] = [];
+
+  for (const s of saldos) {
+    const compra    = compraMap.get(s.productoId);
+    const pUnit     = new Prisma.Decimal(s.precioUnit as string);
+    const pProm     = new Prisma.Decimal((s.precioUnitProm as string) ?? '0');
+    const saldoFinal = new Prisma.Decimal(s.saldoFinal as string);
+
+    if (!compra || compra.qty.isZero()) {
+      // Sin compras: si precioUnitProm está vacío pero precioUnit tiene valor, igualarlos
+      if (pUnit.gt(0) && pProm.isZero()) {
+        await (prisma.saldoMensual.update as any)({
+          where: { id: s.id },
+          data: {
+            precioUnitProm: pUnit,
+            totalBsProm:    saldoFinal.mul(pUnit).toDecimalPlaces(6),
+          },
+        });
+      }
+      resumen.push({ productoId: s.productoId, accion: 'sin_cambio', precioAnterior: Number(pUnit), precioNuevo: Number(pUnit) });
+      continue;
+    }
+
+    const pAnterior = pUnit;
+    // Precio promedio real de las compras del mes, luego ×0.87 para quitar IVA
+    const promConIva      = compra.bs.div(compra.qty);
+    const nuevoPrecio     = promConIva.mul('0.87').toDecimalPlaces(6);
+    const nuevoIngresosBs = compra.bs.mul('0.87').toDecimalPlaces(6);
+
+    await (prisma.saldoMensual.update as any)({
+      where: { id: s.id },
+      data: {
+        precioUnit:     nuevoPrecio,
+        precioUnitProm: nuevoPrecio,
+        ingresosBs:     nuevoIngresosBs,
+        totalBs:        saldoFinal.mul(nuevoPrecio).toDecimalPlaces(6),
+        totalBsProm:    saldoFinal.mul(nuevoPrecio).toDecimalPlaces(6),
+      },
+    });
+
+    resumen.push({ productoId: s.productoId, accion: 'ajustado', precioAnterior: Number(pAnterior), precioNuevo: Number(nuevoPrecio) });
+  }
+
+  // Cascade: propagar hacia meses siguientes recalculando desde CompraItems reales
+  const ahora      = new Date();
+  const anioActual = ahora.getUTCFullYear();
+  const mesActual  = ahora.getUTCMonth() + 1;
+
+  for (const item of resumen.filter(r => r.accion === 'ajustado')) {
+    let precioVigente = new Prisma.Decimal(item.precioNuevo);
+    let mesIter  = mes === 12 ? 1  : mes  + 1;
+    let anioIter = mes === 12 ? anio + 1 : anio;
+
+    while (anioIter < anioActual || (anioIter === anioActual && mesIter <= mesActual)) {
+      const saldoSig = await (prisma.saldoMensual.findUnique as any)({
+        where: { productoId_anio_mes: { productoId: item.productoId, anio: anioIter, mes: mesIter } },
+        select: { id: true, saldoFinal: true },
+      });
+
+      if (!saldoSig) break;
+
+      const startSig = new Date(Date.UTC(anioIter, mesIter - 1, 1));
+      const endSig   = new Date(Date.UTC(anioIter, mesIter, 1));
+      const comprasSig = await compraItemsDelMes(startSig, endSig);
+      const compraMapSig = buildCompraMapFromItems(comprasSig);
+      const compraSig = compraMapSig.get(item.productoId);
+
+      const sf = new Prisma.Decimal(saldoSig.saldoFinal);
+
+      if (compraSig && !compraSig.qty.isZero()) {
+        // Mes con compras: recalcular precio desde CompraItems reales × 0.87
+        const np   = compraSig.bs.div(compraSig.qty).mul('0.87').toDecimalPlaces(6);
+        const nIBs = compraSig.bs.mul('0.87').toDecimalPlaces(6);
+        await (prisma.saldoMensual.update as any)({
+          where: { id: saldoSig.id },
+          data: { precioUnit: np, precioUnitProm: np, ingresosBs: nIBs, totalBs: sf.mul(np).toDecimalPlaces(6), totalBsProm: sf.mul(np).toDecimalPlaces(6) },
+        });
+        precioVigente = np;
+      } else {
+        // Mes sin compras: heredar precio vigente del mes anterior
+        await (prisma.saldoMensual.update as any)({
+          where: { id: saldoSig.id },
+          data: { precioUnit: precioVigente, precioUnitProm: precioVigente, totalBs: sf.mul(precioVigente).toDecimalPlaces(6), totalBsProm: sf.mul(precioVigente).toDecimalPlaces(6) },
+        });
+      }
+
+      mesIter  = mesIter === 12 ? 1 : mesIter + 1;
+      anioIter = mesIter === 1  ? anioIter + 1 : anioIter;
+    }
+  }
+
+  return {
+    periodo:   `${mes}/${anio}`,
+    ajustados: resumen.filter(r => r.accion === 'ajustado').length,
+    sinCambio: resumen.filter(r => r.accion === 'sin_cambio').length,
+    detalle:   resumen,
+  };
+}
+
+// ─── Diagnóstico de precios ───────────────────────────────────────────────────
+// Devuelve productos con saldoFinal > 0 y precioUnit = 0 en el período dado.
+
+export async function diagnosticarPrecios(anio: number, mes: number) {
+  const saldos = await (prisma.saldoMensual.findMany as any)({
+    where: { anio, mes },
+    select: {
+      productoId: true,
+      saldoFinal: true,
+      precioUnit: true,
+      precioUnitProm: true,
+      producto: { select: { codigo: true, nombre: true, unidad: true } },
+    },
+    orderBy: { producto: { codigo: 'asc' } },
+  }) as Array<{
+    productoId: number;
+    saldoFinal: unknown;
+    precioUnit: unknown;
+    precioUnitProm: unknown;
+    producto: { codigo: string; nombre: string; unidad: string };
+  }>;
+
+  const sinPrecio = saldos.filter(s => Number(s.saldoFinal) > 0 && Number(s.precioUnit) === 0);
+  const sinProm   = saldos.filter(s => Number(s.saldoFinal) > 0 && Number(s.precioUnitProm) === 0 && Number(s.precioUnit) > 0);
+
+  return {
+    periodo: `${mes}/${anio}`,
+    totalProductos: saldos.length,
+    sinPrecioCount: sinPrecio.length,
+    sinPromCount:   sinProm.length,
+    sinPrecio: sinPrecio.map(s => ({
+      productoId:    s.productoId,
+      codigo:        s.producto.codigo,
+      nombre:        s.producto.nombre,
+      unidad:        s.producto.unidad,
+      saldoFinal:    Number(s.saldoFinal),
+      precioUnit:    Number(s.precioUnit),
+      precioUnitProm: Number(s.precioUnitProm),
+    })),
+    sinProm: sinProm.map(s => ({
+      productoId:    s.productoId,
+      codigo:        s.producto.codigo,
+      nombre:        s.producto.nombre,
+      unidad:        s.producto.unidad,
+      saldoFinal:    Number(s.saldoFinal),
+      precioUnit:    Number(s.precioUnit),
+      precioUnitProm: Number(s.precioUnitProm),
+    })),
+  };
 }
 
 // ─── Recalcular stock histórico ───────────────────────────────────────────────

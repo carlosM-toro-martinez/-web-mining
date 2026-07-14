@@ -272,19 +272,20 @@ export const comprasService = {
             },
           });
 
-          const nuevoIngreso   = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
-          const nuevoFinal     = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
-          const precioUnitDec  = new Prisma.Decimal(precioUnit);
-          // Acumulado Bs de entradas → permite calcular precio promedio ponderado
-          const newIngresosBs    = new Prisma.Decimal((saldo as any)?.ingresosBs ?? 0).add(precioUnitDec.mul(cantidadRecibidaAhora));
-          const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : precioUnitDec;
+          const nuevoIngreso    = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
+          const nuevoFinal      = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
+          const precioUnitDec   = new Prisma.Decimal(precioUnit);
+          const precioSinIva    = precioUnitDec.mul('0.87');
+          // Acumulado Bs de entradas a precio sin IVA → promedio ponderado ex-IVA
+          const newIngresosBs    = new Prisma.Decimal((saldo as any)?.ingresosBs ?? 0).add(precioSinIva.mul(cantidadRecibidaAhora));
+          const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : precioSinIva;
           await (prisma.saldoMensual.upsert as any)({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
             update: {
               ingresoQty:     nuevoIngreso,
               saldoFinal:     nuevoFinal,
-              precioUnit:     precioUnitDec,
-              totalBs:        nuevoFinal.mul(precioUnitDec),
+              precioUnit:     precioSinIva,
+              totalBs:        nuevoFinal.mul(precioSinIva),
               ingresosBs:     newIngresosBs,
               precioUnitProm: newPrecioUnitProm,
               totalBsProm:    nuevoFinal.mul(newPrecioUnitProm),
@@ -294,11 +295,11 @@ export const comprasService = {
               saldoInicial: 0, salidaQty: 0,
               ingresoQty:     cantidadRecibidaAhora,
               saldoFinal:     nuevoFinal,
-              precioUnit:     precioUnitDec,
-              totalBs:        nuevoFinal.mul(precioUnitDec),
-              ingresosBs:     precioUnitDec.mul(cantidadRecibidaAhora),
-              precioUnitProm: precioUnitDec,
-              totalBsProm:    nuevoFinal.mul(precioUnitDec),
+              precioUnit:     precioSinIva,
+              totalBs:        nuevoFinal.mul(precioSinIva),
+              ingresosBs:     precioSinIva.mul(cantidadRecibidaAhora),
+              precioUnitProm: precioSinIva,
+              totalBsProm:    nuevoFinal.mul(precioSinIva),
             },
           });
 
@@ -337,9 +338,56 @@ export const comprasService = {
             data: { cantidadRecibida: new Prisma.Decimal(item.cantidadRecibida).add(cantidadRecibidaAhora) },
           });
 
+          // Recalcular precio ponderado en Stock
+          const stockActual   = item.producto.stock!;
+          const cantidadAntes = new Prisma.Decimal(stockActual.cantidad);
+          const promAnterior  = new Prisma.Decimal(stockActual.precioProm);
+          const nuevoPrecioProm = cantidadAntes.gt(0)
+            ? cantidadAntes.mul(promAnterior)
+                .add(new Prisma.Decimal(cantidadRecibidaAhora).mul(new Prisma.Decimal(precioUnit)))
+                .div(stockDespues)
+            : new Prisma.Decimal(precioUnit);
           await prisma.stock.update({
             where: { productoId: item.productoId },
-            data: { cantidad: stockDespues, precioUnit },
+            data: { cantidad: stockDespues, precioUnit, precioProm: nuevoPrecioProm },
+          });
+
+          // También actualizar SaldoMensual del mes actual a precio sin IVA para que los vales usen precio correcto
+          const ahora      = new Date();
+          const anioActual = ahora.getUTCFullYear();
+          const mesActual  = ahora.getUTCMonth() + 1;
+          const precioUnitDec  = new Prisma.Decimal(precioUnit);
+          const precioSinIvaAct = precioUnitDec.mul('0.87');
+          const saldoActual = await prisma.saldoMensual.findUnique({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: anioActual, mes: mesActual } },
+          });
+          const nuevoIngresoQty  = new Prisma.Decimal(saldoActual?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
+          const newIngresosBs    = new Prisma.Decimal((saldoActual as any)?.ingresosBs ?? 0).add(precioSinIvaAct.mul(cantidadRecibidaAhora));
+          const newPrecioUnitProm = nuevoIngresoQty.gt(0) ? newIngresosBs.div(nuevoIngresoQty) : precioSinIvaAct;
+          const nuevoSaldoFinal  = new Prisma.Decimal(saldoActual?.saldoFinal ?? stockDespues);
+          await (prisma.saldoMensual.upsert as any)({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: anioActual, mes: mesActual } },
+            update: {
+              ingresoQty:     nuevoIngresoQty,
+              precioUnit:     precioSinIvaAct,
+              ingresosBs:     newIngresosBs,
+              precioUnitProm: newPrecioUnitProm,
+              totalBsProm:    nuevoSaldoFinal.mul(newPrecioUnitProm),
+            },
+            create: {
+              productoId:     item.productoId,
+              anio:           anioActual,
+              mes:            mesActual,
+              saldoInicial:   stockActual.cantidad,
+              ingresoQty:     new Prisma.Decimal(cantidadRecibidaAhora),
+              salidaQty:      0,
+              saldoFinal:     stockDespues,
+              precioUnit:     precioSinIvaAct,
+              totalBs:        stockDespues.mul(precioSinIvaAct),
+              ingresosBs:     precioSinIvaAct.mul(cantidadRecibidaAhora),
+              precioUnitProm: precioSinIvaAct,
+              totalBsProm:    stockDespues.mul(precioSinIvaAct),
+            },
           });
 
           movimientos.push(movimiento);

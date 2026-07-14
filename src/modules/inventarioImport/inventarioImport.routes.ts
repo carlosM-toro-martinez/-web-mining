@@ -230,4 +230,24 @@ router.post(
   inventarioImportController.ajusteProductosMes,
 );
 
+// ─── Ajuste de precios sin IVA ────────────────────────────────────────────────
+// POST /api/inventario-import/ajustar-precios-sin-iva
+// Body: { anio, mes }
+// Aplica ×0.87 a todos los SaldoMensual del mes que tuvieron compras, y propaga
+// el ajuste hacia los meses siguientes (cascade). Solo ADMIN.
+router.post(
+  "/ajustar-precios-sin-iva",
+  authorize("ADMIN"),
+  inventarioImportController.ajustarPreciosSinIva,
+);
+
+// ─── Diagnóstico de precios ───────────────────────────────────────────────────
+// GET /api/inventario-import/diagnostico-precios?anio=2025&mes=10
+// Devuelve productos con stock > 0 y precioUnit = 0 (sin precio asignado).
+router.get(
+  "/diagnostico-precios",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.diagnosticarPrecios,
+);
+
 export default router;

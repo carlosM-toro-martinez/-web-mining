@@ -24,6 +24,8 @@ import {
   ajustarCamposSaldoMensual,
   ajustarTotalBsInicialDesdeExcel,
   ajusteProductosMes,
+  ajustarPreciosSinIva,
+  diagnosticarPrecios,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -412,6 +414,39 @@ export const inventarioImportController = {
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
       res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Ajuste de precios sin IVA ────────────────────────────────────────────
+
+  async ajustarPreciosSinIva(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.body?.anio ?? req.query?.anio));
+      const mes  = parseInt(String(req.body?.mes  ?? req.query?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await ajustarPreciosSinIva(anio, mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Diagnóstico de precios ───────────────────────────────────────────────
+
+  async diagnosticarPrecios(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.query?.anio));
+      const mes  = parseInt(String(req.query?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await diagnosticarPrecios(anio, mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
   },
 };
