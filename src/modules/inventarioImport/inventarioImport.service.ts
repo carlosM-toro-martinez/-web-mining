@@ -1592,6 +1592,131 @@ export async function diagnosticarPrecios(anio: number, mes: number) {
   };
 }
 
+// ─── Diagnóstico de saldos / movimientos ─────────────────────────────────────
+// Compara SaldoMensual (salidaQty, ingresoQty) contra movimientos reales
+// y verifica la ecuación: saldoInicial + ingresoQty - salidaQty = saldoFinal
+
+export async function diagnosticarSaldos(anio: number, mes: number) {
+  const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+  const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+  const movFilter = {
+    OR: [
+      { periodoAnio: anio, periodoMes: mes },
+      { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+    ],
+  };
+
+  const [saldos, salidasMovsRaw, entradasMovs, anulacionValeMovs] = await Promise.all([
+    (prisma.saldoMensual.findMany as any)({
+      where: { anio, mes },
+      select: {
+        productoId: true,
+        saldoInicial: true,
+        ingresoQty: true,
+        salidaQty: true,
+        saldoFinal: true,
+        producto: { select: { codigo: true, nombre: true, unidad: true } },
+      },
+      orderBy: { producto: { codigo: "asc" } },
+    }) as Array<{
+      productoId: number;
+      saldoInicial: unknown;
+      ingresoQty: unknown;
+      salidaQty: unknown;
+      saldoFinal: unknown;
+      producto: { codigo: string; nombre: string; unidad: string };
+    }>,
+    prisma.movimiento.findMany({
+      where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
+      select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+    }),
+    prisma.movimiento.findMany({
+      where: { tipo: "ENTRADA", referencia: { not: "SALDO_INICIAL" }, ...movFilter },
+      select: { productoId: true, cantidad: true },
+    }),
+    prisma.movimiento.findMany({
+      where: { referencia: "ANULACION_VALE", ...movFilter },
+      select: { referenciaId: true },
+    }),
+  ]);
+
+  const valesAnulados = new Set(
+    anulacionValeMovs.map(m => m.referenciaId).filter((id): id is string => id !== null),
+  );
+  const salidasMovs = salidasMovsRaw.filter(
+    m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnulados.has(m.referenciaId)),
+  );
+
+  const salidaMovMap = new Map<number, number>();
+  for (const mov of salidasMovs) {
+    salidaMovMap.set(mov.productoId, (salidaMovMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+  }
+
+  const entradaMovMap = new Map<number, number>();
+  for (const mov of entradasMovs) {
+    entradaMovMap.set(mov.productoId, (entradaMovMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+  }
+
+  const discrepancias: Array<{
+    productoId: number;
+    codigo: string;
+    nombre: string;
+    unidad: string;
+    saldoInicial: number;
+    ingresoQty: { saldoMensual: number; movimientos: number; diferencia: number; ok: boolean };
+    salidaQty:  { saldoMensual: number; movimientos: number; diferencia: number; ok: boolean };
+    saldoFinal: { saldoMensual: number; calculado: number; diferencia: number; ok: boolean };
+    problemas: string[];
+  }> = [];
+
+  let productosOk = 0;
+
+  for (const s of saldos) {
+    const saldoInicial    = Number(s.saldoInicial);
+    const ingresoQtySaldo = Number(s.ingresoQty);
+    const salidaQtySaldo  = Number(s.salidaQty);
+    const saldoFinalSaldo = Number(s.saldoFinal);
+
+    const salidaQtyMovs   = salidaMovMap.get(s.productoId) ?? 0;
+    const ingresoQtyMovs  = entradaMovMap.get(s.productoId) ?? 0;
+
+    const saldoFinalCalc  = saldoInicial + ingresoQtySaldo - salidaQtySaldo;
+    const balanceOk       = Math.abs(saldoFinalCalc - saldoFinalSaldo) < 0.001;
+    const salidaOk        = Math.abs(salidaQtySaldo - salidaQtyMovs) < 0.001;
+    const ingresoOk       = Math.abs(ingresoQtySaldo - ingresoQtyMovs) < 0.001;
+
+    if (!balanceOk || !salidaOk || !ingresoOk) {
+      const problemas: string[] = [];
+      if (!salidaOk)  problemas.push(`salidaQty: SaldoMensual=${salidaQtySaldo} Movimientos=${salidaQtyMovs}`);
+      if (!ingresoOk) problemas.push(`ingresoQty: SaldoMensual=${ingresoQtySaldo} Movimientos=${ingresoQtyMovs}`);
+      if (!balanceOk) problemas.push(`balance: ${saldoInicial}+${ingresoQtySaldo}-${salidaQtySaldo}=${saldoFinalCalc} ≠ saldoFinal=${saldoFinalSaldo}`);
+
+      discrepancias.push({
+        productoId: s.productoId,
+        codigo: s.producto.codigo,
+        nombre: s.producto.nombre,
+        unidad: s.producto.unidad,
+        saldoInicial,
+        ingresoQty: { saldoMensual: ingresoQtySaldo, movimientos: ingresoQtyMovs, diferencia: ingresoQtySaldo - ingresoQtyMovs, ok: ingresoOk },
+        salidaQty:  { saldoMensual: salidaQtySaldo,  movimientos: salidaQtyMovs,  diferencia: salidaQtySaldo - salidaQtyMovs,   ok: salidaOk  },
+        saldoFinal: { saldoMensual: saldoFinalSaldo,  calculado: saldoFinalCalc,   diferencia: saldoFinalSaldo - saldoFinalCalc,  ok: balanceOk },
+        problemas,
+      });
+    } else {
+      productosOk++;
+    }
+  }
+
+  return {
+    periodo: `${mes}/${anio}`,
+    totalProductos: saldos.length,
+    productosOk,
+    discrepanciasCount: discrepancias.length,
+    discrepancias,
+  };
+}
+
 // ─── Recalcular stock histórico ───────────────────────────────────────────────
 
 export interface RecalcularStockInput {

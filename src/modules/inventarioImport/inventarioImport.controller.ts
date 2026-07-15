@@ -26,6 +26,7 @@ import {
   ajusteProductosMes,
   ajustarPreciosSinIva,
   diagnosticarPrecios,
+  diagnosticarSaldos,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -444,6 +445,22 @@ export const inventarioImportController = {
         return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
       }
       const data = await diagnosticarPrecios(anio, mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Diagnóstico de saldos / movimientos ─────────────────────────────────
+
+  async diagnosticarSaldos(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.query?.anio));
+      const mes  = parseInt(String(req.query?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await diagnosticarSaldos(anio, mes);
       res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });

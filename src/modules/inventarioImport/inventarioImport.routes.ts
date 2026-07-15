@@ -250,4 +250,14 @@ router.get(
   inventarioImportController.diagnosticarPrecios,
 );
 
+// ─── Diagnóstico de saldos / movimientos ─────────────────────────────────────
+// GET /api/inventario-import/diagnostico-saldos?anio=2025&mes=10
+// Compara SaldoMensual (salidaQty, ingresoQty, saldoFinal) contra movimientos reales.
+// Muestra discrepancias y verifica la ecuación contable por producto.
+router.get(
+  "/diagnostico-saldos",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.diagnosticarSaldos,
+);
+
 export default router;
