@@ -646,17 +646,21 @@ export const reportesService = {
             return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
           });
 
-        const rawGroups = [...grupoMap.values()];
-        const _globalSaldoInicialRaw     = rawGroups.reduce((a, g) => a + g.saldoInicial,                 0);
-        const _globalIngresosBsNormal    = rawGroups.reduce((a, g) => a + g.ingresosBsConIvaNormal,   0);
-        const _globalIngresosBsEspecial  = rawGroups.reduce((a, g) => a + g.ingresosBsConIvaEspecial, 0);
-        const _globalSalidasBsRaw        = rawGroups.reduce((a, g) => a + g.salidasBsRaw,                 0);
-        const _globalIngresosExIva       = menos13(_globalIngresosBsNormal) + menosIvaGasolina(_globalIngresosBsEspecial);
+        // ingresoMateriales: IVA aplicado UNA vez sobre el acumulado global (igual que entradas-almacen),
+        // para que el total coincida entre ambos endpoints.
+        // saldoInicial y salidaMateriales: suma de grupos (ya están a 2dp, no hay deriva).
+        // saldoFinal: ecuación contable sobre los tres totales.
+        const _rawGrupos              = [...grupoMap.values()];
+        const _globalIngNormal        = _rawGrupos.reduce((a, g) => a + g.ingresosBsConIvaNormal,   0);
+        const _globalIngEspecial      = _rawGrupos.reduce((a, g) => a + g.ingresosBsConIvaEspecial, 0);
+        const _tSaldoInicial          = Math.round(grupos.reduce((a, g) => a + g.saldoInicial,     0) * 100) / 100;
+        const _tIngresoMateriales     = Math.round((menos13(_globalIngNormal) + menosIvaGasolina(_globalIngEspecial)) * 100) / 100;
+        const _tSalidaMateriales      = Math.round(grupos.reduce((a, g) => a + g.salidaMateriales, 0) * 100) / 100;
         const totales = {
-          saldoInicial:      Math.round(_globalSaldoInicialRaw * 100) / 100,
-          ingresoMateriales: Math.round(_globalIngresosExIva * 100) / 100,
-          salidaMateriales:  Math.round(_globalSalidasBsRaw * 100) / 100,
-          saldoFinal:        Math.round((_globalSaldoInicialRaw + _globalIngresosExIva - _globalSalidasBsRaw) * 100) / 100,
+          saldoInicial:      _tSaldoInicial,
+          ingresoMateriales: _tIngresoMateriales,
+          salidaMateriales:  _tSalidaMateriales,
+          saldoFinal:        Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100,
         };
 
         return { anio, mes, esCerrado, grupos, totales };
@@ -854,7 +858,17 @@ export const reportesService = {
             };
           });
 
-        const totalGeneral = Math.round(grupos.reduce((acc, g) => acc + g.totalBs, 0) * 100) / 100;
+        // Mismo criterio que balance-mensual:
+        // - ingresos: IVA aplicado una vez sobre el global raw
+        // - salidas: redondeo por grupo antes de sumar (igual que _tSalidaMateriales en balance)
+        // - saldoInicial: suma de valores ya redondeados por producto
+        const _rawG  = [...grupoMap.values()];
+        const _iSi   = _rawG.reduce((a, g) => a + g.saldoInicialRaw, 0);
+        const _iNorm = _rawG.reduce((a, g) => a + g.ingresosBsConIvaNormal,   0);
+        const _iEsp  = _rawG.reduce((a, g) => a + g.ingresosBsConIvaEspecial, 0);
+        const _iSal  = Math.round(_rawG.reduce((a, g) => a + Math.round(g.salidasBsRaw * 100) / 100, 0) * 100) / 100;
+        const _iIng  = Math.round((menos13(_iNorm) + menosIvaGasolina(_iEsp)) * 100) / 100;
+        const totalGeneral = Math.round((_iSi + _iIng - _iSal) * 100) / 100;
 
         return { anio, mes, esCerrado, grupos, totalGeneral };
       }),
