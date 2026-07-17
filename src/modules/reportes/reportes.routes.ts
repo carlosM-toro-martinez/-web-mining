@@ -60,4 +60,7 @@ router.get("/anulaciones-salidas", authorize("ADMIN", "ALMACENERO", "SUPERINTEND
 // Salidas individuales auditables con filtros opcionales de cuenta contable
 router.get("/salidas-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getSalidasDetalle);
 
+// Compras de productos que ya tenían saldo inicial, agrupadas por grupo de producto
+router.get("/compras-con-saldo-inicial", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasConSaldoInicial);
+
 export default router;

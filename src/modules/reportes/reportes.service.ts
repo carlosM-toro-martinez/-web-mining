@@ -48,15 +48,17 @@ function menos13(total: number): number {
 }
 
 // Gasolina Nov-Dic 2025: el IVA se aplica solo sobre el 70% de la base.
-// IVA = total × 0.70 × 0.13  →  sin IVA = total − IVA = total × (1 − 0.091) = total × 0.909
+// IVA = total × 0.70 × 0.13  →  sin IVA = total − IVA = total × (1 − 0.091)
 const CODIGO_GASOLINA = "01-01-0002";
-function menosIvaGasolina(total: number): number {
-  const iva = Math.round(total * 0.70 * 0.13 * 100) / 100;
-  return Math.round((total - iva) * 100) / 100;
+// Versión sin redondear: para acumular ingresos con precisión completa antes del redondeo de grupo.
+// tieneIva=false → factor 1 (sin descuento); gasolina especial Nov-Dic 2025 → IVA solo sobre 70%.
+function sinIvaIngresoRaw(total: number, esGasEspecial: boolean, tieneIva = true): number {
+  if (!tieneIva) return total;
+  return esGasEspecial ? total - total * 0.70 * 0.13 : total * 0.87;
 }
-// Determina si usar la regla especial de gasolina para un productoId y período dados.
-function sinIvaIngreso(total: number, esGasEspecial: boolean): number {
-  return esGasEspecial ? menosIvaGasolina(total) : menos13(total);
+// Precio unitario sin IVA con todos los decimales — reutilizable para cuadro-suministros, entradas-almacen, inventario-almacen.
+function precioUnitSinIvaRaw(precio: number, esGasEspecial: boolean, tieneIva = true): number {
+  return sinIvaIngresoRaw(precio, esGasEspecial, tieneIva);
 }
 
 
@@ -508,6 +510,7 @@ export const reportesService = {
         const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovs] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
+            orderBy: { producto: { codigo: "asc" } },
             select: {
               productoId: true,
               saldoInicial: true,
@@ -532,7 +535,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -551,12 +554,19 @@ export const reportesService = {
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsBalance.has(m.referenciaId)),
         );
 
-        // Igual que entradas-almacen: acumular qty y monto con-IVA por producto
-        const compraMap = new Map<number, { qty: number; bs: number }>();
+        // Gasolina especial Nov-Dic 2025: IVA solo sobre 70% de la base
+        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+
+        // Acumular qty, bs (con IVA) y sinIvaRaw por producto — tieneIva por item
+        const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
         for (const item of compraItemsRaw) {
-          const e = compraMap.get(item.productoId) ?? { qty: 0, bs: 0 };
-          e.qty += Number(item.cantidadRecibida);
-          e.bs  += Number(item.cantidadRecibida) * Number(item.precioUnit);
+          const e = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
+          const qty    = Number(item.cantidadRecibida);
+          const bsItem = qty * Number(item.precioUnit);
+          e.qty       += qty;
+          e.bs        += bsItem;
+          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
           compraMap.set(item.productoId, e);
         }
 
@@ -580,18 +590,13 @@ export const reportesService = {
           salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
         }
 
-        // Gasolina especial Nov-Dic 2025: IVA solo sobre 70% de la base
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
-
         const grupoMap = new Map<
           number,
           {
             grupoCodigo: string;
             grupoNombre: string;
             saldoInicial: number;
-            ingresosBsConIvaNormal:   number;  // con-IVA raw productos normales → menos13 al grupo
-            ingresosBsConIvaEspecial: number;  // con-IVA raw gasolina especial → menosIvaGasolina al grupo
+            ingresosExIvaRaw: number;  // sin-IVA acumulado por producto (sinIvaIngreso ya aplicado)
             salidasBsRaw: number;
           }
         >();
@@ -606,8 +611,7 @@ export const reportesService = {
               grupoCodigo: grupo.codigo,
               grupoNombre: grupo.nombre,
               saldoInicial: 0,
-              ingresosBsConIvaNormal: 0,
-              ingresosBsConIvaEspecial: 0,
+              ingresosExIvaRaw: 0,
               salidasBsRaw: 0,
             });
           }
@@ -620,42 +624,32 @@ export const reportesService = {
             ? Math.round(Number(r.totalBsInicial) * 100) / 100
             : Math.round(saldoInicial * precio * 100) / 100;
 
-          const ingresosBsConIva = compra && compra.qty > 0 ? compra.bs : 0;
+          const exIva    = compra && compra.qty > 0 ? compra.sinIvaRaw : 0;  // pre-computado por item con tieneIva
 
           const salidasBs = salidaBsMap.has(r.productoId)
             ? salidaBsMap.get(r.productoId)!
             : Number(r.salidaQty) * precio;
 
           const entry = grupoMap.get(grupoId)!;
-          entry.saldoInicial += saldoInicialBs;
-          if (gasEsp(r.productoId)) {
-            entry.ingresosBsConIvaEspecial += ingresosBsConIva;
-          } else {
-            entry.ingresosBsConIvaNormal += ingresosBsConIva;
-          }
-          entry.salidasBsRaw += salidasBs;
+          entry.saldoInicial    += saldoInicialBs;
+          entry.ingresosExIvaRaw += exIva;
+          entry.salidasBsRaw    += salidasBs;
         }
 
-        const grupos = [...grupoMap.values()]
-          .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
-          .map(g => {
+        const grupoValsBalance = [...grupoMap.values()].sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo));
+        const grupos = grupoValsBalance.map(g => {
             const saldoInicial      = Math.round(g.saldoInicial * 100) / 100;
-            const ingresoMateriales = Math.round((menos13(g.ingresosBsConIvaNormal) + menosIvaGasolina(g.ingresosBsConIvaEspecial)) * 100) / 100;
+            const ingresoMateriales = Math.round(g.ingresosExIvaRaw * 100) / 100;
             const salidaMateriales  = Math.round(g.salidasBsRaw * 100) / 100;
             const saldoFinal        = Math.round((saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100;
             return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
           });
 
-        // ingresoMateriales: IVA aplicado UNA vez sobre el acumulado global (igual que entradas-almacen),
-        // para que el total coincida entre ambos endpoints.
-        // saldoInicial y salidaMateriales: suma de grupos (ya están a 2dp, no hay deriva).
-        // saldoFinal: ecuación contable sobre los tres totales.
-        const _rawGrupos              = [...grupoMap.values()];
-        const _globalIngNormal        = _rawGrupos.reduce((a, g) => a + g.ingresosBsConIvaNormal,   0);
-        const _globalIngEspecial      = _rawGrupos.reduce((a, g) => a + g.ingresosBsConIvaEspecial, 0);
-        const _tSaldoInicial          = Math.round(grupos.reduce((a, g) => a + g.saldoInicial,     0) * 100) / 100;
-        const _tIngresoMateriales     = Math.round((menos13(_globalIngNormal) + menosIvaGasolina(_globalIngEspecial)) * 100) / 100;
-        const _tSalidaMateriales      = Math.round(grupos.reduce((a, g) => a + g.salidaMateriales, 0) * 100) / 100;
+        // Totales desde raw (antes del redondeo de grupo) para coincidir exactamente con
+        // cuadro-suministros y diario-almacenes: acumular raw → redondear una sola vez al final.
+        const _tSaldoInicial      = Math.round(grupoValsBalance.reduce((a, g) => a + g.saldoInicial,      0) * 100) / 100;
+        const _tIngresoMateriales = Math.round(grupoValsBalance.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
+        const _tSalidaMateriales  = Math.round(grupoValsBalance.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
         const totales = {
           saldoInicial:      _tSaldoInicial,
           ingresoMateriales: _tIngresoMateriales,
@@ -708,7 +702,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -727,12 +721,18 @@ export const reportesService = {
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsInv.has(m.referenciaId)),
         );
 
+        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+
         // Mismo patrón que getBalanceMensual: precio unificado + salidaBsMap sin redondear por movimiento
-        const compraMap = new Map<number, { qty: number; bs: number }>();
+        const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
         for (const item of compraItemsRaw) {
-          const e = compraMap.get(item.productoId) ?? { qty: 0, bs: 0 };
-          e.qty += Number(item.cantidadRecibida);
-          e.bs  += Number(item.cantidadRecibida) * Number(item.precioUnit);
+          const e      = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
+          const qty    = Number(item.cantidadRecibida);
+          const bsItem = qty * Number(item.precioUnit);
+          e.qty       += qty;
+          e.bs        += bsItem;
+          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
           compraMap.set(item.productoId, e);
         }
 
@@ -753,9 +753,6 @@ export const reportesService = {
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
           salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
         }
-
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         const grupoMap = new Map<
           number,
@@ -781,8 +778,7 @@ export const reportesService = {
               }
             >;
             saldoInicialRaw: number;
-            ingresosBsConIvaNormal: number;    // → menos13 al grupo
-            ingresosBsConIvaEspecial: number;  // gasolina Nov-Dic 2025 → menosIvaGasolina al grupo
+            ingresosExIvaRaw: number;  // sin-IVA acumulado por producto (sinIvaIngreso ya aplicado)
             salidasBsRaw: number;
           }
         >();
@@ -794,7 +790,7 @@ export const reportesService = {
           const subGrupo = esSubGrupo ? cat : null;
 
           if (!grupoMap.has(grupo.id)) {
-            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), saldoInicialRaw: 0, ingresosBsConIvaNormal: 0, ingresosBsConIvaEspecial: 0, salidasBsRaw: 0 });
+            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), saldoInicialRaw: 0, ingresosExIvaRaw: 0, salidasBsRaw: 0 });
           }
 
           const grupoEntry   = grupoMap.get(grupo.id)!;
@@ -818,9 +814,10 @@ export const reportesService = {
           const saldoInicialBs = r.totalBsInicial !== null && r.totalBsInicial !== undefined
             ? Math.round(Number(r.totalBsInicial) * 100) / 100
             : Math.round(saldoInicial * precioUnit * 100) / 100;
-          const ingresosBs    = sinIvaIngreso(compra?.bs ?? 0, gasEsp(r.productoId));
+          const ingresosBs    = compra?.sinIvaRaw ?? 0;  // pre-computado por item con tieneIva
           const salidasBsProd = salidaBsMap.has(r.productoId) ? salidaBsMap.get(r.productoId)! : salidaQty * precioUnit;
-          const totalBs       = Math.round((saldoInicialBs + ingresosBs - Math.round(salidasBsProd * 100) / 100) * 100) / 100;
+          // salidasBsProd ya es raw (acumulado sin redondear); redondear una sola vez al calcular totalBs.
+          const totalBs       = Math.round((saldoInicialBs + ingresosBs - salidasBsProd) * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: r.producto.codigo,
@@ -834,41 +831,33 @@ export const reportesService = {
             totalBs,
           });
 
-          grupoEntry.saldoInicialRaw += saldoInicialBs;
-          if (gasEsp(r.productoId)) {
-            grupoEntry.ingresosBsConIvaEspecial += compra?.bs ?? 0;
-          } else {
-            grupoEntry.ingresosBsConIvaNormal += compra?.bs ?? 0;
-          }
-          grupoEntry.salidasBsRaw += salidasBsProd;
+          grupoEntry.saldoInicialRaw   += saldoInicialBs;
+          grupoEntry.ingresosExIvaRaw  += ingresosBs;   // sinIvaIngreso ya aplicado por producto
+          grupoEntry.salidasBsRaw      += salidasBsProd;
         }
 
-        const grupos = [...grupoMap.values()]
-          .sort((a, b) => a.codigo.localeCompare(b.codigo))
-          .map((g) => {
+        const grupoValsInv = [...grupoMap.values()].sort((a, b) => a.codigo.localeCompare(b.codigo));
+        const grupos = grupoValsInv.map((g) => {
             const saldoInicial      = Math.round(g.saldoInicialRaw * 100) / 100;
-            const ingresoMateriales = Math.round((menos13(g.ingresosBsConIvaNormal) + menosIvaGasolina(g.ingresosBsConIvaEspecial)) * 100) / 100;
+            const ingresoMateriales = Math.round(g.ingresosExIvaRaw * 100) / 100;
             const salidaMateriales  = Math.round(g.salidasBsRaw * 100) / 100;
             const totalBs           = Math.round((saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100;
             return {
               codigo: g.codigo,
               nombre: g.nombre,
+              saldoInicial,
+              ingresoMateriales,
+              salidaMateriales,
               totalBs,
               subGrupos: [...g.subGrupos.values()].sort((a, b) => a.codigo.localeCompare(b.codigo)),
             };
           });
 
-        // Mismo criterio que balance-mensual:
-        // - ingresos: IVA aplicado una vez sobre el global raw
-        // - salidas: redondeo por grupo antes de sumar (igual que _tSalidaMateriales en balance)
-        // - saldoInicial: suma de valores ya redondeados por producto
-        const _rawG  = [...grupoMap.values()];
-        const _iSi   = _rawG.reduce((a, g) => a + g.saldoInicialRaw, 0);
-        const _iNorm = _rawG.reduce((a, g) => a + g.ingresosBsConIvaNormal,   0);
-        const _iEsp  = _rawG.reduce((a, g) => a + g.ingresosBsConIvaEspecial, 0);
-        const _iSal  = Math.round(_rawG.reduce((a, g) => a + Math.round(g.salidasBsRaw * 100) / 100, 0) * 100) / 100;
-        const _iIng  = Math.round((menos13(_iNorm) + menosIvaGasolina(_iEsp)) * 100) / 100;
-        const totalGeneral = Math.round((_iSi + _iIng - _iSal) * 100) / 100;
+        // Totales desde raw para coincidir con balance-mensual, cuadro-suministros y diario-almacenes.
+        const _tSaldoInicial      = Math.round(grupoValsInv.reduce((a, g) => a + g.saldoInicialRaw,   0) * 100) / 100;
+        const _tIngresoMateriales = Math.round(grupoValsInv.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
+        const _tSalidaMateriales  = Math.round(grupoValsInv.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
+        const totalGeneral = Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100;
 
         return { anio, mes, esCerrado, grupos, totalGeneral };
       }),
@@ -911,25 +900,28 @@ export const reportesService = {
             producto: {
               include: { categoria: { include: { parent: true } } },
             },
+            compra: { select: { tieneIva: true } },
           },
         });
 
         // Agregar por producto usando el precioUnit real de cada CompraItem
         const prodMap = new Map<
           number,
-          { producto: (typeof compraItems)[0]["producto"]; ingresoQty: number; ingresosBs: number }
+          { producto: (typeof compraItems)[0]["producto"]; ingresoQty: number; ingresosBs: number; sinIvaRaw: number }
         >();
 
         for (const item of compraItems) {
           const pid = item.productoId;
           if (!prodMap.has(pid)) {
-            prodMap.set(pid, { producto: item.producto, ingresoQty: 0, ingresosBs: 0 });
+            prodMap.set(pid, { producto: item.producto, ingresoQty: 0, ingresosBs: 0, sinIvaRaw: 0 });
           }
-          const entry = prodMap.get(pid)!;
+          const entry  = prodMap.get(pid)!;
           const qty    = Number(item.cantidadRecibida);
           const precio = Number(item.precioUnit);
+          const bsItem = qty * precio;
           entry.ingresoQty += qty;
-          entry.ingresosBs += qty * precio;
+          entry.ingresosBs += bsItem;
+          entry.sinIvaRaw  += sinIvaIngresoRaw(bsItem, gasEsp(pid), item.compra.tieneIva);
         }
 
         const grupoMap = new Map<
@@ -940,22 +932,26 @@ export const reportesService = {
             subGrupos: Map<number, {
               codigo: string;
               nombre: string;
-              productos: Array<{ codigo: string; nombre: string; unidad: string; ingresoQty: number; precioUnit: number; totalBsEntrada: number }>;
+              productos: Array<{
+                codigo: string; nombre: string; unidad: string;
+                ingresoQty: number;
+                precioUnit: number; precioUnitMenos13: number;
+                totalBsEntrada: number; totalBsEntradaMenos13: number;
+              }>;
             }>;
-            totalBsNormalRaw: number;    // → menos13 al grupo
-            totalBsEspecialRaw: number;  // gasolina Nov-Dic 2025 → menosIvaGasolina al grupo
+            totalBsEntradaRaw: number;  // con IVA acumulado raw
+            totalBsMenos13Raw: number;  // sin IVA acumulado raw: × 0.87 por producto primero
           }
         >();
 
-        for (const { producto, ingresoQty, ingresosBs } of prodMap.values()) {
-          const pid       = producto.id;
+        for (const { producto, ingresoQty, ingresosBs, sinIvaRaw } of prodMap.values()) {
           const cat       = producto.categoria;
           const esSubGrupo = cat.parent !== null;
           const grupo     = esSubGrupo ? cat.parent! : cat;
           const subGrupo  = esSubGrupo ? cat : null;
 
           if (!grupoMap.has(grupo.id)) {
-            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBsNormalRaw: 0, totalBsEspecialRaw: 0 });
+            grupoMap.set(grupo.id, { codigo: grupo.codigo, nombre: grupo.nombre, subGrupos: new Map(), totalBsEntradaRaw: 0, totalBsMenos13Raw: 0 });
           }
 
           const grupoEntry = grupoMap.get(grupo.id)!;
@@ -969,9 +965,14 @@ export const reportesService = {
             });
           }
 
-          // precioUnit = promedio ponderado real de las compras del período
-          const precioUnit     = Math.round((ingresosBs / ingresoQty) * 100) / 100;
-          const totalBsEntrada = Math.round(ingresosBs * 100) / 100;
+          // Precio: promedio ponderado de las compras del período (todos los decimales primero)
+          const precioUnitRaw     = ingresosBs / ingresoQty;
+          const precioUnit        = Math.round(precioUnitRaw * 100) / 100;
+          const precioUnitMenos13 = Math.round(sinIvaRaw / ingresoQty * 100) / 100;
+          const totalBsEntrada    = Math.round(ingresosBs * 100) / 100;
+          // pre-computado por item con tieneIva, acumulado sin redondear
+          const totalBsMenos13Raw = sinIvaRaw;
+          const totalBsEntradaMenos13 = Math.round(totalBsMenos13Raw * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: producto.codigo,
@@ -979,21 +980,20 @@ export const reportesService = {
             unidad: producto.unidad,
             ingresoQty,
             precioUnit,
+            precioUnitMenos13,
             totalBsEntrada,
+            totalBsEntradaMenos13,
           });
 
-          if (gasEsp(pid)) {
-            grupoEntry.totalBsEspecialRaw += ingresosBs;
-          } else {
-            grupoEntry.totalBsNormalRaw += ingresosBs;
-          }
+          grupoEntry.totalBsEntradaRaw += ingresosBs;
+          grupoEntry.totalBsMenos13Raw += totalBsMenos13Raw;
         }
 
         const grupos = [...grupoMap.values()]
           .sort((a, b) => a.codigo.localeCompare(b.codigo))
           .map((g) => {
-            const totalBsEntrada        = Math.round((g.totalBsNormalRaw + g.totalBsEspecialRaw) * 100) / 100;
-            const totalBsEntradaMenos13 = Math.round((menos13(g.totalBsNormalRaw) + menosIvaGasolina(g.totalBsEspecialRaw)) * 100) / 100;
+            const totalBsEntrada        = Math.round(g.totalBsEntradaRaw * 100) / 100;
+            const totalBsEntradaMenos13 = Math.round(g.totalBsMenos13Raw * 100) / 100;
             return {
               codigo: g.codigo,
               nombre: g.nombre,
@@ -1009,10 +1009,10 @@ export const reportesService = {
           });
 
         const rawGroups           = [...grupoMap.values()];
-        const _globalNormal       = rawGroups.reduce((a, g) => a + g.totalBsNormalRaw, 0);
-        const _globalEspecial     = rawGroups.reduce((a, g) => a + g.totalBsEspecialRaw, 0);
-        const totalGeneral        = Math.round((_globalNormal + _globalEspecial) * 100) / 100;
-        const totalGeneralMenos13 = Math.round((menos13(_globalNormal) + menosIvaGasolina(_globalEspecial)) * 100) / 100;
+        const _globalEntradaRaw   = rawGroups.reduce((a, g) => a + g.totalBsEntradaRaw, 0);
+        const _globalMenos13Raw   = rawGroups.reduce((a, g) => a + g.totalBsMenos13Raw, 0);
+        const totalGeneral        = Math.round(_globalEntradaRaw * 100) / 100;
+        const totalGeneralMenos13 = Math.round(_globalMenos13Raw * 100) / 100;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
       }),
@@ -1162,9 +1162,8 @@ export const reportesService = {
           grupoEntry.totalBsSalidaRaw += salidaBsRaw;  // acumular raw, redondear al final
         }
 
-        const grupos = [...grupoMap.values()]
-          .sort((a, b) => a.codigo.localeCompare(b.codigo))
-          .map((g) => {
+        const grupoValsSalidas = [...grupoMap.values()].sort((a, b) => a.codigo.localeCompare(b.codigo));
+        const grupos = grupoValsSalidas.map((g) => {
             const totalBsSalida = Math.round(g.totalBsSalidaRaw * 100) / 100;
             return {
               codigo: g.codigo,
@@ -1180,7 +1179,8 @@ export const reportesService = {
             };
           });
 
-        const totalGeneral        = Math.round(grupos.reduce((acc, g) => acc + g.totalBsSalida, 0) * 100) / 100;
+        // Raw → round una vez, igual que balance-mensual e inventario-almacen.
+        const totalGeneral        = Math.round(grupoValsSalidas.reduce((acc, g) => acc + g.totalBsSalidaRaw, 0) * 100) / 100;
         const totalGeneralMenos13 = totalGeneral;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
@@ -1545,7 +1545,9 @@ export const reportesService = {
           .map((s) => ({ ...s, importeBs: Math.round(s.importeBs * 100) / 100 }))
           .sort((a, b) => a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true }));
 
-        const totalGeneral = Math.round(lineas.reduce((acc, l) => acc + l.importeBs, 0) * 100) / 100;
+        // lineaMap.importeBs es raw (antes del .map() que lo redondea en lineas[]).
+        // Raw → round una vez para que coincida con balance-mensual y diario-almacenes.
+        const totalGeneral = Math.round([...lineaMap.values()].reduce((acc, l) => acc + l.importeBs, 0) * 100) / 100;
 
         // ── Agrupación por CuentaContable (codigoCompleto) ──────────────────
         // Cada CuentaContable es una "sección" del reporte de detalle de materiales.
@@ -1665,8 +1667,11 @@ export const reportesService = {
         const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
-            select: { productoId: true, precioUnit: true, precioUnitProm: true, saldoInicial: true, totalBsInicial: true },
-          }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown }[]>,
+            select: {
+              productoId: true, precioUnit: true, precioUnitProm: true, saldoInicial: true, totalBsInicial: true,
+              producto: { select: { categoria: { select: { id: true, parent: { select: { id: true } } } } } },
+            },
+          }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown; producto: { categoria: { id: number; parent: { id: number } | null } } }[]>,
           prisma.compraItem.findMany({
             where: {
               cantidadRecibida: { gt: 0 },
@@ -1679,7 +1684,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
           }),
           prisma.movimiento.findMany({
             where: {
@@ -1719,11 +1724,14 @@ export const reportesService = {
         );
 
         // Compra-average fallback for products with precioUnitProm=0 in SaldoMensual
-        const compraAccDiario = new Map<number, { totalBs: number; qty: number }>();
+        const compraAccDiario = new Map<number, { totalBs: number; qty: number; sinIvaRaw: number }>();
         for (const item of compraItemsRaw) {
-          const e = compraAccDiario.get(item.productoId) ?? { totalBs: 0, qty: 0 };
-          e.totalBs += Number(item.cantidadRecibida) * Number(item.precioUnit);
-          e.qty      += Number(item.cantidadRecibida);
+          const e      = compraAccDiario.get(item.productoId) ?? { totalBs: 0, qty: 0, sinIvaRaw: 0 };
+          const qty    = Number(item.cantidadRecibida);
+          const bsItem = qty * Number(item.precioUnit);
+          e.totalBs   += bsItem;
+          e.qty        += qty;
+          e.sinIvaRaw  += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
           compraAccDiario.set(item.productoId, e);
         }
         const compraAvgDiario = new Map<number, number>(
@@ -1743,20 +1751,25 @@ export const reportesService = {
           return acc + Math.round(Number(s.saldoInicial) * precio * 100) / 100;
         }, 0);
 
-        // comprasImporteBs viene de facturas (con IVA); se convierte a ex-IVA con menos13/menosIvaGasolina
-        let comprasImporteBsNormal   = 0;
-        let comprasImporteBsEspecial = 0;
+        // comprasImporteBs: total con IVA para mostrar
+        let comprasImporteBs = 0;
         for (const item of compraItemsRaw) {
-          const raw = Number(item.cantidadRecibida) * Number(item.precioUnit);
-          if (gasEsp(item.productoId)) {
-            comprasImporteBsEspecial += raw;
-          } else {
-            comprasImporteBsNormal += raw;
-          }
+          comprasImporteBs += Number(item.cantidadRecibida) * Number(item.precioUnit);
         }
-        const comprasImporteBs = comprasImporteBsNormal + comprasImporteBsEspecial;
 
-        const totalInventarioDebe = saldoInventarioAnterior + menos13(comprasImporteBsNormal) + menosIvaGasolina(comprasImporteBsEspecial);
+        // comprasSinIva: pre-computado por item con tieneIva, acumulado raw → redondear una vez al final
+        const grupoIngMap = new Map<number, number>();
+        for (const s of saldosMesActual) {
+          const grupoId  = s.producto.categoria.parent?.id ?? s.producto.categoria.id;
+          const exIvaRaw = compraAccDiario.get(s.productoId)?.sinIvaRaw ?? 0;
+          grupoIngMap.set(grupoId, (grupoIngMap.get(grupoId) ?? 0) + exIvaRaw);
+        }
+        // Acumular raw (sin redondear por grupo) → redondear una vez al final, igual que cuadro-suministros y balance-mensual.
+        const comprasSinIva = Math.round(
+          [...grupoIngMap.values()].reduce((a, g) => a + g, 0) * 100,
+        ) / 100;
+
+        const totalInventarioDebe = saldoInventarioAnterior + comprasSinIva;
 
         // HABER: salidas grouped by Sector (primary) → CentroCosto (secondary) → CuentaContable (lines)
         type SubCuentaEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };
@@ -1832,7 +1845,8 @@ export const reportesService = {
               })),
           }));
 
-        const totalSalidasHaber = Math.round(sectoresHaber.reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
+        // Raw del sectorMap (antes del redondeo por sector) → round una vez, igual que comprasSinIva.
+        const totalSalidasHaber = Math.round([...sectorMap.values()].reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
 
         // ── Agrupación por CuentaContable.codigoCompleto ──────────────────
         // Cada codigoCompleto = una línea de HABER en el diario.
@@ -1921,7 +1935,7 @@ export const reportesService = {
           anio, mes, esCerrado,
           saldoInventarioAnterior: Math.round(saldoInventarioAnterior * 100) / 100,
           comprasImporteBs:        Math.round(comprasImporteBs * 100) / 100,
-          comprasSinIva:           Math.round((menos13(comprasImporteBsNormal) + menosIvaGasolina(comprasImporteBsEspecial)) * 100) / 100,
+          comprasSinIva:           comprasSinIva,
           totalInventarioDebe:     Math.round(totalInventarioDebe * 100) / 100,
           sectoresHaber,
           totalSalidasHaber,
@@ -2093,43 +2107,43 @@ export const reportesService = {
           orderBy: [{ proveedor: { nombre: "asc" } }, { fechaOperacion: "asc" }, { createdAt: "asc" }],
         });
 
-        // Group by proveedor — split normal/especial raw; menos13/menosIvaGasolina al nivel de subtotal/grupo/total
-        const provMap = new Map<number, { proveedor: any; compras: any[]; totalBsNormalRaw: number; totalBsEspecialRaw: number }>();
+        // Acumular × 0.87 por producto primero (todos los decimales), sumar al proveedor/total al final
+        const provMap = new Map<number, { proveedor: any; compras: any[]; totalBsRaw: number; totalSinIVARaw: number }>();
 
         for (const c of comprasRaw) {
           if (!provMap.has(c.proveedorId)) {
-            provMap.set(c.proveedorId, { proveedor: c.proveedor, compras: [], totalBsNormalRaw: 0, totalBsEspecialRaw: 0 });
+            provMap.set(c.proveedorId, { proveedor: c.proveedor, compras: [], totalBsRaw: 0, totalSinIVARaw: 0 });
           }
           const provEntry = provMap.get(c.proveedorId)!;
 
-          let compraRawNormal = 0;
-          let compraRawEspecial = 0;
+          let compraBsRaw    = 0;
+          let compraSinIVARaw = 0;
           const items = c.items.map((item: any) => {
             const cat     = item.producto.categoria;
             const grupo   = cat.parent !== null ? cat.parent : cat;
             const pid         = item.productoId;
             const cantidad    = Number(item.cantidadRecibida);
             const precioUnit  = Number(item.precioUnit);
-            const importeBsRaw = cantidad * precioUnit;
-            if (gasEsp(pid)) {
-              compraRawEspecial += importeBsRaw;
-            } else {
-              compraRawNormal += importeBsRaw;
-            }
+            const importeBsRaw    = cantidad * precioUnit;
+            // × 0.87 por producto con todos los decimales, sin redondear al acumular
+            const importeSinIVARaw = sinIvaIngresoRaw(importeBsRaw, gasEsp(pid), c.tieneIva);
+            compraBsRaw    += importeBsRaw;
+            compraSinIVARaw += importeSinIVARaw;
             return {
               productoId: pid,
               nombre:     item.producto.nombre,
               unidad:     item.producto.unidad,
               cantidad,
               precioUnit,
+              precioUnitMenos13: Math.round(precioUnitSinIvaRaw(precioUnit, gasEsp(pid), c.tieneIva) * 100) / 100,
               importeBs:    Math.round(importeBsRaw * 100) / 100,
-              importeSinIVA: Math.round(sinIvaIngreso(importeBsRaw, gasEsp(pid)) * 100) / 100,
+              importeSinIVA: Math.round(importeSinIVARaw * 100) / 100,
               grupo: { codigo: grupo.codigo, nombre: grupo.nombre },
             };
           });
 
-          const subtotalBs     = Math.round((compraRawNormal + compraRawEspecial) * 100) / 100;
-          const subtotalSinIVA = Math.round((menos13(compraRawNormal) + menosIvaGasolina(compraRawEspecial)) * 100) / 100;
+          const subtotalBs     = Math.round(compraBsRaw * 100) / 100;
+          const subtotalSinIVA = Math.round(compraSinIVARaw * 100) / 100;
 
           provEntry.compras.push({
             id: c.id,
@@ -2139,28 +2153,148 @@ export const reportesService = {
             subtotalBs,
             subtotalSinIVA,
           });
-          provEntry.totalBsNormalRaw   += compraRawNormal;
-          provEntry.totalBsEspecialRaw += compraRawEspecial;
+          provEntry.totalBsRaw    += compraBsRaw;
+          provEntry.totalSinIVARaw += compraSinIVARaw;
         }
 
         const proveedores = [...provMap.values()].map((p) => ({
           proveedor:   p.proveedor,
           compras:     p.compras,
-          totalBs:     Math.round((p.totalBsNormalRaw + p.totalBsEspecialRaw) * 100) / 100,
-          totalSinIVA: Math.round((menos13(p.totalBsNormalRaw) + menosIvaGasolina(p.totalBsEspecialRaw)) * 100) / 100,
+          totalBs:     Math.round(p.totalBsRaw * 100) / 100,
+          totalSinIVA: Math.round(p.totalSinIVARaw * 100) / 100,
         }));
 
         const rawProvs           = [...provMap.values()];
-        const _globalNormal      = rawProvs.reduce((a, p) => a + p.totalBsNormalRaw, 0);
-        const _globalEspecial    = rawProvs.reduce((a, p) => a + p.totalBsEspecialRaw, 0);
-        const totalGeneral       = Math.round((_globalNormal + _globalEspecial) * 100) / 100;
-        const totalGeneralSinIVA = Math.round((menos13(_globalNormal) + menosIvaGasolina(_globalEspecial)) * 100) / 100;
+        const _globalBsRaw       = rawProvs.reduce((a, p) => a + p.totalBsRaw, 0);
+        const _globalSinIVARaw   = rawProvs.reduce((a, p) => a + p.totalSinIVARaw, 0);
+        const totalGeneral       = Math.round(_globalBsRaw * 100) / 100;
+        const totalGeneralSinIVA = Math.round(_globalSinIVARaw * 100) / 100;
 
         return { anio, mes, esCerrado, proveedores, totalGeneral, totalGeneralSinIVA };
       }),
     );
 
     logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Cuadro suministros generado");
+    return { anioInicio, mesInicio, anioFin, mesFin, meses };
+  },
+
+  async getComprasConSaldoInicial(query: PeriodoRangoQueryDTO) {
+    const { anioInicio, mesInicio, anioFin, mesFin } = query;
+    const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
+
+    const meses = await Promise.all(
+      rangoMeses.map(async ({ anio, mes }) => {
+        const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+        const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
+
+        // Productos que ya tenían stock al inicio del mes
+        const saldosConStock = await (prisma.saldoMensual.findMany as any)({
+          where: { anio, mes, saldoInicial: { gt: 0 } },
+          select: { productoId: true, saldoInicial: true, totalBsInicial: true },
+        }) as { productoId: number; saldoInicial: unknown; totalBsInicial: unknown }[];
+
+        if (saldosConStock.length === 0) return { anio, mes, grupos: [], totalGeneral: 0 };
+
+        const productoIds = saldosConStock.map(s => s.productoId);
+        const saldoMap = new Map(saldosConStock.map(s => [
+          s.productoId,
+          {
+            qty:  Number(s.saldoInicial),
+            bsInicial: s.totalBsInicial != null ? Math.round(Number(s.totalBsInicial) * 100) / 100 : null,
+          },
+        ]));
+
+        // Compras de esos productos en el período
+        const compraItems = await prisma.compraItem.findMany({
+          where: {
+            productoId: { in: productoIds },
+            cantidadRecibida: { gt: 0 },
+            compra: {
+              estado: { not: "ANULADA" },
+              OR: [
+                { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+                { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
+          },
+          include: {
+            producto: { include: { categoria: { include: { parent: true } } } },
+            compra: {
+              select: {
+                id: true,
+                numeroFactura: true,
+                fechaOperacion: true,
+                recibidoAt: true,
+                createdAt: true,
+                proveedor: { select: { nombre: true, razonSocial: true } },
+              },
+            },
+          },
+          orderBy: [{ producto: { codigo: "asc" } }, { compra: { fechaOperacion: "asc" } }],
+        });
+
+        if (compraItems.length === 0) return { anio, mes, grupos: [], totalGeneral: 0 };
+
+        type ProdEntry = {
+          codigo: string; nombre: string; unidad: string;
+          saldoInicialQty: number; saldoInicialBs: number | null;
+          compras: Array<{ fecha: Date | null; numeroFactura: string | null; proveedor: string; cantidad: number; precioUnit: number; importeBs: number }>;
+          rawBs: number;
+        };
+        type GrupoEntry = { grupoCodigo: string; grupoNombre: string; productoMap: Map<number, ProdEntry> };
+
+        const grupoMap = new Map<number, GrupoEntry>();
+
+        for (const item of compraItems) {
+          const cat    = item.producto.categoria;
+          const grupo  = cat.parent ?? cat;
+          if (!grupoMap.has(grupo.id)) {
+            grupoMap.set(grupo.id, { grupoCodigo: grupo.codigo, grupoNombre: grupo.nombre, productoMap: new Map() });
+          }
+          const grupoEntry = grupoMap.get(grupo.id)!;
+
+          if (!grupoEntry.productoMap.has(item.productoId)) {
+            const sal = saldoMap.get(item.productoId)!;
+            grupoEntry.productoMap.set(item.productoId, {
+              codigo: item.producto.codigo,
+              nombre: item.producto.nombre,
+              unidad: item.producto.unidad,
+              saldoInicialQty: sal.qty,
+              saldoInicialBs:  sal.bsInicial,
+              compras: [],
+              rawBs: 0,
+            });
+          }
+
+          const prod       = grupoEntry.productoMap.get(item.productoId)!;
+          const cantidad   = Number(item.cantidadRecibida);
+          const precioUnit = Number(item.precioUnit);
+          const importeBs  = Math.round(cantidad * precioUnit * 100) / 100;
+          const fecha      = item.compra.fechaOperacion ?? item.compra.recibidoAt ?? item.compra.createdAt;
+          const proveedor  = item.compra.proveedor?.nombre ?? item.compra.proveedor?.razonSocial ?? "Sin proveedor";
+
+          prod.compras.push({ fecha, numeroFactura: item.compra.numeroFactura ?? null, proveedor, cantidad, precioUnit, importeBs });
+          prod.rawBs += importeBs;
+        }
+
+        const grupos = [...grupoMap.values()]
+          .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
+          .map(g => {
+            const productos = [...g.productoMap.values()]
+              .sort((a, b) => a.codigo.localeCompare(b.codigo))
+              .map(p => ({ ...p, totalCompradoBs: Math.round(p.rawBs * 100) / 100, rawBs: undefined }));
+            const totalBs = Math.round(productos.reduce((a, p) => a + p.totalCompradoBs, 0) * 100) / 100;
+            return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, productos, totalBs };
+          });
+
+        const totalGeneral = Math.round(grupos.reduce((a, g) => a + g.totalBs, 0) * 100) / 100;
+
+        return { anio, mes, grupos, totalGeneral };
+      }),
+    );
+
+    logger.info({ anioInicio, mesInicio, anioFin, mesFin }, "Compras con saldo inicial generado");
     return { anioInicio, mesInicio, anioFin, mesFin, meses };
   },
 };

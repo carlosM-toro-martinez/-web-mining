@@ -19,6 +19,56 @@ function precioPromDec(s: any): Prisma.Decimal {
   return prom.gt(0) ? prom : new Prisma.Decimal(s.precioUnit ?? 0);
 }
 
+function calcularCPP(
+  qAntes: Prisma.Decimal,
+  cppAntes: Prisma.Decimal,
+  qEntrada: Prisma.Decimal,
+  precioEntrada: Prisma.Decimal,
+): Prisma.Decimal {
+  const totalQ = qAntes.add(qEntrada);
+  if (totalQ.isZero()) return precioEntrada;
+  return qAntes.mul(cppAntes).add(qEntrada.mul(precioEntrada)).div(totalQ);
+}
+
+// Reproduce los movimientos del período en orden createdAt para obtener el CPP actual.
+async function computeCPPRetroactivo(
+  productoId: number,
+  periodoAnio: number,
+  periodoMes: number,
+  saldoInicial: number,
+  cppInicial: Prisma.Decimal,
+): Promise<Prisma.Decimal> {
+  const startOfPeriod = new Date(Date.UTC(periodoAnio, periodoMes - 1, 1));
+  const endOfPeriod   = new Date(Date.UTC(periodoMes === 12 ? periodoAnio + 1 : periodoAnio, periodoMes === 12 ? 0 : periodoMes, 1));
+
+  const movimientos = await prisma.movimiento.findMany({
+    where: {
+      productoId,
+      OR: [
+        { esRetroactivo: true,  periodoAnio, periodoMes },
+        { esRetroactivo: false, createdAt: { gte: startOfPeriod, lt: endOfPeriod } },
+      ],
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { tipo: true, cantidad: true, precioUnit: true },
+  });
+
+  let cpp   = cppInicial;
+  let stock = new Prisma.Decimal(saldoInicial);
+
+  for (const mov of movimientos) {
+    const qty = new Prisma.Decimal(mov.cantidad);
+    if (mov.tipo === 'ENTRADA') {
+      cpp   = calcularCPP(stock, cpp, qty, new Prisma.Decimal(mov.precioUnit));
+      stock = stock.add(qty);
+    } else {
+      stock = stock.sub(qty);
+    }
+  }
+
+  return cpp;
+}
+
 const valeIncludeCompleto = {
   solicitante: { select: { id: true, nombre: true, email: true } },
   superintendente: { select: { id: true, nombre: true, email: true } },
@@ -328,18 +378,41 @@ export const valesService = {
           where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
         });
 
-        const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
+        // Stock virtual real: saldoInicial + entradas − salidas del período (ignora saldoFinal que puede estar desfasado)
+        const startOfPeriod = new Date(Date.UTC(periodoAnio!, periodoMes! - 1, 1));
+        const endOfPeriod   = new Date(Date.UTC(periodoMes! === 12 ? periodoAnio! + 1 : periodoAnio!, periodoMes! === 12 ? 0 : periodoMes!, 1));
+        const movsDelPeriodo = await prisma.movimiento.findMany({
+          where: {
+            productoId: item.productoId,
+            OR: [
+              { esRetroactivo: true,  periodoAnio: periodoAnio!, periodoMes: periodoMes! },
+              { esRetroactivo: false, createdAt: { gte: startOfPeriod, lt: endOfPeriod } },
+            ],
+          },
+          select: { tipo: true, cantidad: true },
+        });
+        const totalEntradas = movsDelPeriodo.filter(m => m.tipo === 'ENTRADA').reduce((s, m) => s + Number(m.cantidad), 0);
+        const totalSalidas  = movsDelPeriodo.filter(m => m.tipo === 'SALIDA' ).reduce((s, m) => s + Number(m.cantidad), 0);
+        const stockAntesRetro   = new Prisma.Decimal(Number(saldo?.saldoInicial ?? 0) + totalEntradas - totalSalidas);
         const stockDespuesRetro = stockAntesRetro.sub(cantidad);
-        let precioUnitRetro: Prisma.Decimal;
-        if (saldo) {
-          precioUnitRetro = precioPromDec(saldo);
-        } else {
-          const saldoReciente = await prisma.saldoMensual.findFirst({
-            where: { productoId: item.productoId },
-            orderBy: [{ anio: 'desc' }, { mes: 'desc' }],
-          });
-          precioUnitRetro = saldoReciente ? precioPromDec(saldoReciente) : new Prisma.Decimal(0);
-        }
+        // CPP inicial del período: viene del mes anterior (fuente más confiable)
+        const prevMes  = periodoMes! === 1 ? 12 : periodoMes! - 1;
+        const prevAnio = periodoMes! === 1 ? periodoAnio! - 1 : periodoAnio!;
+        const saldoPrev = await (prisma.saldoMensual.findUnique as any)({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: prevAnio, mes: prevMes } },
+        });
+        const cppInicial: Prisma.Decimal = saldoPrev
+          ? precioPromDec(saldoPrev)
+          : saldo ? precioPromDec(saldo) : new Prisma.Decimal(0);
+
+        // Reproduce movimientos del período en orden cronológico para obtener el CPP real
+        const precioUnitRetro = await computeCPPRetroactivo(
+          item.productoId,
+          periodoAnio!,
+          periodoMes!,
+          Number(saldo?.saldoInicial ?? 0),
+          cppInicial,
+        );
 
         const movimiento = await prisma.movimiento.create({
           data: {
@@ -362,12 +435,12 @@ export const valesService = {
             esRetroactivo: true,
             periodoAnio: periodoAnio ?? null,
             periodoMes: periodoMes ?? null,
-            createdAt: vale.fechaOperacion!,
+            ...(vale.fechaOperacion ? { createdAt: vale.fechaOperacion } : {}),
           },
         });
 
         const nuevaSalida    = new Prisma.Decimal(saldo?.salidaQty ?? 0).add(cantidad);
-        const nuevoFinal     = new Prisma.Decimal(saldo?.saldoFinal ?? 0).sub(cantidad);
+        const nuevoFinal     = stockDespuesRetro;
         const precioSaldo    = saldo ? new Prisma.Decimal(saldo.precioUnit) : new Prisma.Decimal(precioUnitRetro);
         const precioSaldoProm = saldo ? new Prisma.Decimal((saldo as any).precioUnitProm ?? 0) : precioSaldo;
         await (prisma.saldoMensual.upsert as any)({
@@ -628,7 +701,6 @@ export const valesService = {
             esRetroactivo: true,
             periodoAnio: periodoAnio ?? null,
             periodoMes:  periodoMes  ?? null,
-            createdAt: vale.fechaOperacion ?? new Date(),
           },
         });
 

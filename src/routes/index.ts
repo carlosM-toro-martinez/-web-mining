@@ -16,6 +16,7 @@ import inventarioImportRoutes from "../modules/inventarioImport/inventarioImport
 import personalRoutes from "../modules/personal/personal.routes.js";
 import eppRoutes from "../modules/epp/epp.routes.js";
 import ambientalRoutes from "../modules/ambiental/ambiental.routes.js";
+import backfillRoutes from "../modules/backfill/backfill.routes.js";
 
 const router = Router();
 
@@ -42,5 +43,6 @@ router.use("/inventario-import", inventarioImportRoutes);
 router.use("/personal", personalRoutes);
 router.use("/epp", eppRoutes);
 router.use("/ambiental", ambientalRoutes);
+router.use("/backfill", backfillRoutes);
 
 export default router;

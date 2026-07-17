@@ -6,6 +6,17 @@ import { HttpError } from "../../errors/http.error.js";
 import { detectarPeriodo } from "../../utils/periodoRetroactivo.js";
 import type { CreateCompraDTO, RecibirCompraDTO, CompraQueryDTO } from "./compras.types.js";
 
+function calcularCPP(
+  qAntes: Prisma.Decimal,
+  precioPromExIva: Prisma.Decimal,
+  qCompra: Prisma.Decimal,
+  precioCompraExIva: Prisma.Decimal,
+): Prisma.Decimal {
+  const totalQ = qAntes.add(qCompra);
+  if (totalQ.isZero()) return precioCompraExIva;
+  return qAntes.mul(precioPromExIva).add(qCompra.mul(precioCompraExIva)).div(totalQ);
+}
+
 export const comprasService = {
   async createCompra(data: CreateCompraDTO, userId: number) {
     // Validar que proveedor existe
@@ -60,6 +71,7 @@ export const comprasService = {
         observacion: data.observacion ?? null,
         fechaOperacion: data.fechaOperacion ?? null,
         numeroFactura: data.numeroFactura ?? null,
+        tieneIva: data.tieneIva ?? true,
         items: {
           create: itemsResueltos.map((item) => ({
             productoId: item.productoId,
@@ -247,6 +259,7 @@ export const comprasService = {
 
           const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
           const stockDespuesRetro = stockAntesRetro.add(cantidadRecibidaAhora);
+          const precioSinIva = new Prisma.Decimal(precioUnit).mul(compra.tieneIva ? '0.87' : '1');
 
           const movimiento = await prisma.movimiento.create({
             data: {
@@ -254,10 +267,10 @@ export const comprasService = {
               productoId: item.productoId,
               tipo: "ENTRADA",
               cantidad: cantidadRecibidaAhora,
-              precioUnit,
-              entradaBs: new Prisma.Decimal(precioUnit).mul(cantidadRecibidaAhora),
+              precioUnit: precioSinIva,
+              entradaBs: precioSinIva.mul(cantidadRecibidaAhora),
               salidaBs: 0,
-              saldoBs: stockDespuesRetro.mul(precioUnit),
+              saldoBs: stockDespuesRetro.mul(precioSinIva),
               stockAntes: stockAntesRetro,
               stockDespues: stockDespuesRetro,
               usuarioId: userId,
@@ -268,17 +281,24 @@ export const comprasService = {
               esRetroactivo: true,
               periodoAnio: periodoAnio ?? null,
               periodoMes: periodoMes ?? null,
-              createdAt: compra.fechaOperacion!,
+              ...(compra.fechaOperacion ? { createdAt: compra.fechaOperacion } : {}),
             },
           });
 
           const nuevoIngreso    = new Prisma.Decimal(saldo?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
           const nuevoFinal      = new Prisma.Decimal(saldo?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
-          const precioUnitDec   = new Prisma.Decimal(precioUnit);
-          const precioSinIva    = precioUnitDec.mul('0.87');
-          // Acumulado Bs de entradas a precio sin IVA → promedio ponderado ex-IVA
-          const newIngresosBs    = new Prisma.Decimal((saldo as any)?.ingresosBs ?? 0).add(precioSinIva.mul(cantidadRecibidaAhora));
-          const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : precioSinIva;
+          const newIngresosBs   = new Prisma.Decimal((saldo as any)?.ingresosBs ?? 0).add(precioSinIva.mul(cantidadRecibidaAhora));
+          const cpPrevioRetro   = new Prisma.Decimal(
+            Number((saldo as any)?.precioUnitProm ?? 0) > 0
+              ? (saldo as any).precioUnitProm
+              : Number((saldo as any)?.precioUnit ?? 0) > 0 ? (saldo as any).precioUnit : 0,
+          );
+          const newPrecioUnitProm = calcularCPP(
+            stockAntesRetro,
+            cpPrevioRetro,
+            new Prisma.Decimal(cantidadRecibidaAhora),
+            precioSinIva,
+          );
           await (prisma.saldoMensual.upsert as any)({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: periodoAnio!, mes: periodoMes! } },
             update: {
@@ -313,16 +333,17 @@ export const comprasService = {
           const stockAntes = item.producto.stock!.cantidad;
           const stockDespues = new Prisma.Decimal(stockAntes).add(cantidadRecibidaAhora);
 
+          const precioSinIvaAct = new Prisma.Decimal(precioUnit).mul(compra.tieneIva ? '0.87' : '1');
           const movimiento = await prisma.movimiento.create({
             data: {
               operationId: randomUUID(),
               productoId: item.productoId,
               tipo: "ENTRADA",
               cantidad: cantidadRecibidaAhora,
-              precioUnit,
-              entradaBs: new Prisma.Decimal(precioUnit).mul(cantidadRecibidaAhora),
+              precioUnit: precioSinIvaAct,
+              entradaBs: precioSinIvaAct.mul(cantidadRecibidaAhora),
               salidaBs: 0,
-              saldoBs: stockDespues.mul(precioUnit),
+              saldoBs: stockDespues.mul(precioSinIvaAct),
               stockAntes,
               stockDespues,
               usuarioId: userId,
@@ -356,14 +377,30 @@ export const comprasService = {
           const ahora      = new Date();
           const anioActual = ahora.getUTCFullYear();
           const mesActual  = ahora.getUTCMonth() + 1;
-          const precioUnitDec  = new Prisma.Decimal(precioUnit);
-          const precioSinIvaAct = precioUnitDec.mul('0.87');
           const saldoActual = await prisma.saldoMensual.findUnique({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: anioActual, mes: mesActual } },
           });
           const nuevoIngresoQty  = new Prisma.Decimal(saldoActual?.ingresoQty ?? 0).add(cantidadRecibidaAhora);
           const newIngresosBs    = new Prisma.Decimal((saldoActual as any)?.ingresosBs ?? 0).add(precioSinIvaAct.mul(cantidadRecibidaAhora));
-          const newPrecioUnitProm = nuevoIngresoQty.gt(0) ? newIngresosBs.div(nuevoIngresoQty) : precioSinIvaAct;
+          // CPP para UPDATE: precio previo viene del saldoActual existente
+          const cpPrevioAct = new Prisma.Decimal(
+            Number((saldoActual as any)?.precioUnitProm ?? 0) > 0
+              ? (saldoActual as any)!.precioUnitProm
+              : Number(saldoActual?.precioUnit ?? 0) > 0 ? saldoActual!.precioUnit : 0,
+          );
+          const newPrecioUnitProm = calcularCPP(
+            cantidadAntes,
+            cpPrevioAct,
+            new Prisma.Decimal(cantidadRecibidaAhora),
+            precioSinIvaAct,
+          );
+          // CPP para CREATE (primera compra del mes): stock.precioProm es CON IVA → × 0.87 ex-IVA
+          const cppCreate = calcularCPP(
+            cantidadAntes,
+            cantidadAntes.gt(0) ? promAnterior.mul('0.87') : new Prisma.Decimal(0),
+            new Prisma.Decimal(cantidadRecibidaAhora),
+            precioSinIvaAct,
+          );
           const nuevoSaldoFinal  = new Prisma.Decimal(saldoActual?.saldoFinal ?? stockDespues);
           await (prisma.saldoMensual.upsert as any)({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: anioActual, mes: mesActual } },
@@ -385,8 +422,8 @@ export const comprasService = {
               precioUnit:     precioSinIvaAct,
               totalBs:        stockDespues.mul(precioSinIvaAct),
               ingresosBs:     precioSinIvaAct.mul(cantidadRecibidaAhora),
-              precioUnitProm: precioSinIvaAct,
-              totalBsProm:    stockDespues.mul(precioSinIvaAct),
+              precioUnitProm: cppCreate,
+              totalBsProm:    stockDespues.mul(cppCreate),
             },
           });
 
@@ -564,7 +601,6 @@ export const comprasService = {
             esRetroactivo: true,
             periodoAnio: periodoAnio ?? null,
             periodoMes:  periodoMes  ?? null,
-            createdAt: compra.fechaOperacion ?? new Date(),
           },
         });
 

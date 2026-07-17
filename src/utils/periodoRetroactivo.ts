@@ -31,12 +31,12 @@ export async function verificarMesAbierto(anio: number, mes: number): Promise<vo
 export async function detectarPeriodo(fechaOperacion: Date | null | undefined): Promise<DeteccionPeriodo> {
   if (!fechaOperacion) return { esRetroactivo: false };
 
-  const anioOp = fechaOperacion.getFullYear();
-  const mesOp  = fechaOperacion.getMonth() + 1;
+  const anioOp = fechaOperacion.getUTCFullYear();
+  const mesOp  = fechaOperacion.getUTCMonth() + 1;
 
   const ahora      = new Date();
-  const anioActual = ahora.getFullYear();
-  const mesActual  = ahora.getMonth() + 1;
+  const anioActual = ahora.getUTCFullYear();
+  const mesActual  = ahora.getUTCMonth() + 1;
 
   const esMesPasado = anioOp < anioActual || (anioOp === anioActual && mesOp < mesActual);
 

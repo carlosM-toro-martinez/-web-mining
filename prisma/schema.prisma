@@ -58,6 +58,10 @@ model Log {
 }
 
 ////////////////////////////////
+// INVENTARIO
+////////////////////////////////
+
+////////////////////////////////
 // CONTABILIDAD
 ////////////////////////////////
 
@@ -94,10 +98,6 @@ model CuentaContable {
   movimientos    Movimiento[]
   productos      Producto[]
 }
-
-////////////////////////////////
-// INVENTARIO
-////////////////////////////////
 
 model CategoriaInventario {
   id        Int                   @id @default(autoincrement())
@@ -238,6 +238,7 @@ model Compra {
   fechaOperacion    DateTime?
   usuarioRecibidoId Int?
   usuarioRegistroId Int
+  tieneIva          Boolean          @default(true)
   proveedor         Proveedor        @relation(fields: [proveedorId], references: [id])
   usuarioRecibe     User?            @relation("UsuarioRecibe", fields: [usuarioRecibidoId], references: [id])
   usuarioRegistro   User             @relation("UsuarioRegistro", fields: [usuarioRegistroId], references: [id])
