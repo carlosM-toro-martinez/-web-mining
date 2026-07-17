@@ -59,7 +59,7 @@ async function procesarProductoMes(
     ...new Set(
       movimientos
         .filter(m => m.tipo === "ENTRADA" && m.referencia === "COMPRA" && m.referenciaId != null)
-        .map(m => m.referenciaId as number),
+        .map(m => m.referenciaId as string),
     ),
   ];
 
@@ -117,8 +117,8 @@ async function procesarProductoMes(
 
     if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA") {
       // Compra real: precio CON IVA de CompraItem → factor según tieneIva (idempotente)
-      const precioConIva = ciMap.get(mov.referenciaId as number) ?? Number(mov.precioUnit);
-      const tieneIva     = ciTieneIvaMap.get(mov.referenciaId as number) ?? true;
+      const precioConIva = ciMap.get(mov.referenciaId as string) ?? Number(mov.precioUnit);
+      const tieneIva     = ciTieneIvaMap.get(mov.referenciaId as string) ?? true;
       const precioSinIva = new Prisma.Decimal(precioConIva).mul(tieneIva ? "0.87" : "1");
 
       const newCPP   = calcularCPP(currentStock, currentCPP, qty, precioSinIva);
