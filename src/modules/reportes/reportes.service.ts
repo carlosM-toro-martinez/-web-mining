@@ -1664,7 +1664,7 @@ export const reportesService = {
         const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
-        const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario] = await Promise.all([
+        const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario, valesDelMes] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
             select: {
@@ -1697,7 +1697,8 @@ export const reportesService = {
               ],
             },
             include: {
-              cuenta: { include: { centroCosto: true, funcionGasto: true, sector: true } },
+              cuenta:    { include: { centroCosto: true, funcionGasto: true, sector: true } },
+              producto:  { select: { id: true, nombre: true, unidad: true } },
             },
           }),
           prisma.movimiento.findMany({
@@ -1710,6 +1711,22 @@ export const reportesService = {
             },
             select: { referenciaId: true },
           }),
+          (prisma.vale.findMany as any)({
+            where: {
+              OR: [
+                { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+                { fechaOperacion: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+              ],
+            },
+            select: {
+              id:             true,
+              fechaOperacion: true,
+              createdAt:      true,
+              solicitante:    { select: { id: true, nombre: true } },
+              superintendente:{ select: { id: true, nombre: true } },
+            },
+            orderBy: [{ fechaOperacion: "asc" }, { createdAt: "asc" }],
+          }) as Promise<any[]>,
         ]);
 
         const valesAnuladosIdsDiario = new Set(
@@ -1717,6 +1734,13 @@ export const reportesService = {
         );
         const movimientos = movimentosRaw.filter(
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsDiario.has(m.referenciaId)),
+        );
+
+        // Mapa de vales del mes (excluye anulados) para lookup rápido por ID
+        const valeInfoMap = new Map<string, any>(
+          valesDelMes
+            .filter((v: any) => !valesAnuladosIdsDiario.has(v.id))
+            .map((v: any) => [v.id, v]),
         );
 
         const precioMap = new Map<number, number>(
@@ -1771,120 +1795,106 @@ export const reportesService = {
 
         const totalInventarioDebe = saldoInventarioAnterior + comprasSinIva;
 
-        // HABER: salidas grouped by Sector (primary) → CentroCosto (secondary) → CuentaContable (lines)
-        type SubCuentaEntry = { cuentaId: number; codigoCompleto: string; funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };
-        type CcEntry        = { centroCostoCodigo: string; centroCostoNombre: string; subCuentas: Map<number, SubCuentaEntry>; totalBs: number };
-        type SectorEntry    = { sectorId: number | null; sectorCodigo: string | null; sectorNombre: string | null; centroCostos: Map<number, CcEntry>; totalBs: number };
+        // HABER: un solo loop acumula tanto sectoresHaber (imagen 1) como cuentasHaber (imágenes 2 y 3).
+        // sectoresHaber: Sector → FuncionGasto (agrupado entre todos los centroCostos del sector).
+        // cuentasHaber:  por codigoCompleto (una entrada por par centroCosto–funcionGasto).
+        // Mismo precio sin-IVA en ambas acumulaciones → sub-items suman exactamente a los totales.
+        type FgEntry     = { funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };
+        type SectorEntry = { sectorId: number | null; sectorCodigo: string | null; sectorNombre: string | null; funcionGastos: Map<string, FgEntry>; totalBs: number };
+        type LinHaberEntry = { subCentro: string; nombre: string; importeBs: number; subCuentas: string[] };
+        type CcHaberEntry = {
+          codigoCompleto:     string;
+          centroCostoCodigo:  string;
+          centroCostoNombre:  string;
+          sectorNombre:       string | null;
+          sectorKey:          number;   // sectorId ?? -1, para agrupar en last-absorbs
+          funcionGastoCodigo: string;
+          funcionGastoNombre: string;
+          esTransporte:       boolean;
+          lineas:             Map<string, LinHaberEntry>;
+          totalBs:            number;
+          totalCantidad:      number;
+        };
 
-        // Use -1 as map key for movements with no sector
-        const sectorMap = new Map<number, SectorEntry>();
+        type ValeLinea = { productoId: number; nombre: string; unidad: string; cantidad: number; precioUnit: number; importeBs: number };
+        type ValeAcum  = { totalBs: number; lineas: Map<number, ValeLinea> };
+
+        const sectorMap  = new Map<number, SectorEntry>();
+        const ccHaberMap = new Map<string, CcHaberEntry>();
+        const sectorVales = new Map<number, Map<string, ValeAcum>>();
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
-          const _psDiario1       = precioMap.get(mov.productoId);
-          const _compraFallback  = compraAvgDiario.get(mov.productoId) ?? 0;
-          // Usar precio ex-IVA en todos los casos; compraAvgDiario viene de facturas (con IVA) → menos13
-          const precio = (_psDiario1 != null && _psDiario1 > 0)
-            ? _psDiario1
+          const _ps            = precioMap.get(mov.productoId);
+          const _compraFallback = compraAvgDiario.get(mov.productoId) ?? 0;
+          // Precio siempre sin-IVA; compraAvgDiario viene de facturas (con IVA) → menos13
+          const precio = (_ps != null && _ps > 0)
+            ? _ps
             : _compraFallback > 0 ? menos13(_compraFallback) : Number(mov.precioUnit);
-          const importeBs = Number(mov.cantidad) * precio;
-          const sectorKey = mov.cuenta.sectorId ?? -1;
+          const importeBs    = Number(mov.cantidad) * precio;
+          const sectorKey    = mov.cuenta.sectorId ?? -1;
+          const esTransporte = mov.cuenta.sectorId !== null;
 
+          // -- sectorMap: agrupa por funcionGasto dentro del sector (imagen 1) --
           if (!sectorMap.has(sectorKey)) {
             sectorMap.set(sectorKey, {
-              sectorId:     mov.cuenta.sectorId ?? null,
-              sectorCodigo: mov.cuenta.sector?.codigo ?? null,
-              sectorNombre: mov.cuenta.sector?.nombre ?? null,
-              centroCostos: new Map(),
-              totalBs:      0,
+              sectorId:      mov.cuenta.sectorId ?? null,
+              sectorCodigo:  mov.cuenta.sector?.codigo ?? null,
+              sectorNombre:  mov.cuenta.sector?.nombre ?? null,
+              funcionGastos: new Map(),
+              totalBs:       0,
             });
           }
           const sectorEntry = sectorMap.get(sectorKey)!;
           sectorEntry.totalBs += importeBs;
 
-          const ccId = mov.cuenta.centroCostoId;
-          if (!sectorEntry.centroCostos.has(ccId)) {
-            sectorEntry.centroCostos.set(ccId, {
-              centroCostoCodigo: mov.cuenta.centroCosto.codigo,
-              centroCostoNombre: mov.cuenta.centroCosto.nombre,
-              subCuentas: new Map(),
+          const fgCodigo = mov.cuenta.funcionGasto.codigo;
+          if (!sectorEntry.funcionGastos.has(fgCodigo)) {
+            sectorEntry.funcionGastos.set(fgCodigo, {
+              funcionGastoCodigo: fgCodigo,
+              funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
               totalBs: 0,
             });
           }
-          const ccEntry = sectorEntry.centroCostos.get(ccId)!;
-          ccEntry.totalBs += importeBs;
+          sectorEntry.funcionGastos.get(fgCodigo)!.totalBs += importeBs;
 
-          if (!ccEntry.subCuentas.has(mov.cuentaId)) {
-            ccEntry.subCuentas.set(mov.cuentaId, {
-              cuentaId:           mov.cuentaId,
-              codigoCompleto:     mov.cuenta.codigoCompleto,
-              funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
-              funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
-              totalBs:            0,
-            });
+          // Acumula vale por sector con detalle de producto
+          if (mov.referencia === "VALE" && mov.referenciaId) {
+            if (!sectorVales.has(sectorKey)) sectorVales.set(sectorKey, new Map());
+            const vm = sectorVales.get(sectorKey)!;
+            if (!vm.has(mov.referenciaId)) vm.set(mov.referenciaId, { totalBs: 0, lineas: new Map() });
+            const ve = vm.get(mov.referenciaId)!;
+            ve.totalBs += importeBs;
+            if (!ve.lineas.has(mov.productoId)) {
+              ve.lineas.set(mov.productoId, {
+                productoId: mov.productoId,
+                nombre:     (mov as any).producto?.nombre ?? String(mov.productoId),
+                unidad:     (mov as any).producto?.unidad ?? "",
+                cantidad:   0,
+                precioUnit: precio,
+                importeBs:  0,
+              });
+            }
+            const lin = ve.lineas.get(mov.productoId)!;
+            lin.cantidad  += Number(mov.cantidad);
+            lin.importeBs += importeBs;
           }
-          ccEntry.subCuentas.get(mov.cuentaId)!.totalBs += importeBs;
-        }
 
-        const sectoresHaber = [...sectorMap.values()]
-          .sort((a, b) => (a.sectorCodigo ?? "").localeCompare(b.sectorCodigo ?? "", undefined, { numeric: true }))
-          .map((s) => ({
-            sectorId:     s.sectorId,
-            sectorCodigo: s.sectorCodigo,
-            sectorNombre: s.sectorNombre,
-            totalBs:      Math.round(s.totalBs * 100) / 100,
-            centroCostos: [...s.centroCostos.values()]
-              .sort((a, b) => a.centroCostoCodigo.localeCompare(b.centroCostoCodigo, undefined, { numeric: true }))
-              .map((cc) => ({
-                centroCostoCodigo: cc.centroCostoCodigo,
-                centroCostoNombre: cc.centroCostoNombre,
-                totalBs:           Math.round(cc.totalBs * 100) / 100,
-                subCuentas:        [...cc.subCuentas.values()]
-                  .sort((a, b) => a.funcionGastoCodigo.localeCompare(b.funcionGastoCodigo, undefined, { numeric: true }))
-                  .map((sc) => ({ ...sc, totalBs: Math.round(sc.totalBs * 100) / 100 })),
-              })),
-          }));
-
-        // Raw del sectorMap (antes del redondeo por sector) → round una vez, igual que comprasSinIva.
-        const totalSalidasHaber = Math.round([...sectorMap.values()].reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
-
-        // ── Agrupación por CuentaContable.codigoCompleto ──────────────────
-        // Cada codigoCompleto = una línea de HABER en el diario.
-        // - No-transporte: sub-líneas por funcionGasto, con todos los centroCosto involucrados.
-        //   El frontend usa subCentro como código de línea (imagen 1) o
-        //   subCuentas.sort().join("-") + "-" + subCentro como "No DE CUENTA" (imagen 2).
-        // - Transporte: solo total (las imágenes no muestran detalle de vehículos aquí).
-        type LinHaberEntry = { subCentro: string; nombre: string; importeBs: number; subCuentas: string[] };
-        type CcHaberEntry = {
-          codigoCompleto:    string;
-          centroCostoCodigo: string;
-          centroCostoNombre: string;
-          sectorNombre:      string | null;
-          esTransporte:      boolean;
-          lineas:            Map<string, LinHaberEntry>;
-          totalBs:           number;
-          totalCantidad:     number;
-        };
-        const ccHaberMap = new Map<string, CcHaberEntry>();
-
-        for (const mov of movimientos) {
-          if (!mov.cuenta) continue;
-          const _psDiario2 = precioMap.get(mov.productoId);
-          const precio    = (_psDiario2 != null && _psDiario2 > 0) ? _psDiario2 : (compraAvgDiario.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Number(mov.cantidad) * precio;
-          const cc        = mov.cuenta.codigoCompleto;
-          const esTransporte = mov.cuenta.sectorId !== null;
-
+          // -- ccHaberMap: por codigoCompleto (imágenes 2 y 3) --
+          const cc = mov.cuenta.codigoCompleto;
           if (!ccHaberMap.has(cc)) {
             ccHaberMap.set(cc, {
-              codigoCompleto:    cc,
-              centroCostoCodigo: mov.cuenta.centroCosto.codigo,
-              centroCostoNombre: mov.cuenta.centroCosto.nombre,
-              sectorNombre:      mov.cuenta.sector?.nombre ?? null,
+              codigoCompleto:     cc,
+              centroCostoCodigo:  mov.cuenta.centroCosto.codigo,
+              centroCostoNombre:  mov.cuenta.centroCosto.nombre,
+              sectorNombre:       mov.cuenta.sector?.nombre ?? null,
+              sectorKey,
+              funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
+              funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
               esTransporte,
-              lineas:         new Map(),
-              totalBs:        0,
-              totalCantidad:  0,
+              lineas:        new Map(),
+              totalBs:       0,
+              totalCantidad: 0,
             });
           }
           const ccEntry = ccHaberMap.get(cc)!;
@@ -1904,32 +1914,138 @@ export const reportesService = {
           }
         }
 
-        const cuentasHaber = [...ccHaberMap.values()]
-          .sort((a, b) => a.codigoCompleto.localeCompare(b.codigoCompleto))
-          .map((entry) => {
+        // totalSalidasHaber: acumular raw → redondear una sola vez (igual que balance-mensual).
+        const totalSalidasHaber = Math.round([...sectorMap.values()].reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
+
+        // saldoInventarioFinal (HABER): totalInventarioDebe - totalSalidasHaber → DEBE = HABER.
+        const saldoInventarioFinal = Math.round((totalInventarioDebe - totalSalidasHaber) * 100) / 100;
+
+        // Paso 1: sectorTotalBsMap — totalBs_2dp por sector con último-absorbe.
+        // sum(sector.totalBs_2dp) === totalSalidasHaber exactamente.
+        const sectorTotalBsMap = new Map<number, number>();
+        const sectorValsSorted = [...sectorMap.values()]
+          .sort((a, b) => (a.sectorCodigo ?? "").localeCompare(b.sectorCodigo ?? "", undefined, { numeric: true }));
+        {
+          let acc = 0;
+          for (let si = 0; si < sectorValsSorted.length; si++) {
+            const s    = sectorValsSorted[si]!;
+            const isLast = si === sectorValsSorted.length - 1;
+            const v  = isLast ? Math.round((totalSalidasHaber - acc) * 100) / 100
+                              : Math.round(s.totalBs * 100) / 100;
+            if (!isLast) acc += v;
+            sectorTotalBsMap.set(s.sectorId ?? -1, v);
+          }
+        }
+
+        // Paso 2: cuentasHaber con último-absorbe por sector, acumulando fg ajustados.
+        // fgBySector[sk][fg] = suma de cuentasHaber.totalBs_2dp para ese fg en ese sector.
+        // sectoresHaber.funcionGastos se deriva de fgBySector → valores coherentes con lo que
+        // el reporte muestra en IMPORTE y SUB TOTALES (ambas columnas suman igual).
+        type FgAdjEntry = { funcionGastoCodigo: string; funcionGastoNombre: string; totalBs: number };
+        const fgBySector = new Map<number, Map<string, FgAdjEntry>>();
+
+        const ccEntriesSorted = [...ccHaberMap.values()]
+          .sort((a, b) => a.codigoCompleto.localeCompare(b.codigoCompleto));
+        const ccBySector = new Map<number, typeof ccEntriesSorted>();
+        for (const e of ccEntriesSorted) {
+          if (!ccBySector.has(e.sectorKey)) ccBySector.set(e.sectorKey, []);
+          ccBySector.get(e.sectorKey)!.push(e);
+        }
+
+        const cuentasHaberArr: object[] = [];
+        for (const [sk, entries] of ccBySector) {
+          const sectorTotal2dp = sectorTotalBsMap.get(sk)
+            ?? Math.round(entries.reduce((a, e) => a + e.totalBs, 0) * 100) / 100;
+          if (!fgBySector.has(sk)) fgBySector.set(sk, new Map());
+          const fgMap = fgBySector.get(sk)!;
+
+          let entryAccum = 0;
+          for (let i = 0; i < entries.length; i++) {
+            const entry  = entries[i]!;
+            const isLast = i === entries.length - 1;
+            const totalBs = isLast
+              ? Math.round((sectorTotal2dp - entryAccum) * 100) / 100
+              : Math.round(entry.totalBs * 100) / 100;
+            if (!isLast) entryAccum += totalBs;
+
+            // Acumular fg ajustado para sectoresHaber.funcionGastos
+            const fc = entry.funcionGastoCodigo;
+            if (!fgMap.has(fc)) {
+              fgMap.set(fc, { funcionGastoCodigo: fc, funcionGastoNombre: entry.funcionGastoNombre, totalBs: 0 });
+            }
+            fgMap.get(fc)!.totalBs += totalBs;
+
             const base = {
               codigoCompleto:    entry.codigoCompleto,
               centroCostoCodigo: entry.centroCostoCodigo,
               centroCostoNombre: entry.centroCostoNombre,
               sectorNombre:      entry.sectorNombre,
               esTransporte:      entry.esTransporte,
-              totalBs:           Math.round(entry.totalBs * 100) / 100,
             };
             if (entry.esTransporte) {
-              return { ...base, totalCantidad: entry.totalCantidad };
+              cuentasHaberArr.push({ ...base, totalBs, totalCantidad: entry.totalCantidad });
+            } else {
+              const lineasSorted = [...entry.lineas.values()]
+                .sort((a, b) => a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true }));
+              let lineaAccum = 0;
+              const lineas = lineasSorted.map((l, li) => {
+                const isLastLinea = li === lineasSorted.length - 1;
+                const importeBs = isLastLinea
+                  ? Math.round((totalBs - lineaAccum) * 1000) / 1000
+                  : Math.round(l.importeBs * 1000) / 1000;
+                if (!isLastLinea) lineaAccum += importeBs;
+                return { ...l, importeBs, subCuentas: [...l.subCuentas].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
+              });
+              cuentasHaberArr.push({ ...base, totalBs, lineas });
             }
-            return {
-              ...base,
-              lineas: [...entry.lineas.values()]
-                .map((l) => ({
-                  ...l,
+          }
+        }
+
+        // Paso 3: sectoresHaber — sector.totalBs desde sectorTotalBsMap; funcionGastos desde fgBySector.
+        // Así funcionGastos.totalBs === sum(cuentasHaber.totalBs con mismo fg y sector) exactamente.
+        const sectoresHaber = sectorValsSorted.map((s) => {
+          const sk           = s.sectorId ?? -1;
+          const sectorTotalBs = sectorTotalBsMap.get(sk)!;
+          const fgMap        = fgBySector.get(sk) ?? new Map<string, FgAdjEntry>();
+          const funcionGastos = [...fgMap.values()]
+            .sort((a, b) => a.funcionGastoCodigo.localeCompare(b.funcionGastoCodigo, undefined, { numeric: true }));
+
+          const valeAmounts = sectorVales.get(sk) ?? new Map<string, ValeAcum>();
+          const vales = [...valeAmounts.entries()]
+            .filter(([id]) => valeInfoMap.has(id))
+            .sort(([idA], [idB]) => {
+              const a = valeInfoMap.get(idA) as any;
+              const b = valeInfoMap.get(idB) as any;
+              return ((a.fechaOperacion ?? a.createdAt) as Date).getTime()
+                   - ((b.fechaOperacion ?? b.createdAt) as Date).getTime();
+            })
+            .map(([id, acum]) => {
+              const v = valeInfoMap.get(id) as any;
+              const lineas = [...acum.lineas.values()]
+                .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                .map(l => ({
+                  productoId: l.productoId,
+                  nombre:     l.nombre,
+                  unidad:     l.unidad,
+                  cantidad:   Math.round(l.cantidad * 100) / 100,
+                  precioUnit: Math.round(l.precioUnit * 1000) / 1000,
                   importeBs:  Math.round(l.importeBs * 100) / 100,
-                  subCuentas: [...l.subCuentas].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-                }))
-                .sort((a, b) => a.subCentro.localeCompare(b.subCentro, undefined, { numeric: true })),
-            };
-          });
-        // ────────────────────────────────────────────────────────────────────
+                }));
+              return {
+                id,
+                fechaOperacion:  v.fechaOperacion  ?? null,
+                solicitante:     v.solicitante,
+                superintendente: v.superintendente ?? null,
+                totalBs:         Math.round(acum.totalBs * 100) / 100,
+                lineas,
+              };
+            });
+
+          return { sectorId: s.sectorId, sectorCodigo: s.sectorCodigo, sectorNombre: s.sectorNombre, totalBs: sectorTotalBs, funcionGastos, vales };
+        });
+
+        const cuentasHaber = (cuentasHaberArr as { codigoCompleto: string }[])
+          .sort((a, b) => a.codigoCompleto.localeCompare(b.codigoCompleto));
 
         return {
           anio, mes, esCerrado,
@@ -1939,6 +2055,7 @@ export const reportesService = {
           totalInventarioDebe:     Math.round(totalInventarioDebe * 100) / 100,
           sectoresHaber,
           totalSalidasHaber,
+          saldoInventarioFinal,
           cuentasHaber,
         };
       }),

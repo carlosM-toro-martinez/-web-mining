@@ -1210,120 +1210,205 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
   const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
   if (existing) throw new HttpError(`El período ${mes}/${anio} ya está cerrado`, 409);
 
-  const mesInicio = new Date(anio, mes - 1, 1);
-  const mesFin = new Date(anio, mes, 1);
+  // Usamos UTC igual que los reportes para que los filtros coincidan exactamente.
+  const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
+  const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-  const cierreMovWhere = {
+  const movFilter = {
     OR: [
-      { createdAt: { gte: mesInicio, lt: mesFin }, esRetroactivo: false as const },
-      { esRetroactivo: true as const, periodoAnio: anio, periodoMes: mes },
+      { periodoAnio: anio, periodoMes: mes },
+      { periodoAnio: null as null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
     ],
   };
 
-  const [movsRaw, anulacionValeMovsCierre] = await Promise.all([
+  // Gasolina Nov-Dic 2025: IVA solo sobre 70% de la base (idéntico a inventario-almacen).
+  const CODIGO_GASOLINA_CIERRE = "01-01-0002";
+  const gasolinaId = await prisma.producto
+    .findFirst({ where: { codigo: CODIGO_GASOLINA_CIERRE }, select: { id: true } })
+    .then(p => p?.id ?? -1);
+
+  const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovsCierre] = await Promise.all([
+    // SaldoMensual del mes a cerrar: fuente de saldoInicial, precioUnit y totalBsInicial
+    prisma.saldoMensual.findMany({
+      where: { anio, mes },
+      select: {
+        productoId:     true,
+        saldoInicial:   true,
+        ingresoQty:     true,
+        salidaQty:      true,
+        precioUnit:     true,
+        precioUnitProm: true,
+        totalBsInicial: true,
+      },
+    }),
+    // Compras: misma query que inventario-almacen (CompraItems reales, no movimientos)
+    prisma.compraItem.findMany({
+      where: {
+        cantidadRecibida: { gt: 0 },
+        compra: {
+          estado: { not: "ANULADA" },
+          OR: [
+            { fechaOperacion: { gte: startOfMonth, lt: endOfMonth } },
+            { fechaOperacion: null, recibidoAt: { gte: startOfMonth, lt: endOfMonth } },
+            { fechaOperacion: null, recibidoAt: null, createdAt: { gte: startOfMonth, lt: endOfMonth } },
+          ],
+        },
+      },
+      select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
+    }),
+    // Salidas: misma query que inventario-almacen
     prisma.movimiento.findMany({
-      where: cierreMovWhere,
-      select: { productoId: true, tipo: true, cantidad: true, precioUnit: true, referencia: true, referenciaId: true },
+      where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
+      select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
     }),
     prisma.movimiento.findMany({
-      where: { referencia: "ANULACION_VALE", ...cierreMovWhere },
+      where: { referencia: "ANULACION_VALE", ...movFilter },
       select: { referenciaId: true },
     }),
   ]);
 
-  const valesAnuladosIdsCierre = new Set(
+  const valesAnuladosIds = new Set(
     anulacionValeMovsCierre.map(m => m.referenciaId).filter((id): id is string => id !== null),
   );
-  // Excluir: ANULACION_VALE ENTRADAs (no son compras reales) y SALIDAs de vales anulados
-  const movs = movsRaw.filter(m => {
-    if (m.referencia === "ANULACION_VALE") return false;
-    if (m.tipo === "SALIDA" && m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsCierre.has(m.referenciaId)) return false;
-    return true;
-  });
+  const salidasMovs = salidasMovsRaw.filter(
+    m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIds.has(m.referenciaId)),
+  );
 
-  const byProducto = new Map<number, { ingresoQty: Prisma.Decimal; salidaQty: Prisma.Decimal; precioUnit: Prisma.Decimal; ingresosBs: Prisma.Decimal }>();
-  for (const mov of movs) {
-    const e = byProducto.get(mov.productoId) ?? {
-      ingresoQty: new Prisma.Decimal(0),
-      salidaQty:  new Prisma.Decimal(0),
-      precioUnit: new Prisma.Decimal(mov.precioUnit),
-      ingresosBs: new Prisma.Decimal(0),
-    };
-    if (mov.tipo === "ENTRADA") {
-      const precioSinIva = new Prisma.Decimal(mov.precioUnit).mul('0.87');
-      e.ingresoQty = e.ingresoQty.add(mov.cantidad);
-      e.precioUnit = precioSinIva;
-      e.ingresosBs = e.ingresosBs.add(precioSinIva.mul(mov.cantidad));
-    } else {
-      e.salidaQty = e.salidaQty.add(mov.cantidad);
-    }
-    byProducto.set(mov.productoId, e);
+  // Helpers idénticos a reportes.service
+  const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+  const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+  function sinIvaRaw(total: number, esGas: boolean, tieneIva = true): number {
+    if (!tieneIva) return total;
+    return esGas ? total - total * 0.70 * 0.13 : total * 0.87;
+  }
+  function menos13Local(total: number): number {
+    return Math.round(total * 0.87 * 100) / 100;
   }
 
-  const productoIds = [...byProducto.keys()];
-  let saldosCreados = 0;
+  // Acumular compras por producto (idéntico a inventario-almacen)
+  const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
+  for (const item of compraItemsRaw) {
+    const e      = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
+    const qty    = Number(item.cantidadRecibida);
+    const bsItem = qty * Number(item.precioUnit);
+    e.qty       += qty;
+    e.bs        += bsItem;
+    e.sinIvaRaw += sinIvaRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
+    compraMap.set(item.productoId, e);
+  }
+
+  // Precio unificado: precioUnitProm → precioUnit → menos13(compraAvg) (idéntico a inventario-almacen)
+  const precioFinalMap = new Map<number, number>();
+  for (const r of registros) {
+    const prom           = Number(r.precioUnitProm ?? 0);
+    const unit           = Number(r.precioUnit ?? 0);
+    const compra         = compraMap.get(r.productoId);
+    const compraFallback = compra && compra.qty > 0 ? menos13Local(compra.bs / compra.qty) : 0;
+    precioFinalMap.set(r.productoId, prom > 0 ? prom : unit > 0 ? unit : compraFallback);
+  }
+
+  // Salidas: acumular cantidad y Bs por producto (idéntico a inventario-almacen)
+  const salidaQtyMap = new Map<number, number>();
+  const salidaBsMap  = new Map<number, number>();
+  for (const mov of salidasMovs) {
+    salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+    const precio = precioFinalMap.get(mov.productoId) ?? 0;
+    salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
+  }
+
+  const mesSig  = mes === 12 ? 1        : mes  + 1;
+  const anioSig = mes === 12 ? anio + 1 : anio;
+
+  let saldosCreados    = 0;
   let saldosActualizados = 0;
 
-  for (const productoId of productoIds) {
-    const { ingresoQty, salidaQty, precioUnit, ingresosBs } = byProducto.get(productoId)!;
+  for (const r of registros) {
+    const productoId = r.productoId;
+    const compra     = compraMap.get(productoId);
+    const precioUnit = precioFinalMap.get(productoId) ?? 0;
 
-    const mesPrev = mes === 1 ? 12 : mes - 1;
-    const anioPrev = mes === 1 ? anio - 1 : anio;
-    const saldoPrev = await (prisma.saldoMensual.findUnique as any)({
-      where: { productoId_anio_mes: { productoId, anio: anioPrev, mes: mesPrev } },
-      select: { saldoFinal: true, precioUnit: true, precioUnitProm: true },
-    }) as { saldoFinal: Prisma.Decimal; precioUnit: Prisma.Decimal; precioUnitProm: Prisma.Decimal } | null;
+    // Mismo cálculo que el reporte — no tocamos saldoInicial ni precioUnit del mes que se cierra
+    const saldoInicial  = Number(r.saldoInicial);
+    const ingresoQty    = compra?.qty ?? Number(r.ingresoQty ?? 0);
+    const salidaQty     = salidaQtyMap.get(productoId) ?? Number(r.salidaQty ?? 0);
+    const saldoFinal    = saldoInicial + ingresoQty - salidaQty;
 
-    const saldoInicial   = saldoPrev ? new Prisma.Decimal(saldoPrev.saldoFinal) : new Prisma.Decimal(0);
-    const precioCierre   = saldoPrev ? new Prisma.Decimal(saldoPrev.precioUnit) : precioUnit; // último precio
-    const saldoFinal     = saldoInicial.add(ingresoQty).sub(salidaQty);
-    const totalBs        = saldoFinal.mul(precioCierre);
-    // Promedio ponderado de este mes (todas las entradas del período)
-    const precioUnitProm = ingresoQty.gt(0) ? ingresosBs.div(ingresoQty) : precioCierre;
-    const totalBsProm    = saldoFinal.mul(precioUnitProm);
+    const saldoInicialBs =
+      r.totalBsInicial !== null && r.totalBsInicial !== undefined
+        ? Number(r.totalBsInicial)
+        : saldoInicial * precioUnit;
 
-    const saldoExistente = await prisma.saldoMensual.findUnique({
+    const ingresosBs = compra?.sinIvaRaw ?? 0;
+    const salidasBs  = salidaBsMap.has(productoId)
+      ? salidaBsMap.get(productoId)!
+      : salidaQty * precioUnit;
+
+    // totalBs = exactamente lo que muestra inventario-almacen para este producto
+    const totalBs = saldoInicialBs + ingresosBs - salidasBs;
+
+    // Guardar en el mes actual: solo actualizamos los campos de flujo (qty, saldoFinal, totalBs).
+    // NO tocamos saldoInicial, precioUnit, precioUnitProm ni totalBsInicial — backfill los dejó correctos.
+    await (prisma.saldoMensual.update as any)({
       where: { productoId_anio_mes: { productoId, anio, mes } },
+      data: {
+        ingresoQty: new Prisma.Decimal(ingresoQty),
+        salidaQty:  new Prisma.Decimal(salidaQty),
+        saldoFinal: new Prisma.Decimal(saldoFinal),
+        ingresosBs: new Prisma.Decimal(ingresosBs),
+        totalBs:    new Prisma.Decimal(totalBs),
+      },
     });
+    saldosActualizados++;
 
-    if (saldoExistente) {
-      await (prisma.saldoMensual.update as any)({
-        where: { productoId_anio_mes: { productoId, anio, mes } },
-        data: { saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs, ingresosBs, precioUnitProm, totalBsProm },
-      });
-      saldosActualizados++;
-    } else {
-      await (prisma.saldoMensual.create as any)({
-        data: { productoId, anio, mes, saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit: precioCierre, totalBs, ingresosBs, precioUnitProm, totalBsProm },
-      });
-      saldosCreados++;
-    }
+    // Propagar al mes siguiente exactamente lo que el reporte muestra como saldo final
+    const precioDecimal     = new Prisma.Decimal(precioUnit);
+    const saldoFinalDecimal = new Prisma.Decimal(saldoFinal);
+    const totalBsDecimal    = new Prisma.Decimal(totalBs);
 
-    // Pre-populate next month saldoInicial
-    const mesSig = mes === 12 ? 1 : mes + 1;
-    const anioSig = mes === 12 ? anio + 1 : anio;
     const sigExistente = await prisma.saldoMensual.findUnique({
       where: { productoId_anio_mes: { productoId, anio: anioSig, mes: mesSig } },
     });
+
     if (sigExistente) {
       await (prisma.saldoMensual.update as any)({
         where: { productoId_anio_mes: { productoId, anio: anioSig, mes: mesSig } },
-        data: { saldoInicial: saldoFinal },
+        data: {
+          saldoInicial:   saldoFinalDecimal,
+          precioUnit:     precioDecimal,
+          precioUnitProm: precioDecimal,
+          totalBsInicial: totalBsDecimal,
+          totalBs:        totalBsDecimal,
+          totalBsProm:    totalBsDecimal,
+        },
       });
     } else {
       await (prisma.saldoMensual.create as any)({
         data: {
-          productoId, anio: anioSig, mes: mesSig,
-          saldoInicial: saldoFinal, ingresoQty: 0, salidaQty: 0, ingresosBs: 0,
-          saldoFinal, precioUnit: precioCierre, totalBs,
-          precioUnitProm, totalBsProm,
+          productoId,
+          anio:           anioSig,
+          mes:            mesSig,
+          saldoInicial:   saldoFinalDecimal,
+          ingresoQty:     0,
+          salidaQty:      0,
+          ingresosBs:     0,
+          saldoFinal:     saldoFinalDecimal,
+          precioUnit:     precioDecimal,
+          precioUnitProm: precioDecimal,
+          totalBs:        totalBsDecimal,
+          totalBsProm:    totalBsDecimal,
+          totalBsInicial: totalBsDecimal,
         },
       });
+      saldosCreados++;
     }
   }
 
-  // Recalcular cadena stockAntes/stockDespues para todos los movimientos retroactivos
-  // del período, ordenados cronológicamente por createdAt (= fechaOperacion)
+  const productosConMovimientos = new Set([
+    ...salidaQtyMap.keys(),
+    ...compraMap.keys(),
+  ]).size;
+
+  // Recalcular stockAntes/stockDespues en movimientos retroactivos del período
   let movimientosRecalculados = 0;
   const productosConRetroactivos = await prisma.movimiento.groupBy({
     by: ["productoId"],
@@ -1352,11 +1437,11 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
       await prisma.movimiento.update({
         where: { id: mov.id },
         data: {
-          stockAntes: antes,
+          stockAntes:   antes,
           stockDespues: balance,
-          saldoBs: balance.mul(precioU),
-          entradaBs: mov.tipo === "ENTRADA" ? precioU.mul(mov.cantidad) : 0,
-          salidaBs: mov.tipo === "SALIDA" ? precioU.mul(mov.cantidad) : 0,
+          saldoBs:      balance.mul(precioU),
+          entradaBs:    mov.tipo === "ENTRADA" ? precioU.mul(mov.cantidad) : 0,
+          salidaBs:     mov.tipo === "SALIDA"  ? precioU.mul(mov.cantidad) : 0,
         },
       });
       movimientosRecalculados++;
@@ -1369,7 +1454,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
     data: {
       usuarioId: userId,
       accion: "CERRAR_MES",
-      data: { anio, mes, saldosCreados, saldosActualizados, productosConMovimientos: productoIds.length, movimientosRecalculados },
+      data: { anio, mes, saldosCreados, saldosActualizados, productosConMovimientos, movimientosRecalculados },
     },
   });
 
@@ -1379,7 +1464,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
     cierre: { id: cierre.id, anio: cierre.anio, mes: cierre.mes, creadoAt: cierre.creadoAt },
     saldosCreados,
     saldosActualizados,
-    productosConMovimientos: productoIds.length,
+    productosConMovimientos,
     movimientosRecalculados,
   };
 }
