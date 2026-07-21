@@ -1239,6 +1239,16 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
         precioUnit:     true,
         precioUnitProm: true,
         totalBsInicial: true,
+        producto: {
+          select: {
+            categoria: {
+              select: {
+                id:     true,
+                parent: { select: { id: true } },
+              },
+            },
+          },
+        },
       },
     }),
     // Compras: misma query que inventario-almacen (CompraItems reales, no movimientos)
@@ -1319,34 +1329,101 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
   const mesSig  = mes === 12 ? 1        : mes  + 1;
   const anioSig = mes === 12 ? anio + 1 : anio;
 
-  let saldosCreados    = 0;
+  let saldosCreados      = 0;
   let saldosActualizados = 0;
+
+  // ── Paso 1: calcular por producto (misma fórmula que inventario-almacen) ──
+  type ProdResumen = {
+    productoId:     number;
+    grupoId:        number;
+    ingresoQty:     number;
+    salidaQty:      number;
+    saldoFinal:     number;
+    ingresosBs:     number;
+    totalBsRaw:     number;
+  };
+
+  let sumSI = 0, sumING = 0, sumSAL = 0;
+  const prodResumenes: ProdResumen[] = [];
 
   for (const r of registros) {
     const productoId = r.productoId;
     const compra     = compraMap.get(productoId);
     const precioUnit = precioFinalMap.get(productoId) ?? 0;
 
-    // Mismo cálculo que el reporte — no tocamos saldoInicial ni precioUnit del mes que se cierra
-    const saldoInicial  = Number(r.saldoInicial);
-    const ingresoQty    = compra?.qty ?? Number(r.ingresoQty ?? 0);
-    const salidaQty     = salidaQtyMap.get(productoId) ?? Number(r.salidaQty ?? 0);
-    const saldoFinal    = saldoInicial + ingresoQty - salidaQty;
+    const saldoInicial = Number(r.saldoInicial);
+    const ingresoQty   = compra?.qty ?? Number(r.ingresoQty ?? 0);
+    const salidaQty    = salidaQtyMap.get(productoId) ?? Number(r.salidaQty ?? 0);
+    const saldoFinal   = saldoInicial + ingresoQty - salidaQty;
 
+    // Redondeado por producto — idéntico a inventario-almacen
     const saldoInicialBs =
       r.totalBsInicial !== null && r.totalBsInicial !== undefined
-        ? Number(r.totalBsInicial)
-        : saldoInicial * precioUnit;
+        ? Math.round(Number(r.totalBsInicial) * 100) / 100
+        : Math.round(saldoInicial * precioUnit * 100) / 100;
 
     const ingresosBs = compra?.sinIvaRaw ?? 0;
     const salidasBs  = salidaBsMap.has(productoId)
       ? salidaBsMap.get(productoId)!
       : salidaQty * precioUnit;
 
-    // totalBs = exactamente lo que muestra inventario-almacen para este producto
-    const totalBs = saldoInicialBs + ingresosBs - salidasBs;
+    const totalBsRaw = saldoInicialBs + ingresosBs - salidasBs;
 
-    // Guardar en el mes actual: solo actualizamos los campos de flujo (qty, saldoFinal, totalBs).
+    sumSI  += saldoInicialBs;
+    sumING += ingresosBs;
+    sumSAL += salidasBs;
+
+    const cat     = (r as any).producto.categoria;
+    const grupoId = cat.parent?.id ?? cat.id;
+
+    prodResumenes.push({ productoId, grupoId, ingresoQty, salidaQty, saldoFinal, ingresosBs, totalBsRaw });
+  }
+
+  // ── Paso 2: totalGeneral idéntico al de inventario-almacen ───────────────
+  const T = Math.round(
+    (Math.round(sumSI * 100) / 100 + Math.round(sumING * 100) / 100 - Math.round(sumSAL * 100) / 100) * 100,
+  ) / 100;
+
+  // ── Paso 3: last-absorbs a nivel grupo y a nivel producto ─────────────────
+  // Agrupa manteniendo el orden de aparición (igual que getSaldosIniciales)
+  const gruposProd = new Map<number, ProdResumen[]>();
+  for (const pr of prodResumenes) {
+    if (!gruposProd.has(pr.grupoId)) gruposProd.set(pr.grupoId, []);
+    gruposProd.get(pr.grupoId)!.push(pr);
+  }
+
+  const grupoEntries = [...gruposProd.entries()];
+  let   grupoAcc     = 0;
+  const totalBsAjustadoMap = new Map<number, number>();
+
+  grupoEntries.forEach(([, prods], gi) => {
+    const rawGrupo    = prods.reduce((s, p) => s + p.totalBsRaw, 0);
+    const isLastGrupo = gi === grupoEntries.length - 1;
+    const grupoTarget = isLastGrupo
+      ? Math.round((T - grupoAcc) * 100) / 100
+      : Math.round(rawGrupo * 100) / 100;
+    if (!isLastGrupo) grupoAcc += grupoTarget;
+
+    // Dentro del grupo: último producto absorbe el residuo
+    let prodAcc = 0;
+    prods.forEach((p, pi) => {
+      const isLastProd = pi === prods.length - 1;
+      const val = isLastProd
+        ? Math.round((grupoTarget - prodAcc) * 100) / 100
+        : Math.round(p.totalBsRaw * 100) / 100;
+      if (!isLastProd) prodAcc += val;
+      totalBsAjustadoMap.set(p.productoId, val);
+    });
+  });
+
+  // ── Paso 4: guardar en BD ─────────────────────────────────────────────────
+  for (const pr of prodResumenes) {
+    const { productoId, ingresoQty, salidaQty, saldoFinal, ingresosBs, totalBsRaw } = pr;
+    const precioUnit    = precioFinalMap.get(productoId) ?? 0;
+    const totalBsNov    = totalBsAjustadoMap.get(productoId)!;
+    const precioDecimal = new Prisma.Decimal(precioUnit);
+
+    // Mes actual: actualizamos solo los campos de flujo (qty, saldoFinal, totalBs).
     // NO tocamos saldoInicial, precioUnit, precioUnitProm ni totalBsInicial — backfill los dejó correctos.
     await (prisma.saldoMensual.update as any)({
       where: { productoId_anio_mes: { productoId, anio, mes } },
@@ -1355,15 +1432,14 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
         salidaQty:  new Prisma.Decimal(salidaQty),
         saldoFinal: new Prisma.Decimal(saldoFinal),
         ingresosBs: new Prisma.Decimal(ingresosBs),
-        totalBs:    new Prisma.Decimal(totalBs),
+        totalBs:    new Prisma.Decimal(totalBsRaw),
       },
     });
     saldosActualizados++;
 
-    // Propagar al mes siguiente exactamente lo que el reporte muestra como saldo final
-    const precioDecimal     = new Prisma.Decimal(precioUnit);
+    // Mes siguiente: totalBsInicial con valor ajustado (last-absorbs garantiza sum = T)
     const saldoFinalDecimal = new Prisma.Decimal(saldoFinal);
-    const totalBsDecimal    = new Prisma.Decimal(totalBs);
+    const totalBsDecimal    = new Prisma.Decimal(totalBsNov);
 
     const sigExistente = await prisma.saldoMensual.findUnique({
       where: { productoId_anio_mes: { productoId, anio: anioSig, mes: mesSig } },

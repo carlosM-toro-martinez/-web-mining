@@ -859,7 +859,43 @@ export const reportesService = {
         const _tSalidaMateriales  = Math.round(grupoValsInv.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
         const totalGeneral = Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100;
 
-        return { anio, mes, esCerrado, grupos, totalGeneral };
+        // Ajuste last-absorbs: el último grupo absorbe la diferencia para que sum(grupos.totalBs) = totalGeneral,
+        // y dentro de cada grupo el último producto absorbe para que sum(productos.totalBs) = grupo.totalBs.
+        // Así el desglose suma exactamente al total sin alterar el totalGeneral.
+        let grupoAcc = 0;
+        const gruposFinales = grupos.map((g, gi) => {
+          const isLastGrupo   = gi === grupos.length - 1;
+          const grupoTotalBs  = isLastGrupo
+            ? Math.round((totalGeneral - grupoAcc) * 100) / 100
+            : g.totalBs;
+          if (!isLastGrupo) grupoAcc += g.totalBs;
+
+          // Clonar subGrupos y productos para poder mutarlos
+          const subGruposClone = g.subGrupos.map(sg => ({
+            ...sg,
+            productos: sg.productos.map(p => ({ ...p })),
+          }));
+
+          // Aplanar todos los productos del grupo (índices de subGrupo + producto)
+          const allProds: Array<[number, number]> = [];
+          subGruposClone.forEach((sg, si) => {
+            sg.productos.forEach((_, pi) => allProds.push([si, pi]));
+          });
+
+          // Last-absorbs: el último producto del grupo absorbe el residuo
+          let prodAcc = 0;
+          allProds.forEach(([si, pi], idx) => {
+            if (idx === allProds.length - 1) {
+              subGruposClone[si]!.productos[pi]!.totalBs = Math.round((grupoTotalBs - prodAcc) * 100) / 100;
+            } else {
+              prodAcc += subGruposClone[si]!.productos[pi]!.totalBs;
+            }
+          });
+
+          return { ...g, totalBs: grupoTotalBs, subGrupos: subGruposClone };
+        });
+
+        return { anio, mes, esCerrado, grupos: gruposFinales, totalGeneral };
       }),
     );
 
