@@ -51,7 +51,12 @@ async function procesarProductoMes(
 
   const compraItemsBatch = entradaCompraIds.length > 0
     ? await prisma.compraItem.findMany({
-        where: { compraId: { in: entradaCompraIds }, productoId },
+        where: {
+          compraId: { in: entradaCompraIds },
+          productoId,
+          cantidadRecibida: { gt: 0 },
+          compra: { estado: { not: "ANULADA" } },
+        },
         select: { compraId: true, precioUnit: true, cantidadRecibida: true, compra: { select: { tieneIva: true } } },
       })
     : [];
