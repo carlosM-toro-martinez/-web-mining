@@ -747,8 +747,11 @@ export const reportesService = {
         }
 
         const salidaQtyMap = new Map<number, number>();
+        const salidaBsMap  = new Map<number, number>();
         for (const mov of salidasMovs) {
           salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
+          const precio = precioFinalMap.get(mov.productoId) ?? 0;
+          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
         }
 
         const grupoMap = new Map<
@@ -812,10 +815,9 @@ export const reportesService = {
             ? Math.round(Number(r.totalBsInicial) * 100) / 100
             : Math.round(saldoInicial * precioUnit * 100) / 100;
           const ingresosBs    = compra?.sinIvaRaw ?? 0;  // pre-computado por item con tieneIva
-          // totalBs = saldoFinal × CPP evita el error de redondeo cuando salidaQty × CPP_redondeado ≠ ingresosBs
-          const totalBs       = Math.round(saldoFinal * precioUnit * 100) / 100;
-          // salidasBsProd derivado para que la acumulación al grupo sea coherente con totalBs
-          const salidasBsProd = saldoInicialBs + ingresosBs - totalBs;
+          const salidasBsProd = salidaBsMap.has(r.productoId) ? salidaBsMap.get(r.productoId)! : salidaQty * precioUnit;
+          // salidasBsProd ya es raw (acumulado sin redondear); redondear una sola vez al calcular totalBs.
+          const totalBs       = Math.round((saldoInicialBs + ingresosBs - salidasBsProd) * 100) / 100;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: r.producto.codigo,
