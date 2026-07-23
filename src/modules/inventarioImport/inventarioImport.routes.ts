@@ -209,6 +209,15 @@ router.get(
   inventarioImportController.getCierres,
 );
 
+// DELETE /api/inventario-import/cierre-mes
+// Body: { anio, mes }
+// Reabre un período cerrado para permitir correcciones.
+router.delete(
+  "/cierre-mes",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.reabrirMes,
+);
+
 // POST /api/inventario-import/recalcular-precios
 // Recalcula precioUnit, precioUnitProm, ingresosBs y totalBsProm en todos los
 // SaldoMensual históricos que tengan ingresoQty > 0, leyendo los Movimiento reales.

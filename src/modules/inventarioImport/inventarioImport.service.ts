@@ -1551,6 +1551,24 @@ export async function getCierres() {
   return prisma.cierreMes.findMany({ orderBy: [{ anio: "desc" }, { mes: "desc" }] });
 }
 
+export async function reabrirMes(anio: number, mes: number, userId: number) {
+  const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
+  if (!existing) throw new HttpError(`El período ${mes}/${anio} no está cerrado`, 409);
+
+  await prisma.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "REABRIR_MES",
+      data: { anio, mes },
+    },
+  });
+
+  logger.info({ anio, mes }, "Mes reabierto");
+  return { anio, mes, reabierto: true };
+}
+
 // ─── Ajuste de precios sin IVA ────────────────────────────────────────────────
 // Recalcula precios en SaldoMensual a partir de CompraItems reales (fuente de verdad)
 // aplicando ×0.87 para quitar IVA, y propaga hacia meses siguientes.

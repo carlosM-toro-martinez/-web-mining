@@ -123,6 +123,11 @@ export const cerrarMesSchema = z.object({
   force: z.boolean().optional(),
 });
 
+export const reabrirMesSchema = z.object({
+  anio: z.number().int().min(2000).max(2100),
+  mes:  z.number().int().min(1).max(12),
+});
+
 // ─── Ajuste de campos de SaldoMensual ────────────────────────────────────────
 // Todos los campos son opcionales; se aplican solo los que se envíen.
 // Si se cambia saldoInicial se recalcula saldoFinal y se propaga a meses siguientes.

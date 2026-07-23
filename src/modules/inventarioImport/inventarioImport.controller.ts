@@ -18,6 +18,7 @@ import {
   recalcularStock,
   inicializarPeriodo,
   cerrarMes,
+  reabrirMes,
   getCierres,
   getPreviewPeriodo,
   recalcularPreciosProm,
@@ -41,6 +42,7 @@ import {
   sincronizarStockSchema,
   inicializarPeriodoSchema,
   cerrarMesSchema,
+  reabrirMesSchema,
   ajusteCamposSaldoMensualSchema,
   ajusteInicialExcelQuerySchema,
   ajusteProductosMesSchema,
@@ -311,6 +313,20 @@ export const inventarioImportController = {
       res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async reabrirMes(req: AuthRequest, res: Response) {
+    try {
+      const parsed = reabrirMesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
+      }
+      const data = await reabrirMes(parsed.data.anio, parsed.data.mes, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
 
