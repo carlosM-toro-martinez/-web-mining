@@ -637,16 +637,8 @@ export const reportesService = {
         }
 
         const grupoValsBalance = [...grupoMap.values()].sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo));
-        const grupos = grupoValsBalance.map(g => {
-            const saldoInicial      = Math.round(g.saldoInicial * 100) / 100;
-            const ingresoMateriales = Math.round(g.ingresosExIvaRaw * 100) / 100;
-            const salidaMateriales  = Math.round(g.salidasBsRaw * 100) / 100;
-            const saldoFinal        = Math.round((saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100;
-            return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
-          });
 
-        // Totales desde raw (antes del redondeo de grupo) para coincidir exactamente con
-        // cuadro-suministros y diario-almacenes: acumular raw → redondear una sola vez al final.
+        // Totales desde raw para coincidir con cuadro-suministros y diario-almacenes
         const _tSaldoInicial      = Math.round(grupoValsBalance.reduce((a, g) => a + g.saldoInicial,      0) * 100) / 100;
         const _tIngresoMateriales = Math.round(grupoValsBalance.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
         const _tSalidaMateriales  = Math.round(grupoValsBalance.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
@@ -657,7 +649,36 @@ export const reportesService = {
           saldoFinal:        Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100,
         };
 
-        return { anio, mes, esCerrado, grupos, totales };
+        // Paso 1: redondear cada grupo independientemente
+        const grupos = grupoValsBalance.map(g => {
+          const saldoInicial      = Math.round(g.saldoInicial * 100) / 100;
+          const ingresoMateriales = Math.round(g.ingresosExIvaRaw * 100) / 100;
+          const salidaMateriales  = Math.round(g.salidasBsRaw * 100) / 100;
+          const saldoFinal        = Math.round((saldoInicial + ingresoMateriales - salidaMateriales) * 100) / 100;
+          return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
+        });
+
+        // Paso 2: last-absorbs en salidaMateriales — el último grupo no-cero absorbe el residuo de redondeo
+        const salidaVals = grupos.map(g => g.salidaMateriales);
+        const salidaAbsIdx = salidaVals.reduce((acc, v, i) => (v !== 0 ? i : acc), grupos.length - 1);
+        const othersSalida = salidaVals.reduce((s, v, i) => i !== salidaAbsIdx ? s + v : s, 0);
+        salidaVals[salidaAbsIdx] = Math.round((_tSalidaMateriales - othersSalida) * 100) / 100;
+
+        // Paso 3: recalcular saldoFinal con salidaMateriales ajustada, luego last-absorbs en saldoFinal
+        const saldoFinalVals = grupos.map((g, i) =>
+          Math.round((g.saldoInicial + g.ingresoMateriales - salidaVals[i]!) * 100) / 100,
+        );
+        const saldoAbsIdx = saldoFinalVals.reduce((acc, v, i) => (v !== 0 ? i : acc), grupos.length - 1);
+        const othersSaldo = saldoFinalVals.reduce((s, v, i) => i !== saldoAbsIdx ? s + v : s, 0);
+        saldoFinalVals[saldoAbsIdx] = Math.round((totales.saldoFinal - othersSaldo) * 100) / 100;
+
+        const gruposFinales = grupos.map((g, i) => ({
+          ...g,
+          salidaMateriales: salidaVals[i]!,
+          saldoFinal:       saldoFinalVals[i]!,
+        }));
+
+        return { anio, mes, esCerrado, grupos: gruposFinales, totales };
       }),
     );
 
