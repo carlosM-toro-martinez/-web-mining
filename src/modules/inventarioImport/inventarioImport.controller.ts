@@ -297,7 +297,7 @@ export const inventarioImportController = {
       if (!parsed.success) {
         return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
       }
-      const data = await cerrarMes(parsed.data.anio, parsed.data.mes, req.user!.id);
+      const data = await cerrarMes(parsed.data.anio, parsed.data.mes, req.user!.id, parsed.data.force);
       res.status(201).json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

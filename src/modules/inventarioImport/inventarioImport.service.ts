@@ -1206,9 +1206,10 @@ export async function inicializarPeriodo(anio: number, mes: number) {
 // ─── Cerrar mes ──────────────────────────────────────────────────────────────
 // Consolida los movimientos del mes en SaldoMensual y bloquea el período.
 
-export async function cerrarMes(anio: number, mes: number, userId: number) {
+export async function cerrarMes(anio: number, mes: number, userId: number, force?: boolean) {
   const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
-  if (existing) throw new HttpError(`El período ${mes}/${anio} ya está cerrado`, 409);
+  if (existing && !force) throw new HttpError(`El período ${mes}/${anio} ya está cerrado`, 409);
+  if (existing && force)  await prisma.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
 
   // Usamos UTC igual que los reportes para que los filtros coincidan exactamente.
   const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
@@ -1393,27 +1394,28 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
   }
 
   const grupoEntries = [...gruposProd.entries()];
-  let   grupoAcc     = 0;
   const totalBsAjustadoMap = new Map<number, number>();
 
-  grupoEntries.forEach(([, prods], gi) => {
-    const rawGrupo    = prods.reduce((s, p) => s + p.totalBsRaw, 0);
-    const isLastGrupo = gi === grupoEntries.length - 1;
-    const grupoTarget = isLastGrupo
-      ? Math.round((T - grupoAcc) * 100) / 100
-      : Math.round(rawGrupo * 100) / 100;
-    if (!isLastGrupo) grupoAcc += grupoTarget;
+  // Paso 3a: redondear cada grupo y elegir el absorbedor como el ÚLTIMO grupo con raw ≠ 0.
+  // Así ningún grupo (ni producto) con balance 0 absorbe residuos de redondeo ajenos.
+  const grupoRounded = grupoEntries.map(([, prods]) =>
+    Math.round(prods.reduce((s, p) => s + p.totalBsRaw, 0) * 100) / 100,
+  );
+  const grupoAbsIdx = grupoRounded.reduce(
+    (acc, v, i) => (v !== 0 ? i : acc),
+    grupoEntries.length - 1,
+  );
+  const othersGrupoSum = grupoRounded.reduce((s, v, i) => (i !== grupoAbsIdx ? s + v : s), 0);
+  grupoRounded[grupoAbsIdx] = Math.round((T - othersGrupoSum) * 100) / 100;
 
-    // Dentro del grupo: último producto absorbe el residuo
-    let prodAcc = 0;
-    prods.forEach((p, pi) => {
-      const isLastProd = pi === prods.length - 1;
-      const val = isLastProd
-        ? Math.round((grupoTarget - prodAcc) * 100) / 100
-        : Math.round(p.totalBsRaw * 100) / 100;
-      if (!isLastProd) prodAcc += val;
-      totalBsAjustadoMap.set(p.productoId, val);
-    });
+  // Paso 3b: dentro de cada grupo, el absorbedor es el ÚLTIMO producto con raw ≠ 0.
+  grupoEntries.forEach(([, prods], gi) => {
+    const grupoTarget  = grupoRounded[gi]!;
+    const prodRounded  = prods.map(p => Math.round(p.totalBsRaw * 100) / 100);
+    const prodAbsIdx   = prodRounded.reduce((acc, v, i) => (v !== 0 ? i : acc), prods.length - 1);
+    const othersProdSum = prodRounded.reduce((s, v, i) => (i !== prodAbsIdx ? s + v : s), 0);
+    prodRounded[prodAbsIdx] = Math.round((grupoTarget - othersProdSum) * 100) / 100;
+    prods.forEach((p, pi) => totalBsAjustadoMap.set(p.productoId, prodRounded[pi]!));
   });
 
   // ── Paso 4: guardar en BD ─────────────────────────────────────────────────
@@ -1432,7 +1434,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number) {
         salidaQty:  new Prisma.Decimal(salidaQty),
         saldoFinal: new Prisma.Decimal(saldoFinal),
         ingresosBs: new Prisma.Decimal(ingresosBs),
-        totalBs:    new Prisma.Decimal(totalBsRaw),
+        totalBs:    new Prisma.Decimal(totalBsNov),
       },
     });
     saldosActualizados++;

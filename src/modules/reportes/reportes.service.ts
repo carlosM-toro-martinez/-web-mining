@@ -859,37 +859,36 @@ export const reportesService = {
         const _tSalidaMateriales  = Math.round(grupoValsInv.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
         const totalGeneral = Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100;
 
-        // Ajuste last-absorbs: el último grupo absorbe la diferencia para que sum(grupos.totalBs) = totalGeneral,
-        // y dentro de cada grupo el último producto absorbe para que sum(productos.totalBs) = grupo.totalBs.
-        // Así el desglose suma exactamente al total sin alterar el totalGeneral.
-        let grupoAcc = 0;
-        const gruposFinales = grupos.map((g, gi) => {
-          const isLastGrupo   = gi === grupos.length - 1;
-          const grupoTotalBs  = isLastGrupo
-            ? Math.round((totalGeneral - grupoAcc) * 100) / 100
-            : g.totalBs;
-          if (!isLastGrupo) grupoAcc += g.totalBs;
+        // Ajuste last-absorbs: el último grupo CON SALDO ≠ 0 absorbe el residuo de redondeo,
+        // y dentro de cada grupo el último producto CON SALDO ≠ 0 absorbe el residuo del grupo.
+        // Productos y grupos con saldo 0 nunca absorben residuos ajenos.
+        const grupoRounded = grupos.map(g => Math.round(g.totalBs * 100) / 100);
+        const grupoAbsIdx  = grupoRounded.reduce((acc, v, i) => (v !== 0 ? i : acc), grupos.length - 1);
+        const othersGrupoSum = grupoRounded.reduce((s, v, i) => (i !== grupoAbsIdx ? s + v : s), 0);
+        grupoRounded[grupoAbsIdx] = Math.round((totalGeneral - othersGrupoSum) * 100) / 100;
 
-          // Clonar subGrupos y productos para poder mutarlos
+        const gruposFinales = grupos.map((g, gi) => {
+          const grupoTotalBs = grupoRounded[gi]!;
+
           const subGruposClone = g.subGrupos.map(sg => ({
             ...sg,
             productos: sg.productos.map(p => ({ ...p })),
           }));
 
-          // Aplanar todos los productos del grupo (índices de subGrupo + producto)
           const allProds: Array<[number, number]> = [];
           subGruposClone.forEach((sg, si) => {
             sg.productos.forEach((_, pi) => allProds.push([si, pi]));
           });
 
-          // Last-absorbs: el último producto del grupo absorbe el residuo
-          let prodAcc = 0;
+          const prodRounded   = allProds.map(([si, pi]) =>
+            Math.round(subGruposClone[si]!.productos[pi]!.totalBs * 100) / 100,
+          );
+          const prodAbsIdx    = prodRounded.reduce((acc, v, i) => (v !== 0 ? i : acc), allProds.length - 1);
+          const othersProdSum = prodRounded.reduce((s, v, i) => (i !== prodAbsIdx ? s + v : s), 0);
+          prodRounded[prodAbsIdx] = Math.round((grupoTotalBs - othersProdSum) * 100) / 100;
+
           allProds.forEach(([si, pi], idx) => {
-            if (idx === allProds.length - 1) {
-              subGruposClone[si]!.productos[pi]!.totalBs = Math.round((grupoTotalBs - prodAcc) * 100) / 100;
-            } else {
-              prodAcc += subGruposClone[si]!.productos[pi]!.totalBs;
-            }
+            subGruposClone[si]!.productos[pi]!.totalBs = prodRounded[idx]!;
           });
 
           return { ...g, totalBs: grupoTotalBs, subGrupos: subGruposClone };

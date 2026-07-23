@@ -118,8 +118,9 @@ export const inicializarPeriodoSchema = z.object({
 // ─── Cierre de mes ───────────────────────────────────────────────────────────
 
 export const cerrarMesSchema = z.object({
-  anio: z.number().int().min(2000).max(2100),
-  mes: z.number().int().min(1).max(12),
+  anio:  z.number().int().min(2000).max(2100),
+  mes:   z.number().int().min(1).max(12),
+  force: z.boolean().optional(),
 });
 
 // ─── Ajuste de campos de SaldoMensual ────────────────────────────────────────
