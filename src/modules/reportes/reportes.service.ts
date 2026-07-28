@@ -555,7 +555,7 @@ export const reportesService = {
         );
 
         // Gasolina especial Nov-Dic 2025: IVA solo sobre 70% de la base
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         // Acumular qty, bs (con IVA) y sinIvaRaw por producto — tieneIva por item
@@ -742,7 +742,7 @@ export const reportesService = {
           m => !(m.referencia === "VALE" && m.referenciaId !== null && valesAnuladosIdsInv.has(m.referenciaId)),
         );
 
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         // Mismo patrón que getBalanceMensual: precio unificado + salidaBsMap sin redondear por movimiento
@@ -935,7 +935,7 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         // Fuente: CompraItem con precio real de compra, excluyendo compras anuladas.
@@ -1717,7 +1717,7 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario, valesDelMes] = await Promise.all([
@@ -2257,7 +2257,7 @@ export const reportesService = {
         const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
-        const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+        const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
         const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
 
         const comprasRaw = await prisma.compra.findMany({

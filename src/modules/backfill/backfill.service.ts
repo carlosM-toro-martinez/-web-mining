@@ -11,6 +11,7 @@ async function procesarProductoMes(
   productoId: number,
   anio: number,
   mes: number,
+  gasolinaId: number,
 ): Promise<{ movs: number; saldoActualizado: boolean; cppFinal: string }> {
   const saldo = await (prisma.saldoMensual.findUnique as any)({
     where: { productoId_anio_mes: { productoId, anio, mes } },
@@ -94,8 +95,10 @@ async function procesarProductoMes(
   let lastPrecioSinIva: Prisma.Decimal | null = null;
 
   for (const ci of compraItemsBatch) {
-    const tieneIva    = ((ci as any).compra?.tieneIva ?? true) as boolean;
-    const precioSinIva = new Prisma.Decimal((ci as any).precioUnit).mul(tieneIva ? "0.87" : "1");
+    const tieneIva     = ((ci as any).compra?.tieneIva ?? true) as boolean;
+    const esGas        = productoId === gasolinaId;
+    const factor       = !tieneIva ? "1" : esGas ? "0.909" : "0.87";
+    const precioSinIva = new Prisma.Decimal((ci as any).precioUnit).mul(factor);
     const qty         = new Prisma.Decimal((ci as any).cantidadRecibida);
     totalCompraSinIva = totalCompraSinIva.add(precioSinIva.mul(qty));
     totalCompraQty    = totalCompraQty.add(qty);
@@ -121,7 +124,9 @@ async function procesarProductoMes(
     if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA") {
       const precioConIva = ciMap.get(mov.referenciaId as string) ?? Number(mov.precioUnit);
       const tieneIva     = ciTieneIvaMap.get(mov.referenciaId as string) ?? true;
-      const precioSinIva = new Prisma.Decimal(precioConIva).mul(tieneIva ? "0.87" : "1");
+      const esGas        = productoId === gasolinaId;
+      const factor       = !tieneIva ? "1" : esGas ? "0.909" : "0.87";
+      const precioSinIva = new Prisma.Decimal(precioConIva).mul(factor);
       const newStock     = currentStock.add(qty);
 
       await prisma.movimiento.update({
@@ -204,6 +209,13 @@ export const backfillService = {
 
     const productoIds = saldos.map(s => s.productoId);
 
+    const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
+    const gasolinaId = esEspecialMes
+      ? await prisma.producto
+          .findFirst({ where: { codigo: "01-01-0002" }, select: { id: true } })
+          .then(p => p?.id ?? -1)
+      : -1;
+
     let totalMovs   = 0;
     let totalSaldos = 0;
     const detalle: ProductoResult[] = [];
@@ -211,7 +223,7 @@ export const backfillService = {
 
     for (const productoId of productoIds) {
       try {
-        const r = await procesarProductoMes(productoId, anio, mes);
+        const r = await procesarProductoMes(productoId, anio, mes, gasolinaId);
         totalMovs += r.movs;
         if (r.saldoActualizado) totalSaldos++;
         detalle.push({ productoId, movimientosActualizados: r.movs, cppFinal: r.cppFinal });

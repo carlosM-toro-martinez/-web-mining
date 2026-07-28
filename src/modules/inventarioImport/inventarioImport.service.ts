@@ -1286,7 +1286,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
   );
 
   // Helpers idénticos a reportes.service
-  const esEspecialMes = anio === 2025 && (mes === 11 || mes === 12);
+  const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
   const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
   function sinIvaRaw(total: number, esGas: boolean, tieneIva = true): number {
     if (!tieneIva) return total;
