@@ -44,6 +44,57 @@ function inicioDelDia(fecha: Date): Date {
   return d;
 }
 
+// Convierte minutos desde medianoche a "HH:MM", acotado a un día válido
+function minutesToHHMM(min: number): string {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, min));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// ─── Salida estimada (sintética) ──────────────────────────────────────────────
+// El biométrico no captura de forma confiable la marca de salida (el personal
+// suele olvidar marcar al salir). Para el "Libro de Asistencia" se genera una
+// hora de salida cercana al horario asignado en vez de usar la marca real.
+// Es determinística (seed = empleado+fecha) para que reimprimir/reexportar el
+// mismo período siempre arroje el mismo valor.
+
+function hashSeed(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let state = seed;
+  return function () {
+    state |= 0;
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Desvío en minutos respecto al horario asignado: casi siempre ±2 min,
+// ocasionalmente ±3-4, y muy rara vez (~3%) hasta ±5.
+function desvioSalidaMinutos(seedStr: string): number {
+  const rand = mulberry32(hashSeed(seedStr));
+  const roll = rand();
+  const sign = rand() < 0.5 ? -1 : 1;
+  if (roll < 0.85) return Math.round(rand() * 2) * sign;       // 0..2, muy común
+  if (roll < 0.97) return (3 + Math.round(rand())) * sign;     // 3..4, ocasional
+  return 5 * sign;                                              // 5, muy raro
+}
+
+function calcularSalidaEstimada(horaSalida: string, employeeId: number, diaStr: string): string {
+  const offset = desvioSalidaMinutos(`${employeeId}-${diaStr}`);
+  return minutesToHHMM(toMinutes(horaSalida) + offset);
+}
+
 // ─── HORARIOS — CRUD ──────────────────────────────────────────────────────────
 
 export async function crearHorario(data: {
@@ -488,6 +539,13 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
         }
       }
 
+      // Hora de salida sintética para el Libro de Asistencia: solo si el
+      // empleado sí asistió ese día (PUNTUAL/TARDE). No se basa en la marca
+      // real del biométrico, sino en el horario asignado ± un desvío aleatorio.
+      const salidaEstimada = (horario && (estado === "PUNTUAL" || estado === "TARDE"))
+        ? calcularSalidaEstimada(horario.horaSalida, emp.id, diaStr)
+        : null;
+
       dias.push({
         fecha: diaStr,
         diaSemana: dia,
@@ -496,6 +554,7 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
         real: (entradaReal || salidaReal) ? { entrada: entradaReal, salida: salidaReal } : null,
         minutosRetraso,
         ausencia,
+        salidaEstimada,
       });
 
       cursor.setUTCDate(cursor.getUTCDate() + 1);
