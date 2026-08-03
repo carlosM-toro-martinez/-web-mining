@@ -5,7 +5,7 @@ import type { AusenciaTipo } from "@prisma/client";
 import {
   crearHorario, listarHorarios, obtenerHorario, actualizarHorario, eliminarHorario,
   asignarHorario, horarioActualEmpleado, historialHorariosEmpleado, eliminarAsignacion,
-  crearAusencia, listarAusencias, actualizarAusencia, eliminarAusencia,
+  crearAusencia, listarAusencias, actualizarAusencia, eliminarAusencia, crearAusenciasMasivas,
   generarReporte,
 } from "./personal.service.js";
 
@@ -44,6 +44,17 @@ const ausenciaSchema = z.object({
   motivo:     z.string().optional(),
   aprobado:   z.boolean().optional(),
   creadoPor:  z.string().optional(),
+});
+
+const ausenciaBulkSchema = z.object({
+  tipo:        z.enum(AUSENCIA_TIPOS),
+  desde:       z.coerce.date(),
+  hasta:       z.coerce.date(),
+  motivo:      z.string().optional(),
+  aprobado:    z.boolean().optional(),
+  creadoPor:   z.string().optional(),
+  alcance:     z.enum(["TODOS", "OBRERO", "TECNICO_EMPLEADO", "INDIVIDUAL"]),
+  employeeIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
 // ─── Controller ───────────────────────────────────────────────────────────────
@@ -112,6 +123,20 @@ export const personalController = {
       ...(motivo    !== undefined && { motivo }),
       ...(aprobado  !== undefined && { aprobado }),
       ...(creadoPor !== undefined && { creadoPor }),
+    });
+    res.status(201).json({ success: true, data });
+  },
+
+  async crearAusenciasMasivas(req: AuthRequest, res: Response) {
+    const parsed = ausenciaBulkSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    const { tipo, desde, hasta, motivo, aprobado, creadoPor, alcance, employeeIds } = parsed.data;
+    const data = await crearAusenciasMasivas({
+      tipo: tipo as AusenciaTipo, desde, hasta, alcance,
+      ...(motivo      !== undefined && { motivo }),
+      ...(aprobado    !== undefined && { aprobado }),
+      ...(creadoPor   !== undefined && { creadoPor }),
+      ...(employeeIds !== undefined && { employeeIds }),
     });
     res.status(201).json({ success: true, data });
   },

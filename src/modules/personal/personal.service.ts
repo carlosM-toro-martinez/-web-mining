@@ -55,9 +55,12 @@ function minutesToHHMM(min: number): string {
 // ─── Salida estimada (sintética) ──────────────────────────────────────────────
 // El biométrico no captura de forma confiable la marca de salida (el personal
 // suele olvidar marcar al salir). Para el "Libro de Asistencia" se genera una
-// hora de salida cercana al horario asignado en vez de usar la marca real.
+// hora de salida cercana a las 17:00 (5pm) — no al horaSalida del horario
+// asignado, que puede variar por turno — en vez de usar la marca real.
 // Es determinística (seed = empleado+fecha) para que reimprimir/reexportar el
 // mismo período siempre arroje el mismo valor.
+
+const SALIDA_ESTIMADA_BASE_MINUTOS = 17 * 60; // 17:00
 
 function hashSeed(str: string): number {
   let h = 2166136261;
@@ -90,9 +93,9 @@ function desvioSalidaMinutos(seedStr: string): number {
   return 5 * sign;                                              // 5, muy raro
 }
 
-function calcularSalidaEstimada(horaSalida: string, employeeId: number, diaStr: string): string {
+function calcularSalidaEstimada(employeeId: number, diaStr: string): string {
   const offset = desvioSalidaMinutos(`${employeeId}-${diaStr}`);
-  return minutesToHHMM(toMinutes(horaSalida) + offset);
+  return minutesToHHMM(SALIDA_ESTIMADA_BASE_MINUTOS + offset);
 }
 
 // ─── HORARIOS — CRUD ──────────────────────────────────────────────────────────
@@ -260,6 +263,60 @@ export async function crearAusencia(data: {
     },
     include: { employee: { select: { id: true, nombre: true, cargo: true } } },
   });
+}
+
+// Registra la misma ausencia (ej. descanso compensatorio) para varios
+// empleados a la vez: todo el personal activo, solo un tipoPersonal, o una
+// lista explícita de IDs. Evita tener que repetir el alta uno por uno.
+export async function crearAusenciasMasivas(data: {
+  tipo: AusenciaTipo;
+  desde: Date;
+  hasta: Date;
+  motivo?: string;
+  aprobado?: boolean;
+  creadoPor?: string;
+  alcance: "TODOS" | "OBRERO" | "TECNICO_EMPLEADO" | "INDIVIDUAL";
+  employeeIds?: number[];
+}) {
+  if (data.desde > data.hasta) throw new HttpError("'desde' debe ser anterior o igual a 'hasta'", 400);
+
+  let employeeIds: number[];
+
+  if (data.alcance === "INDIVIDUAL") {
+    if (!data.employeeIds || data.employeeIds.length === 0)
+      throw new HttpError("Debes indicar al menos un empleado para alcance INDIVIDUAL", 400);
+    const existentes = await prisma.employee.findMany({
+      where: { id: { in: data.employeeIds }, activo: true },
+      select: { id: true },
+    });
+    employeeIds = existentes.map((e) => e.id);
+    if (employeeIds.length === 0)
+      throw new HttpError("Ninguno de los empleados indicados existe o está activo", 404);
+  } else {
+    const where: Record<string, unknown> = { activo: true };
+    if (data.alcance !== "TODOS") where["tipoPersonal"] = data.alcance;
+    const empleados = await prisma.employee.findMany({ where, select: { id: true } });
+    employeeIds = empleados.map((e) => e.id);
+    if (employeeIds.length === 0)
+      throw new HttpError("No hay empleados activos que coincidan con el alcance elegido", 404);
+  }
+
+  const desde = inicioDelDia(data.desde);
+  const hasta = inicioDelDia(data.hasta);
+
+  await prisma.ausenciaEmpleado.createMany({
+    data: employeeIds.map((employeeId) => ({
+      employeeId,
+      tipo:      data.tipo,
+      desde,
+      hasta,
+      motivo:    data.motivo    ?? null,
+      aprobado:  data.aprobado  ?? false,
+      creadoPor: data.creadoPor ?? null,
+    })),
+  });
+
+  return { creadas: employeeIds.length, employeeIds };
 }
 
 export async function listarAusencias(filtros: {
@@ -541,9 +598,10 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
 
       // Hora de salida sintética para el Libro de Asistencia: solo si el
       // empleado sí asistió ese día (PUNTUAL/TARDE). No se basa en la marca
-      // real del biométrico, sino en el horario asignado ± un desvío aleatorio.
-      const salidaEstimada = (horario && (estado === "PUNTUAL" || estado === "TARDE"))
-        ? calcularSalidaEstimada(horario.horaSalida, emp.id, diaStr)
+      // real del biométrico ni en el horario asignado, sino en 17:00 ± un
+      // desvío aleatorio.
+      const salidaEstimada = (estado === "PUNTUAL" || estado === "TARDE")
+        ? calcularSalidaEstimada(emp.id, diaStr)
         : null;
 
       dias.push({

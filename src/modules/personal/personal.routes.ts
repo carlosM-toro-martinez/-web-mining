@@ -34,6 +34,8 @@ router.get("/empleados/:id/horarios", authorize(...ROLES), personalController.hi
 router.get("/ausencias", authorize(...ROLES), personalController.listarAusencias);
 // POST   /api/personal/ausencias
 router.post("/ausencias", authorize(...ROLES), personalController.crearAusencia);
+// POST   /api/personal/ausencias/bulk  (todo el personal, por tipoPersonal, o lista de IDs)
+router.post("/ausencias/bulk", authorize(...ROLES), personalController.crearAusenciasMasivas);
 // PUT    /api/personal/ausencias/:id
 router.put("/ausencias/:id", authorize(...ROLES), personalController.actualizarAusencia);
 // DELETE /api/personal/ausencias/:id
