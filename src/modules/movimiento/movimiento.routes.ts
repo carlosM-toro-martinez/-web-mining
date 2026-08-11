@@ -22,4 +22,10 @@ router.post(
   movimientoController.createEntrada,
 );
 
+router.post(
+  "/reordenar",
+  authorize("ADMIN"),
+  movimientoController.reordenarMovimientos,
+);
+
 export default router;

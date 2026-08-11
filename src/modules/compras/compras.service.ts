@@ -605,11 +605,17 @@ export const comprasService = {
         });
 
         if (saldo) {
+          // precioSinIva: la compra almacena precio con IVA en CompraItem; ingresosBs guarda sin IVA.
+          const precioSinIva   = new Prisma.Decimal(item.precioUnit).mul(compra.tieneIva ? '0.87' : '1');
           const nuevoIngreso   = new Prisma.Decimal(saldo.ingresoQty).sub(recibido);
-          const nuevoFinal     = new Prisma.Decimal(saldo.saldoFinal).sub(recibido);
+          // Clampar a 0: si las unidades ya fueron consumidas por vales, saldoFinal no debe ir negativo.
+          const nuevoFinal     = Prisma.Decimal.max(
+            new Prisma.Decimal(saldo.saldoFinal).sub(recibido),
+            new Prisma.Decimal(0),
+          );
           const precioSaldo    = new Prisma.Decimal(saldo.precioUnit);
           const newIngresosBs  = Prisma.Decimal.max(
-            new Prisma.Decimal((saldo as any).ingresosBs ?? 0).sub(precioUnit.mul(recibido)),
+            new Prisma.Decimal((saldo as any).ingresosBs ?? 0).sub(precioSinIva.mul(recibido)),
             new Prisma.Decimal(0),
           );
           const newPrecioUnitProm = nuevoIngreso.gt(0) ? newIngresosBs.div(nuevoIngreso) : new Prisma.Decimal(0);

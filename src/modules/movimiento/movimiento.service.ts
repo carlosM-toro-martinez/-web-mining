@@ -42,6 +42,82 @@ async function validarUsuarios(
   }
 }
 
+async function reordenarMovimientosProductoMes(
+  productoId: number,
+  anio: number,
+  mes: number,
+): Promise<{ movimientosActualizados: number; ordenCorregido: boolean }> {
+  const desde = new Date(Date.UTC(anio, mes - 1, 1));
+  const hasta  = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1));
+
+  const saldo = await (prisma.saldoMensual.findUnique as any)({
+    where: { productoId_anio_mes: { productoId, anio, mes } },
+    select: { saldoInicial: true, precioUnitProm: true },
+  });
+
+  if (!saldo) return { movimientosActualizados: 0, ordenCorregido: false };
+
+  const movimientos = await prisma.movimiento.findMany({
+    where: {
+      productoId,
+      OR: [
+        { esRetroactivo: true,  periodoAnio: anio, periodoMes: mes },
+        { esRetroactivo: false, createdAt: { gte: desde, lt: hasta } },
+      ],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, tipo: true, cantidad: true, createdAt: true, esRetroactivo: true },
+  });
+
+  if (movimientos.length === 0) return { movimientosActualizados: 0, ordenCorregido: false };
+
+  // Orden lógico: ENTRADAS antes que SALIDAS; dentro de cada tipo, el orden original por createdAt+id.
+  const entradas = movimientos.filter(m => m.tipo === "ENTRADA");
+  const salidas  = movimientos.filter(m => m.tipo === "SALIDA");
+  const ordenLogico = [...entradas, ...salidas];
+
+  // Redistribute timestamps: sort all existing timestamps and assign in logical order
+  // so the bin card (ordered by createdAt) shows them correctly.
+  const timestamps = [...movimientos]
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map(m => m.createdAt);
+
+  const periodCPP = new Prisma.Decimal(saldo.precioUnitProm ?? 0);
+  let currentStock = new Prisma.Decimal(saldo.saldoInicial ?? 0);
+  let movActualizados = 0;
+
+  for (let i = 0; i < ordenLogico.length; i++) {
+    const mov       = ordenLogico[i]!;
+    const qty       = new Prisma.Decimal(mov.cantidad);
+    const stockAntes = currentStock;
+    const newTs      = timestamps[i]!;
+
+    if (mov.tipo === "ENTRADA") {
+      currentStock = currentStock.add(qty);
+    } else {
+      currentStock = currentStock.sub(qty);
+    }
+
+    const stockDespues = currentStock;
+    const saldoBs = currentStock.isNegative()
+      ? new Prisma.Decimal(0)
+      : currentStock.mul(periodCPP);
+
+    await prisma.movimiento.update({
+      where: { id: mov.id },
+      data: {
+        stockAntes,
+        stockDespues,
+        saldoBs,
+        createdAt: newTs,
+      },
+    });
+    movActualizados++;
+  }
+
+  return { movimientosActualizados: movActualizados, ordenCorregido: true };
+}
+
 export const movimientoService = {
   async createSalida(data: CreateSalidaDTO, userId: number) {
     const result = await prisma.$transaction(async (tx) => {
@@ -259,5 +335,49 @@ export const movimientoService = {
     );
 
     return result;
+  },
+
+  async reordenarMovimientos({ productoId, anio, mes }: { productoId?: number; anio: number; mes: number }) {
+    const desde = new Date(Date.UTC(anio, mes - 1, 1));
+    const hasta  = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1));
+
+    // Determine which products to process
+    let productoIds: number[];
+    if (productoId) {
+      productoIds = [productoId];
+    } else {
+      const saldos = await prisma.saldoMensual.findMany({
+        where: { anio, mes },
+        select: { productoId: true },
+      });
+      productoIds = saldos.map(s => s.productoId);
+    }
+
+    const resultados: { productoId: number; movimientosActualizados: number }[] = [];
+    const errores: { productoId: number; error: string }[] = [];
+    let totalMovs = 0;
+
+    for (const pid of productoIds) {
+      try {
+        const r = await reordenarMovimientosProductoMes(pid, anio, mes);
+        if (r.movimientosActualizados > 0) {
+          resultados.push({ productoId: pid, movimientosActualizados: r.movimientosActualizados });
+          totalMovs += r.movimientosActualizados;
+        }
+      } catch (err) {
+        errores.push({ productoId: pid, error: String(err) });
+      }
+    }
+
+    logger.info({ anio, mes, productoId, totalMovs }, "Movimientos reordenados");
+    return {
+      anio,
+      mes,
+      productoId: productoId ?? null,
+      productosReordenados: resultados.length,
+      movimientosActualizados: totalMovs,
+      resultados,
+      errores,
+    };
   },
 };
