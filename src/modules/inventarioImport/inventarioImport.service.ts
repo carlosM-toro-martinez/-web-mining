@@ -1227,6 +1227,11 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
   const gasolinaId = await prisma.producto
     .findFirst({ where: { codigo: CODIGO_GASOLINA_CIERRE }, select: { id: true } })
     .then(p => p?.id ?? -1);
+  const dieselId = (anio === 2026 && mes === 2)
+    ? await prisma.producto
+        .findFirst({ where: { codigo: "01-01-0001" }, select: { id: true } })
+        .then(p => p?.id ?? -1)
+    : -1;
 
   const [registros, compraItemsRaw, salidasMovsRaw, anulacionValeMovsCierre] = await Promise.all([
     // SaldoMensual del mes a cerrar: fuente de saldoInicial, precioUnit y totalBsInicial
@@ -1287,7 +1292,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
 
   // Helpers idénticos a reportes.service
   const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-  const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+  const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
   function sinIvaRaw(total: number, esGas: boolean, tieneIva = true): number {
     if (!tieneIva) return total;
     return esGas ? total - total * 0.70 * 0.13 : total * 0.87;

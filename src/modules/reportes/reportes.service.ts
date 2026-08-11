@@ -50,6 +50,7 @@ function menos13(total: number): number {
 // Gasolina Nov-Dic 2025: el IVA se aplica solo sobre el 70% de la base.
 // IVA = total × 0.70 × 0.13  →  sin IVA = total − IVA = total × (1 − 0.091)
 const CODIGO_GASOLINA = "01-01-0002";
+const CODIGO_DIESEL   = "01-01-0001";
 // Versión sin redondear: para acumular ingresos con precisión completa antes del redondeo de grupo.
 // tieneIva=false → factor 1 (sin descuento); gasolina especial Nov-Dic 2025 → IVA solo sobre 70%.
 function sinIvaIngresoRaw(total: number, esGasEspecial: boolean, tieneIva = true): number {
@@ -492,6 +493,7 @@ export const reportesService = {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const gasolinaId = await prisma.producto.findFirst({ where: { codigo: CODIGO_GASOLINA }, select: { id: true } }).then(p => p?.id ?? -1);
+    const dieselId   = await prisma.producto.findFirst({ where: { codigo: CODIGO_DIESEL   }, select: { id: true } }).then(p => p?.id ?? -1);
 
     const meses = await Promise.all(
       rangoMeses.map(async ({ anio, mes }) => {
@@ -556,7 +558,7 @@ export const reportesService = {
 
         // Gasolina especial Nov-Dic 2025: IVA solo sobre 70% de la base
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
 
         // Acumular qty, bs (con IVA) y sinIvaRaw por producto — tieneIva por item
         const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
@@ -690,6 +692,7 @@ export const reportesService = {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const gasolinaId = await prisma.producto.findFirst({ where: { codigo: CODIGO_GASOLINA }, select: { id: true } }).then(p => p?.id ?? -1);
+    const dieselId   = await prisma.producto.findFirst({ where: { codigo: CODIGO_DIESEL   }, select: { id: true } }).then(p => p?.id ?? -1);
 
     const meses = await Promise.all(
       rangoMeses.map(async ({ anio, mes }) => {
@@ -743,7 +746,7 @@ export const reportesService = {
         );
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
 
         // Mismo patrón que getBalanceMensual: precio unificado + salidaBsMap sin redondear por movimiento
         const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
@@ -927,6 +930,7 @@ export const reportesService = {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const gasolinaId = await prisma.producto.findFirst({ where: { codigo: CODIGO_GASOLINA }, select: { id: true } }).then(p => p?.id ?? -1);
+    const dieselId   = await prisma.producto.findFirst({ where: { codigo: CODIGO_DIESEL   }, select: { id: true } }).then(p => p?.id ?? -1);
 
     const meses = await Promise.all(
       rangoMeses.map(async ({ anio, mes }) => {
@@ -936,7 +940,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
 
         // Fuente: CompraItem con precio real de compra, excluyendo compras anuladas.
         // La fecha se toma de fechaOperacion, luego recibidoAt, luego createdAt (igual que otros reportes).
@@ -1710,6 +1714,7 @@ export const reportesService = {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const gasolinaId = await prisma.producto.findFirst({ where: { codigo: CODIGO_GASOLINA }, select: { id: true } }).then(p => p?.id ?? -1);
+    const dieselId   = await prisma.producto.findFirst({ where: { codigo: CODIGO_DIESEL   }, select: { id: true } }).then(p => p?.id ?? -1);
 
     const meses = await Promise.all(
       rangoMeses.map(async ({ anio, mes }) => {
@@ -1718,7 +1723,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
 
         const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario, valesDelMes] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
@@ -2250,6 +2255,7 @@ export const reportesService = {
     const { anioInicio, mesInicio, anioFin, mesFin } = query;
     const rangoMeses = generarRangoDeMeses(anioInicio, mesInicio, anioFin, mesFin);
     const gasolinaId = await prisma.producto.findFirst({ where: { codigo: CODIGO_GASOLINA }, select: { id: true } }).then(p => p?.id ?? -1);
+    const dieselId   = await prisma.producto.findFirst({ where: { codigo: CODIGO_DIESEL   }, select: { id: true } }).then(p => p?.id ?? -1);
 
     const meses = await Promise.all(
       rangoMeses.map(async ({ anio, mes }) => {
@@ -2258,7 +2264,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && pid === gasolinaId;
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
 
         const comprasRaw = await prisma.compra.findMany({
           where: {

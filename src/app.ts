@@ -183,6 +183,12 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 app.use("/api", routes);
 
+// 404 para rutas no encontradas — mantiene el mismo contrato JSON del resto
+// de la API en vez de la página HTML por defecto de Express.
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Ruta no encontrada: ${req.method} ${req.originalUrl}` });
+});
+
 // Global error handler
 // eslint-disable-next-line no-unused-vars
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
