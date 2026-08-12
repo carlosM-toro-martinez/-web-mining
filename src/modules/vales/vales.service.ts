@@ -394,6 +394,16 @@ export const valesService = {
         const totalEntradas = movsDelPeriodo.filter(m => m.tipo === 'ENTRADA').reduce((s, m) => s + Number(m.cantidad), 0);
         const totalSalidas  = movsDelPeriodo.filter(m => m.tipo === 'SALIDA' ).reduce((s, m) => s + Number(m.cantidad), 0);
         const stockAntesRetro   = new Prisma.Decimal(Number(saldo?.saldoInicial ?? 0) + totalEntradas - totalSalidas);
+
+        if (stockAntesRetro.lt(cantidad)) {
+          throw new HttpError(
+            `Stock insuficiente para "${item.producto.nombre}" en el período ` +
+            `${String(periodoMes!).padStart(2, "0")}/${periodoAnio!}. ` +
+            `Disponible: ${stockAntesRetro.toNumber()}, Solicitado: ${cantidad}`,
+            409,
+          );
+        }
+
         const stockDespuesRetro = stockAntesRetro.sub(cantidad);
         // CPP inicial del período: viene del mes anterior (fuente más confiable)
         const prevMes  = periodoMes! === 1 ? 12 : periodoMes! - 1;

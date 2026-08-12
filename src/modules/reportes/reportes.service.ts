@@ -558,7 +558,7 @@ export const reportesService = {
 
         // Gasolina especial Nov-Dic 2025: IVA solo sobre 70% de la base
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
 
         // Acumular qty, bs (con IVA) y sinIvaRaw por producto — tieneIva por item
         const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
@@ -746,7 +746,7 @@ export const reportesService = {
         );
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
 
         // Mismo patrón que getBalanceMensual: precio unificado + salidaBsMap sin redondear por movimiento
         const compraMap = new Map<number, { qty: number; bs: number; sinIvaRaw: number }>();
@@ -940,7 +940,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
 
         // Fuente: CompraItem con precio real de compra, excluyendo compras anuladas.
         // La fecha se toma de fechaOperacion, luego recibidoAt, luego createdAt (igual que otros reportes).
@@ -1723,7 +1723,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
 
         const [saldosMesActual, compraItemsRaw, movimentosRaw, anulacionValeMovsDiario, valesDelMes] = await Promise.all([
           (prisma.saldoMensual.findMany as any)({
@@ -2264,7 +2264,7 @@ export const reportesService = {
         const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
         const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+        const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
 
         const comprasRaw = await prisma.compra.findMany({
           where: {

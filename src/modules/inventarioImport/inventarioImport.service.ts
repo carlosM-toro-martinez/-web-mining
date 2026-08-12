@@ -1292,7 +1292,7 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
 
   // Helpers idénticos a reportes.service
   const esEspecialMes = (anio > 2025) || (anio === 2025 && mes >= 11);
-  const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && mes === 2 && pid === dieselId));
+  const gasEsp = (pid: number) => esEspecialMes && (pid === gasolinaId || (anio === 2026 && (mes === 2 || mes === 3) && pid === dieselId));
   function sinIvaRaw(total: number, esGas: boolean, tieneIva = true): number {
     if (!tieneIva) return total;
     return esGas ? total - total * 0.70 * 0.13 : total * 0.87;

@@ -216,7 +216,7 @@ export const backfillService = {
           .findFirst({ where: { codigo: "01-01-0002" }, select: { id: true } })
           .then(p => p?.id ?? -1)
       : -1;
-    const dieselId = (anio === 2026 && mes === 2)
+    const dieselId = (anio === 2026 && (mes === 2 || mes === 3))
       ? await prisma.producto
           .findFirst({ where: { codigo: "01-01-0001" }, select: { id: true } })
           .then(p => p?.id ?? -1)
