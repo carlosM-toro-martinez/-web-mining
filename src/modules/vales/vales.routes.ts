@@ -116,4 +116,7 @@ router.patch("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"
 router.post("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
 router.patch("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
 
+// Eliminar vale permanentemente — solo ADMIN, sin contra-asientos
+router.delete("/:id/eliminar", authorize("ADMIN"), validateParams(idSchema), valesController.eliminarVale);
+
 export default router;

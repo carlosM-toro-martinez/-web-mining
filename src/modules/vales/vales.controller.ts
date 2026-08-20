@@ -121,6 +121,16 @@ export const valesController = {
     }
   },
 
+  async eliminarVale(req: AuthRequest, res: Response) {
+    try {
+      const result = await valesService.eliminarVale(String(req.params.id), req.user!.id);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getAnulaciones(_req: AuthRequest, res: Response) {
     try {
       const data = await valesService.getAnulaciones();

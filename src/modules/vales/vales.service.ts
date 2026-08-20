@@ -801,6 +801,72 @@ export const valesService = {
     return { vale: valeAnulado, anulacion, contraAsientos };
   },
 
+  async eliminarVale(id: string, userId: number) {
+    const vale = await prisma.vale.findUnique({
+      where: { id },
+      include: {
+        items: { include: { producto: { include: { stock: true } } } },
+      },
+    });
+
+    if (!vale) throw new HttpError("Vale no encontrado", 404);
+    if (vale.estado === "ANULADO") throw new HttpError("No se puede eliminar un vale ya anulado", 409);
+    if (vale.estado === "RECHAZADO") throw new HttpError("No se puede eliminar un vale rechazado", 409);
+
+    const movsRetroactivos = await prisma.movimiento.count({
+      where: { referencia: "VALE", referenciaId: id, esRetroactivo: true },
+    });
+    if (movsRetroactivos > 0) {
+      throw new HttpError(
+        "Este vale tiene movimientos retroactivos. Usa 'Anular' en lugar de eliminar.",
+        409,
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Restaurar stock físico por cantidades ya entregadas
+      for (const item of vale.items) {
+        const entregado = new Prisma.Decimal(item.cantidadEntregada ?? 0);
+        if (entregado.gt(0)) {
+          await tx.stock.update({
+            where: { productoId: item.productoId },
+            data: { cantidad: { increment: entregado } },
+          });
+        }
+      }
+
+      // Si estaba APROBADO, liberar reservas (ítems reservados pero no entregados)
+      if (vale.estado === "APROBADO") {
+        for (const item of vale.items) {
+          const stock = item.producto.stock;
+          if (!stock) continue;
+          await tx.stock.update({
+            where: { productoId: item.productoId },
+            data: {
+              cantidadReservada: {
+                decrement: Prisma.Decimal.min(
+                  new Prisma.Decimal(item.cantidadSolicitada),
+                  stock.cantidadReservada,
+                ),
+              },
+            },
+          });
+        }
+      }
+
+      await tx.movimiento.deleteMany({ where: { referencia: "VALE", referenciaId: id } });
+      await tx.valeItem.deleteMany({ where: { valeId: id } });
+      await tx.vale.delete({ where: { id } });
+    });
+
+    await prisma.log.create({
+      data: { usuarioId: userId, accion: "ELIMINAR_VALE", data: { valeId: id } },
+    });
+
+    logger.info({ userId, valeId: id }, "Vale eliminado permanentemente");
+    return { eliminado: true, valeId: id };
+  },
+
   async getAnulaciones() {
     return prisma.anulacionVale.findMany({
       orderBy: { createdAt: "desc" },
