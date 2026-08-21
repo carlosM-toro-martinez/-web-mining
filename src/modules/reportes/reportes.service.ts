@@ -2322,7 +2322,7 @@ export const reportesService = {
           });
 
           const subtotalBs     = Math.round(compraBsRaw * 100) / 100;
-          const subtotalSinIVA = Math.round(compraSinIVARaw * 100) / 100;
+          const subtotalSinIVA = compraSinIVARaw;
 
           provEntry.compras.push({
             id: c.id,
