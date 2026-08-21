@@ -2316,7 +2316,7 @@ export const reportesService = {
               precioUnit,
               precioUnitMenos13: Math.round(precioUnitSinIvaRaw(precioUnit, gasEsp(pid), c.tieneIva) * 100) / 100,
               importeBs:    Math.round(importeBsRaw * 100) / 100,
-              importeSinIVA: Math.round(importeSinIVARaw * 100) / 100,
+              importeSinIVA: importeSinIVARaw,
               grupo: { codigo: grupo.codigo, nombre: grupo.nombre },
             };
           });
