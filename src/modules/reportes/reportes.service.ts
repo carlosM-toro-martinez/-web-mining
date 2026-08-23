@@ -518,6 +518,7 @@ export const reportesService = {
               saldoInicial: true,
               ingresoQty: true,
               salidaQty: true,
+              ingresosBs: true,
               precioUnit: true,
               precioUnitProm: true,
               totalBsInicial: true,
@@ -595,6 +596,7 @@ export const reportesService = {
         const grupoMap = new Map<
           number,
           {
+            grupoId: number;
             grupoCodigo: string;
             grupoNombre: string;
             saldoInicial: number;
@@ -610,6 +612,7 @@ export const reportesService = {
 
           if (!grupoMap.has(grupoId)) {
             grupoMap.set(grupoId, {
+              grupoId,
               grupoCodigo: grupo.codigo,
               grupoNombre: grupo.nombre,
               saldoInicial: 0,
@@ -626,16 +629,74 @@ export const reportesService = {
             ? Math.round(Number(r.totalBsInicial) * 100) / 100
             : Math.round(saldoInicial * precio * 100) / 100;
 
-          const exIva    = compra && compra.qty > 0 ? compra.sinIvaRaw : 0;  // pre-computado por item con tieneIva
+          // Para meses cerrados: usar ingresosBs guardado al cerrar (evita recalcular con fórmulas distintas).
+          // Para meses abiertos o sin datos guardados: calcular desde CompraItems en vivo.
+          const ingresosBsGuardado = r.ingresosBs != null ? Number(r.ingresosBs) : null;
+          const exIva = esCerrado && ingresosBsGuardado !== null && ingresosBsGuardado > 0
+            ? ingresosBsGuardado
+            : (compra && compra.qty > 0 ? compra.sinIvaRaw : 0);
 
-          const salidasBs = salidaBsMap.has(r.productoId)
-            ? salidaBsMap.get(r.productoId)!
-            : Number(r.salidaQty) * precio;
+          // Para meses cerrados: usar salidaQty guardado (no vales en vivo, que pueden haber cambiado).
+          const salidasBs = esCerrado
+            ? Number(r.salidaQty) * precio
+            : (salidaBsMap.has(r.productoId) ? salidaBsMap.get(r.productoId)! : Number(r.salidaQty) * precio);
 
           const entry = grupoMap.get(grupoId)!;
           entry.saldoInicial    += saldoInicialBs;
           entry.ingresosExIvaRaw += exIva;
           entry.salidasBsRaw    += salidasBs;
+        }
+
+        // Para meses cerrados: saldoFinal = totalBsInicial del mes siguiente (lo que guardó cerrarMes).
+        // Esto garantiza saldoFinal_M ≡ saldoInicial_{M+1} sin importar el last-absorbs de nivel producto vs grupo.
+        if (esCerrado) {
+          const nextMes  = mes === 12 ? 1 : mes + 1;
+          const nextAnio = mes === 12 ? anio + 1 : anio;
+
+          const nextRegistros = await (prisma.saldoMensual.findMany as any)({
+            where: { anio: nextAnio, mes: nextMes },
+            select: {
+              totalBsInicial: true,
+              saldoInicial: true,
+              precioUnitProm: true,
+              precioUnit: true,
+              producto: { select: { categoria: { select: { id: true, parent: { select: { id: true } } } } } },
+            },
+          }) as any[];
+
+          if (nextRegistros.length > 0) {
+            const saldoFinalPerGrupo = new Map<number, number>();
+            for (const nr of nextRegistros) {
+              const cat = nr.producto.categoria;
+              const gId: number = cat.parent ? cat.parent.id : cat.id;
+              const prom = Number(nr.precioUnitProm ?? 0);
+              const unit = Number(nr.precioUnit ?? 0);
+              const bs = nr.totalBsInicial != null
+                ? Number(nr.totalBsInicial)
+                : Number(nr.saldoInicial) * (prom > 0 ? prom : unit);
+              saldoFinalPerGrupo.set(gId, (saldoFinalPerGrupo.get(gId) ?? 0) + bs);
+            }
+
+            const gruposFinales = [...grupoMap.values()]
+              .sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo))
+              .map(g => {
+                const saldoInicial      = Math.round(g.saldoInicial * 100) / 100;
+                const ingresoMateriales = Math.round(g.ingresosExIvaRaw * 100) / 100;
+                const saldoFinal        = Math.round((saldoFinalPerGrupo.get(g.grupoId) ?? 0) * 100) / 100;
+                // salidaMateriales derivada para mantener la ecuación por fila: saldoFinal = saldoInicial + ingresos - salidas
+                const salidaMateriales  = Math.round((saldoInicial + ingresoMateriales - saldoFinal) * 100) / 100;
+                return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
+              });
+
+            const totales = {
+              saldoInicial:      Math.round(gruposFinales.reduce((a, g) => a + g.saldoInicial, 0) * 100) / 100,
+              ingresoMateriales: Math.round(gruposFinales.reduce((a, g) => a + g.ingresoMateriales, 0) * 100) / 100,
+              salidaMateriales:  Math.round(gruposFinales.reduce((a, g) => a + g.salidaMateriales, 0) * 100) / 100,
+              saldoFinal:        Math.round(gruposFinales.reduce((a, g) => a + g.saldoFinal, 0) * 100) / 100,
+            };
+
+            return { anio, mes, esCerrado, grupos: gruposFinales, totales };
+          }
         }
 
         const grupoValsBalance = [...grupoMap.values()].sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo));
