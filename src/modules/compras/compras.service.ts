@@ -72,6 +72,7 @@ export const comprasService = {
         fechaOperacion: data.fechaOperacion ?? null,
         numeroFactura: data.numeroFactura ?? null,
         tieneIva: data.tieneIva ?? true,
+        esGasEspecial: data.esGasEspecial ?? null,
         items: {
           create: itemsResueltos.map((item) => ({
             productoId: item.productoId,
@@ -259,7 +260,8 @@ export const comprasService = {
 
           const stockAntesRetro = saldo ? new Prisma.Decimal(saldo.saldoFinal) : new Prisma.Decimal(0);
           const stockDespuesRetro = stockAntesRetro.add(cantidadRecibidaAhora);
-          const precioSinIva = new Prisma.Decimal(precioUnit).mul(compra.tieneIva ? '0.87' : '1');
+          const factorIva = !compra.tieneIva ? '1' : compra.esGasEspecial ? '0.909' : '0.87';
+          const precioSinIva = new Prisma.Decimal(precioUnit).mul(factorIva);
 
           const movimiento = await prisma.movimiento.create({
             data: {

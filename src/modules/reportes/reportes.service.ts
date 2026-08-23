@@ -537,7 +537,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -568,7 +568,7 @@ export const reportesService = {
           const bsItem = qty * Number(item.precioUnit);
           e.qty       += qty;
           e.bs        += bsItem;
-          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
+          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(item.productoId), item.compra.tieneIva);
           compraMap.set(item.productoId, e);
         }
 
@@ -726,7 +726,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -756,7 +756,7 @@ export const reportesService = {
           const bsItem = qty * Number(item.precioUnit);
           e.qty       += qty;
           e.bs        += bsItem;
-          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
+          e.sinIvaRaw += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(item.productoId), item.compra.tieneIva);
           compraMap.set(item.productoId, e);
         }
 
@@ -960,7 +960,7 @@ export const reportesService = {
             producto: {
               include: { categoria: { include: { parent: true } } },
             },
-            compra: { select: { tieneIva: true } },
+            compra: { select: { tieneIva: true, esGasEspecial: true } },
           },
         });
 
@@ -981,7 +981,7 @@ export const reportesService = {
           const bsItem = qty * precio;
           entry.ingresoQty += qty;
           entry.ingresosBs += bsItem;
-          entry.sinIvaRaw  += sinIvaIngresoRaw(bsItem, gasEsp(pid), item.compra.tieneIva);
+          entry.sinIvaRaw  += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(pid), item.compra.tieneIva);
         }
 
         const grupoMap = new Map<
@@ -1745,7 +1745,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: {
@@ -2305,7 +2305,7 @@ export const reportesService = {
             const precioUnit  = Number(item.precioUnit);
             const importeBsRaw    = cantidad * precioUnit;
             // × 0.87 por producto con todos los decimales, sin redondear al acumular
-            const importeSinIVARaw = sinIvaIngresoRaw(importeBsRaw, gasEsp(pid), c.tieneIva);
+            const importeSinIVARaw = sinIvaIngresoRaw(importeBsRaw, c.esGasEspecial ?? gasEsp(pid), c.tieneIva);
             compraBsRaw    += importeBsRaw;
             compraSinIVARaw += importeSinIVARaw;
             return {
@@ -2314,7 +2314,7 @@ export const reportesService = {
               unidad:     item.producto.unidad,
               cantidad,
               precioUnit,
-              precioUnitMenos13: Math.round(precioUnitSinIvaRaw(precioUnit, gasEsp(pid), c.tieneIva) * 100) / 100,
+              precioUnitMenos13: Math.round(precioUnitSinIvaRaw(precioUnit, c.esGasEspecial ?? gasEsp(pid), c.tieneIva) * 100) / 100,
               importeBs:    Math.round(importeBsRaw * 100) / 100,
               importeSinIVA: importeSinIVARaw,
               grupo: { codigo: grupo.codigo, nombre: grupo.nombre },

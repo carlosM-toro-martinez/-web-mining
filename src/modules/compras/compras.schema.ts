@@ -20,6 +20,7 @@ export const createCompraSchema = z
     fechaOperacion: z.coerce.date().optional(),
     numeroFactura: z.string().min(1).optional(),
     tieneIva: z.boolean().optional(),
+    esGasEspecial: z.boolean().optional().nullable(),
   })
   .strict();
 
