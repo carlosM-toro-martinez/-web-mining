@@ -545,6 +545,7 @@ export const reportesService = {
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
             select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+            orderBy: [{ id: "asc" }],
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...movFilter },
@@ -588,11 +589,14 @@ export const reportesService = {
           precioFinalMap.set(r.productoId, prom > 0 ? prom : unit > 0 ? unit : compraFallback);
         }
 
-        // Salidas: acumular Bs por movimiento sin redondear (igual que diario-almacenes)
+        // Salidas: acumulador plano (misma suma lineal que diario-almacenes) + agrupado por producto para display
+        let salidaBsRawFlat = 0;
         const salidaBsMap = new Map<number, number>();
         for (const mov of salidasMovs) {
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
+          const contrib = Number(mov.cantidad) * precio;
+          salidaBsRawFlat += contrib;
+          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + contrib);
         }
 
         const grupoMap = new Map<
@@ -703,10 +707,10 @@ export const reportesService = {
 
         const grupoValsBalance = [...grupoMap.values()].sort((a, b) => a.grupoCodigo.localeCompare(b.grupoCodigo));
 
-        // Totales desde raw para coincidir con cuadro-suministros y diario-almacenes
+        // Totales: salidaMateriales desde acumulador plano (mismo orden que diario-almacenes → resultado IEEE754 idéntico)
         const _tSaldoInicial      = Math.round(grupoValsBalance.reduce((a, g) => a + g.saldoInicial,      0) * 100) / 100;
         const _tIngresoMateriales = Math.round(grupoValsBalance.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
-        const _tSalidaMateriales  = Math.round(grupoValsBalance.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
+        const _tSalidaMateriales  = Math.round(salidaBsRawFlat * 100) / 100;
         const totales = {
           saldoInicial:      _tSaldoInicial,
           ingresoMateriales: _tIngresoMateriales,
@@ -795,6 +799,7 @@ export const reportesService = {
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
             select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+            orderBy: [{ id: "asc" }],
           }),
           prisma.movimiento.findMany({
             where: { referencia: "ANULACION_VALE", ...movFilter },
@@ -836,10 +841,13 @@ export const reportesService = {
 
         const salidaQtyMap = new Map<number, number>();
         const salidaBsMap  = new Map<number, number>();
+        let salidaBsRawFlat = 0;
         for (const mov of salidasMovs) {
           salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
+          const contrib = Number(mov.cantidad) * precio;
+          salidaBsRawFlat += contrib;
+          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + contrib);
         }
 
         const grupoMap = new Map<
@@ -944,7 +952,7 @@ export const reportesService = {
         // Totales desde raw para coincidir con balance-mensual, cuadro-suministros y diario-almacenes.
         const _tSaldoInicial      = Math.round(grupoValsInv.reduce((a, g) => a + g.saldoInicialRaw,   0) * 100) / 100;
         const _tIngresoMateriales = Math.round(grupoValsInv.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
-        const _tSalidaMateriales  = Math.round(grupoValsInv.reduce((a, g) => a + g.salidasBsRaw,      0) * 100) / 100;
+        const _tSalidaMateriales  = Math.round(salidaBsRawFlat * 100) / 100;
         const totalGeneral = Math.round((_tSaldoInicial + _tIngresoMateriales - _tSalidaMateriales) * 100) / 100;
 
         // Ajuste last-absorbs: el último grupo CON SALDO ≠ 0 absorbe el residuo de redondeo,
@@ -1177,6 +1185,7 @@ export const reportesService = {
                 include: { categoria: { include: { parent: true } } },
               },
             },
+            orderBy: [{ id: "asc" }],
           }),
           prisma.saldoMensual.findMany({
             where: { anio, mes },
@@ -1232,15 +1241,18 @@ export const reportesService = {
         // Acumular Bs por movimiento sin redondear (igual que balance-mensual)
         type ProdEntry = { producto: typeof movimientos[0]["producto"]; salidaQty: number; salidaBsRaw: number };
         const prodMap = new Map<number, ProdEntry>();
+        let salidaBsRawFlat = 0;
         for (const mov of movimientos) {
           const pid = mov.productoId;
           if (!prodMap.has(pid)) {
             prodMap.set(pid, { producto: mov.producto, salidaQty: 0, salidaBsRaw: 0 });
           }
           const precio = precioHistoricoMap.get(pid) ?? 0;
+          const contrib = Number(mov.cantidad) * precio;
+          salidaBsRawFlat += contrib;
           const entry = prodMap.get(pid)!;
           entry.salidaQty   += Number(mov.cantidad);
-          entry.salidaBsRaw += Number(mov.cantidad) * precio;
+          entry.salidaBsRaw += contrib;
         }
 
         const grupoMap = new Map<
@@ -1304,8 +1316,8 @@ export const reportesService = {
             };
           });
 
-        // Raw → round una vez, igual que balance-mensual e inventario-almacen.
-        const totalGeneral        = Math.round(grupoValsSalidas.reduce((acc, g) => acc + g.totalBsSalidaRaw, 0) * 100) / 100;
+        // Raw → round una vez, flat accumulator (mismo orden IEEE754 que balance-mensual).
+        const totalGeneral        = Math.round(salidaBsRawFlat * 100) / 100;
         const totalGeneralMenos13 = totalGeneral;
 
         return { anio, mes, esCerrado, grupos, totalGeneral, totalGeneralMenos13 };
@@ -1827,6 +1839,7 @@ export const reportesService = {
               cuenta:    { include: { centroCosto: true, funcionGasto: true, sector: true } },
               producto:  { select: { id: true, nombre: true, unidad: true } },
             },
+            orderBy: [{ id: "asc" }],
           }),
           prisma.movimiento.findMany({
             where: {
@@ -1954,6 +1967,8 @@ export const reportesService = {
         // Per-vale, per-(CC+FG) accumulation for COSTO PRODUCCION / MEDIO AMBIENTE detail display
         const costoValeMap = new Map<string, CostoValeEntry>();
         const COSTO_DETALLE_CODIGOS = new Set(["100 001 000", "104 001 000"]);
+        // Acumulador plano: misma suma lineal que balance-mensual (orderBy id) → resultado IEEE754 idéntico
+        let importeBsRawFlat = 0;
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
@@ -1964,6 +1979,7 @@ export const reportesService = {
             ? _ps
             : _compraFallback > 0 ? menos13(_compraFallback) : Number(mov.precioUnit);
           const importeBs    = Number(mov.cantidad) * precio;
+          importeBsRawFlat  += importeBs;
           const sectorKey    = mov.cuenta.sectorId ?? -1;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -2064,8 +2080,8 @@ export const reportesService = {
           }
         }
 
-        // totalSalidasHaber: acumular raw → redondear una sola vez (igual que balance-mensual).
-        const totalSalidasHaber = Math.round([...sectorMap.values()].reduce((acc, s) => acc + s.totalBs, 0) * 100) / 100;
+        // totalSalidasHaber: flat accumulator (same IEEE754 sum order as balance-mensual).
+        const totalSalidasHaber = Math.round(importeBsRawFlat * 100) / 100;
 
         // saldoInventarioFinal (HABER): totalInventarioDebe - totalSalidasHaber → DEBE = HABER.
         const saldoInventarioFinal = Math.round((totalInventarioDebe - totalSalidasHaber) * 100) / 100;
