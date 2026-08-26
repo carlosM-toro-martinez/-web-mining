@@ -1042,7 +1042,8 @@ export const reportesService = {
           const entry  = prodMap.get(pid)!;
           const qty    = Number(item.cantidadRecibida);
           const precio = Number(item.precioUnit);
-          const bsItem = qty * precio;
+          // @ts-ignore - totalBs available after prisma generate
+          const bsItem = (item as any).totalBs != null ? Number((item as any).totalBs) : qty * precio;
           entry.ingresoQty += qty;
           entry.ingresosBs += bsItem;
           entry.sinIvaRaw  += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(pid), item.compra.tieneIva);
