@@ -592,7 +592,7 @@ export const reportesService = {
         const salidaBsMap = new Map<number, number>();
         for (const mov of salidasMovs) {
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Math.round(Number(mov.cantidad) * precio * 100) / 100);
+          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
         }
 
         const grupoMap = new Map<
@@ -839,7 +839,7 @@ export const reportesService = {
         for (const mov of salidasMovs) {
           salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Math.round(Number(mov.cantidad) * precio * 100) / 100);
+          salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + Number(mov.cantidad) * precio);
         }
 
         const grupoMap = new Map<
@@ -1229,7 +1229,7 @@ export const reportesService = {
           }),
         );
 
-        // Acumular Bs por movimiento redondeando por linea (igual que diario-almacenes e inventario-general)
+        // Acumular Bs por movimiento sin redondear (igual que balance-mensual)
         type ProdEntry = { producto: typeof movimientos[0]["producto"]; salidaQty: number; salidaBsRaw: number };
         const prodMap = new Map<number, ProdEntry>();
         for (const mov of movimientos) {
@@ -1240,7 +1240,7 @@ export const reportesService = {
           const precio = precioHistoricoMap.get(pid) ?? 0;
           const entry = prodMap.get(pid)!;
           entry.salidaQty   += Number(mov.cantidad);
-          entry.salidaBsRaw += Math.round(Number(mov.cantidad) * precio * 100) / 100;
+          entry.salidaBsRaw += Number(mov.cantidad) * precio;
         }
 
         const grupoMap = new Map<
@@ -1648,7 +1648,7 @@ export const reportesService = {
           if (!lineaMap.has(key)) {
             lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
           }
-          lineaMap.get(key)!.importeBs += Math.round(Number(mov.cantidad) * precio * 100) / 100;
+          lineaMap.get(key)!.importeBs += Number(mov.cantidad) * precio;
         }
 
         const lineas = [...lineaMap.values()]
@@ -1699,7 +1699,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDetalle2 = precioMap.get(mov.productoId);
           const precio = (_psDetalle2 != null && _psDetalle2 > 0) ? _psDetalle2 : (compraAvgDetalle.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Math.round(Number(mov.cantidad) * precio * 100) / 100;
+          const importeBs = Number(mov.cantidad) * precio;
           const cc = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1963,7 +1963,7 @@ export const reportesService = {
           const precio = (_ps != null && _ps > 0)
             ? _ps
             : _compraFallback > 0 ? menos13(_compraFallback) : Number(mov.precioUnit);
-          const importeBs    = Math.round(Number(mov.cantidad) * precio * 100) / 100;
+          const importeBs    = Number(mov.cantidad) * precio;
           const sectorKey    = mov.cuenta.sectorId ?? -1;
           const esTransporte = mov.cuenta.sectorId !== null;
 
