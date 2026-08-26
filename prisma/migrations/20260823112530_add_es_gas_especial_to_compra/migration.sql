@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "Compra" ADD COLUMN     "esGasEspecial" BOOLEAN;
+ALTER TABLE "Compra" ADD COLUMN IF NOT EXISTS "esGasEspecial" BOOLEAN;
