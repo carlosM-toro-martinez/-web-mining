@@ -320,6 +320,7 @@ export const reportesService = {
       const items = c.items.map((item: any) => {
         const cantidadRecibida = Number(item.cantidadRecibida);
         const precioUnit = Number(item.precioUnit);
+        const subtotalBs = item.totalBs != null ? Number(item.totalBs) : cantidadRecibida * precioUnit;
         return {
           productoId: item.productoId,
           codigo: item.producto.codigo,
@@ -328,7 +329,7 @@ export const reportesService = {
           cantidadPedida: Number(item.cantidadPedida),
           cantidadRecibida,
           precioUnit,
-          subtotalBs: cantidadRecibida * precioUnit,
+          subtotalBs,
         };
       });
 
@@ -538,7 +539,8 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
+            // @ts-ignore - totalBs available after prisma generate
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, totalBs: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -566,7 +568,7 @@ export const reportesService = {
         for (const item of compraItemsRaw) {
           const e = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
           const qty    = Number(item.cantidadRecibida);
-          const bsItem = qty * Number(item.precioUnit);
+          const bsItem = (item as any).totalBs != null ? Number((item as any).totalBs) : qty * Number(item.precioUnit);
           e.qty       += qty;
           e.bs        += bsItem;
           e.sinIvaRaw += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(item.productoId), item.compra.tieneIva);
@@ -787,7 +789,8 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
+            // @ts-ignore - totalBs available after prisma generate
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, totalBs: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
@@ -814,7 +817,7 @@ export const reportesService = {
         for (const item of compraItemsRaw) {
           const e      = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
           const qty    = Number(item.cantidadRecibida);
-          const bsItem = qty * Number(item.precioUnit);
+          const bsItem = (item as any).totalBs != null ? Number((item as any).totalBs) : qty * Number(item.precioUnit);
           e.qty       += qty;
           e.bs        += bsItem;
           e.sinIvaRaw += sinIvaIngresoRaw(bsItem, item.compra.esGasEspecial ?? gasEsp(item.productoId), item.compra.tieneIva);

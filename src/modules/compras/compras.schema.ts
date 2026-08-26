@@ -10,6 +10,7 @@ export const createCompraSchema = z
           productoCodigo: z.string().min(1).optional(),
           cantidadPedida: z.number().positive(),
           precioUnit: z.number().positive(),
+          totalBs: z.number().positive().optional(),
         }).refine(
           (d) => d.productoId !== undefined || d.productoCodigo !== undefined,
           { message: "Se requiere productoId o productoCodigo en cada item" },
@@ -31,9 +32,13 @@ export const recibirCompraSchema = z
   .strict();
 
 export const corregirPrecioItemSchema = z.object({
-  precioUnit: z.number().positive(),
+  precioUnit: z.number().positive().optional(),
+  totalBs: z.number().positive().optional(),
   observacion: z.string().optional(),
-}).strict();
+}).strict().refine(
+  (d) => d.precioUnit !== undefined || d.totalBs !== undefined,
+  { message: "Se requiere precioUnit o totalBs" },
+);
 
 export const compraQuerySchema = z
   .object({

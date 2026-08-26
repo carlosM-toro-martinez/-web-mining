@@ -80,10 +80,13 @@ export const comprasController = {
       if (!parsed.success) {
         return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
       }
+      const corrData: { nuevoPrecioUnit?: number; nuevoTotalBs?: number } = {};
+      if (parsed.data.precioUnit != null) corrData.nuevoPrecioUnit = parsed.data.precioUnit;
+      if (parsed.data.totalBs != null) corrData.nuevoTotalBs = parsed.data.totalBs;
       const result = await comprasService.corregirPrecioItem(
         String(compraId),
         String(itemId),
-        parsed.data.precioUnit,
+        corrData,
         req.user!.id,
       );
       res.json({ success: true, data: result });

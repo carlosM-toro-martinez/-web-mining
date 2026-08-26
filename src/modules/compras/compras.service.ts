@@ -29,7 +29,7 @@ export const comprasService = {
     }
 
     // Resolver productoId desde productoCodigo cuando sea necesario y validar existencia
-    const itemsResueltos: { productoId: number; productoCodigo: string; cantidadPedida: number; precioUnit: number }[] = [];
+    const itemsResueltos: { productoId: number; productoCodigo: string; cantidadPedida: number; precioUnit: number; totalBs?: number }[] = [];
     const noEncontrados: string[] = [];
 
     for (const item of data.items) {
@@ -41,7 +41,7 @@ export const comprasService = {
         if (!p) {
           noEncontrados.push(`id:${item.productoId}`);
         } else {
-          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit });
+          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit, ...(item.totalBs != null ? { totalBs: item.totalBs } : {}) });
         }
       } else {
         const p = await prisma.producto.findUnique({
@@ -51,7 +51,7 @@ export const comprasService = {
         if (!p) {
           noEncontrados.push(`código:"${item.productoCodigo}"`);
         } else {
-          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit });
+          itemsResueltos.push({ productoId: p.id, productoCodigo: p.codigo, cantidadPedida: item.cantidadPedida, precioUnit: item.precioUnit, ...(item.totalBs != null ? { totalBs: item.totalBs } : {}) });
         }
       }
     }
@@ -78,6 +78,7 @@ export const comprasService = {
             productoId: item.productoId,
             cantidadPedida: item.cantidadPedida,
             precioUnit: item.precioUnit,
+            ...(item.totalBs != null ? { totalBs: item.totalBs } : {}),
           })),
         },
       },
@@ -491,7 +492,12 @@ export const comprasService = {
     };
   },
 
-  async corregirPrecioItem(compraId: string, itemId: string, nuevoPrecioUnit: number, userId: number) {
+  async corregirPrecioItem(
+    compraId: string,
+    itemId: string,
+    data: { nuevoPrecioUnit?: number; nuevoTotalBs?: number },
+    userId: number,
+  ) {
     const compra = await prisma.compra.findUnique({
       where: { id: compraId },
       select: { id: true, estado: true },
@@ -499,42 +505,56 @@ export const comprasService = {
     if (!compra) throw new HttpError("Compra no encontrada", 404);
     if (compra.estado === "ANULADA") throw new HttpError("No se puede corregir una compra anulada", 409);
 
-    const item = await prisma.compraItem.findUnique({
+    const item = await (prisma.compraItem.findUnique as any)({
       where: { id: itemId },
-      select: { id: true, compraId: true, productoId: true, cantidadRecibida: true, precioUnit: true },
-    });
+      select: { id: true, compraId: true, productoId: true, cantidadRecibida: true, precioUnit: true, totalBs: true },
+    }) as { id: string; compraId: string; productoId: number; cantidadRecibida: any; precioUnit: any; totalBs: any } | null;
     if (!item) throw new HttpError("Item de compra no encontrado", 404);
     if (item.compraId !== compraId) throw new HttpError("El item no pertenece a esta compra", 400);
 
     const precioAnterior = Number(item.precioUnit);
-    const nuevoPrecio = new Prisma.Decimal(nuevoPrecioUnit);
+    const totalBsAnterior = item.totalBs != null ? Number(item.totalBs) : null;
+    let movimientosActualizados = 0;
 
-    await prisma.compraItem.update({
-      where: { id: itemId },
-      data: { precioUnit: nuevoPrecio },
-    });
+    const updateData: any = {};
 
-    const movimientos = await prisma.movimiento.findMany({
-      where: { referencia: "COMPRA", referenciaId: compraId, productoId: item.productoId, tipo: "ENTRADA" },
-      select: { id: true, cantidad: true, stockDespues: true },
-    });
-
-    for (const mov of movimientos) {
-      await prisma.movimiento.update({
-        where: { id: mov.id },
-        data: {
-          precioUnit: nuevoPrecio,
-          entradaBs: nuevoPrecio.mul(mov.cantidad),
-          saldoBs:   nuevoPrecio.mul(mov.stockDespues),
-        },
-      });
+    if (data.nuevoTotalBs != null) {
+      updateData.totalBs = new Prisma.Decimal(data.nuevoTotalBs);
     }
+
+    if (data.nuevoPrecioUnit != null) {
+      const nuevoPrecio = new Prisma.Decimal(data.nuevoPrecioUnit);
+      updateData.precioUnit = nuevoPrecio;
+
+      await prisma.compraItem.update({ where: { id: itemId }, data: updateData });
+
+      const movimientos = await prisma.movimiento.findMany({
+        where: { referencia: "COMPRA", referenciaId: compraId, productoId: item.productoId, tipo: "ENTRADA" },
+        select: { id: true, cantidad: true, stockDespues: true },
+      });
+      for (const mov of movimientos) {
+        await prisma.movimiento.update({
+          where: { id: mov.id },
+          data: {
+            precioUnit: nuevoPrecio,
+            entradaBs: nuevoPrecio.mul(mov.cantidad),
+            saldoBs:   nuevoPrecio.mul(mov.stockDespues),
+          },
+        });
+      }
+      movimientosActualizados = movimientos.length;
+    } else {
+      await prisma.compraItem.update({ where: { id: itemId }, data: updateData });
+    }
+
+    const nuevoPrecioUnit = data.nuevoPrecioUnit ?? precioAnterior;
+    const nuevoTotalBs = data.nuevoTotalBs ?? (totalBsAnterior ?? null);
 
     await prisma.log.create({
       data: {
         usuarioId: userId,
         accion: "CORRECCION_PRECIO_COMPRA_ITEM",
-        data: { compraId, itemId, productoId: item.productoId, precioAnterior, nuevoPrecioUnit, movimientosAfectados: movimientos.length },
+        data: { compraId, itemId, productoId: item.productoId, precioAnterior, totalBsAnterior, nuevoPrecioUnit, nuevoTotalBs, movimientosAfectados: movimientosActualizados },
       },
     });
 
@@ -547,7 +567,7 @@ export const comprasService = {
       cantidadRecibida: Number(item.cantidadRecibida),
       subtotalAnterior: Math.round(precioAnterior * Number(item.cantidadRecibida) * 100) / 100,
       subtotalNuevo:    Math.round(nuevoPrecioUnit * Number(item.cantidadRecibida) * 100) / 100,
-      movimientosActualizados: movimientos.length,
+      movimientosActualizados,
     };
   },
 
