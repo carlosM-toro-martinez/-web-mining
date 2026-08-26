@@ -1940,10 +1940,14 @@ export const reportesService = {
 
         type ValeLinea = { productoId: number; nombre: string; unidad: string; cantidad: number; precioUnit: number; importeBs: number };
         type ValeAcum  = { totalBs: number; lineas: Map<number, ValeLinea> };
+        type CostoValeEntry = { sectorKey: number; centroCostoCodigo: string; funcionGastoCodigo: string; funcionGastoNombre: string; importeBs: number };
 
         const sectorMap  = new Map<number, SectorEntry>();
         const ccHaberMap = new Map<string, CcHaberEntry>();
         const sectorVales = new Map<number, Map<string, ValeAcum>>();
+        // Per-vale, per-(CC+FG) accumulation for COSTO PRODUCCION / MEDIO AMBIENTE detail display
+        const costoValeMap = new Map<string, CostoValeEntry>();
+        const COSTO_DETALLE_CODIGOS = new Set(["100 001 000", "104 001 000"]);
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
@@ -2000,6 +2004,24 @@ export const reportesService = {
             const lin = ve.lineas.get(mov.productoId)!;
             lin.cantidad  += Number(mov.cantidad);
             lin.importeBs += importeBs;
+          }
+
+          // -- costoValeMap: per-vale, per-(CC+FG) for COSTO PRODUCCION / MEDIO AMBIENTE display --
+          const sectorCodigo = mov.cuenta.sector?.codigo;
+          if (sectorCodigo && COSTO_DETALLE_CODIGOS.has(sectorCodigo) && mov.referencia === "VALE" && mov.referenciaId) {
+            const cvKey = `${sectorKey}:${mov.referenciaId}:${mov.cuenta.centroCosto.codigo}:${mov.cuenta.funcionGasto.codigo}`;
+            const existing = costoValeMap.get(cvKey);
+            if (existing) {
+              existing.importeBs += importeBs;
+            } else {
+              costoValeMap.set(cvKey, {
+                sectorKey,
+                centroCostoCodigo:  mov.cuenta.centroCosto.codigo,
+                funcionGastoCodigo: mov.cuenta.funcionGasto.codigo,
+                funcionGastoNombre: mov.cuenta.funcionGasto.nombre,
+                importeBs,
+              });
+            }
           }
 
           // -- ccHaberMap: por codigoCompleto (imágenes 2 y 3) --
@@ -2103,6 +2125,8 @@ export const reportesService = {
               centroCostoNombre: entry.centroCostoNombre,
               sectorNombre:      entry.sectorNombre,
               esTransporte:      entry.esTransporte,
+              funcionGastoCodigo: entry.funcionGastoCodigo,
+              funcionGastoNombre: entry.funcionGastoNombre,
             };
             if (entry.esTransporte) {
               cuentasHaberArr.push({ ...base, totalBs, totalCantidad: entry.totalCantidad });
@@ -2163,7 +2187,18 @@ export const reportesService = {
               };
             });
 
-          return { sectorId: s.sectorId, sectorCodigo: s.sectorCodigo, sectorNombre: s.sectorNombre, totalBs: sectorTotalBs, funcionGastos, vales };
+          const costoLineas = COSTO_DETALLE_CODIGOS.has(s.sectorCodigo ?? "")
+            ? [...costoValeMap.values()]
+                .filter(e => e.sectorKey === sk)
+                .map(e => ({
+                  centroCostoCodigo:  e.centroCostoCodigo,
+                  funcionGastoCodigo: e.funcionGastoCodigo,
+                  funcionGastoNombre: e.funcionGastoNombre,
+                  importeBs:          Math.round(e.importeBs * 100) / 100,
+                }))
+            : undefined;
+
+          return { sectorId: s.sectorId, sectorCodigo: s.sectorCodigo, sectorNombre: s.sectorNombre, totalBs: sectorTotalBs, funcionGastos, vales, costoLineas };
         });
 
         const cuentasHaber = (cuentasHaberArr as { codigoCompleto: string }[])
