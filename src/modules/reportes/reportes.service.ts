@@ -1797,7 +1797,8 @@ export const reportesService = {
               producto: { select: { categoria: { select: { id: true, parent: { select: { id: true } } } } } },
             },
           }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown; producto: { categoria: { id: number; parent: { id: number } | null } } }[]>,
-          prisma.compraItem.findMany({
+          // @ts-ignore - totalBs available after prisma generate
+          (prisma.compraItem.findMany as any)({
             where: {
               cantidadRecibida: { gt: 0 },
               compra: {
@@ -1809,7 +1810,7 @@ export const reportesService = {
                 ],
               },
             },
-            select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
+            select: { productoId: true, cantidadRecibida: true, precioUnit: true, totalBs: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
           }),
           prisma.movimiento.findMany({
             where: {
@@ -1877,7 +1878,7 @@ export const reportesService = {
         for (const item of compraItemsRaw) {
           const e      = compraAccDiario.get(item.productoId) ?? { totalBs: 0, qty: 0, sinIvaRaw: 0 };
           const qty    = Number(item.cantidadRecibida);
-          const bsItem = qty * Number(item.precioUnit);
+          const bsItem = item.totalBs != null ? Number(item.totalBs) : qty * Number(item.precioUnit);
           e.totalBs   += bsItem;
           e.qty        += qty;
           e.sinIvaRaw  += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
@@ -1903,7 +1904,8 @@ export const reportesService = {
         // comprasImporteBs: total con IVA para mostrar
         let comprasImporteBs = 0;
         for (const item of compraItemsRaw) {
-          comprasImporteBs += Number(item.cantidadRecibida) * Number(item.precioUnit);
+          const qty = Number(item.cantidadRecibida);
+          comprasImporteBs += item.totalBs != null ? Number(item.totalBs) : qty * Number(item.precioUnit);
         }
 
         // comprasSinIva: pre-computado por item con tieneIva, acumulado raw → redondear una vez al final
@@ -2402,7 +2404,7 @@ export const reportesService = {
             const pid         = item.productoId;
             const cantidad    = Number(item.cantidadRecibida);
             const precioUnit  = Number(item.precioUnit);
-            const importeBsRaw    = cantidad * precioUnit;
+            const importeBsRaw    = item.totalBs != null ? Number(item.totalBs) : cantidad * precioUnit;
             // × 0.87 por producto con todos los decimales, sin redondear al acumular
             const importeSinIVARaw = sinIvaIngresoRaw(importeBsRaw, c.esGasEspecial ?? gasEsp(pid), c.tieneIva);
             compraBsRaw    += importeBsRaw;
@@ -2548,7 +2550,8 @@ export const reportesService = {
           const prod       = grupoEntry.productoMap.get(item.productoId)!;
           const cantidad   = Number(item.cantidadRecibida);
           const precioUnit = Number(item.precioUnit);
-          const importeBs  = Math.round(cantidad * precioUnit * 100) / 100;
+          // @ts-ignore - totalBs available after prisma generate
+          const importeBs  = Math.round(((item as any).totalBs != null ? Number((item as any).totalBs) : cantidad * precioUnit) * 100) / 100;
           const fecha      = item.compra.fechaOperacion ?? item.compra.recibidoAt ?? item.compra.createdAt;
           const proveedor  = item.compra.proveedor?.nombre ?? item.compra.proveedor?.razonSocial ?? "Sin proveedor";
 
