@@ -269,4 +269,23 @@ router.get(
   inventarioImportController.diagnosticarSaldos,
 );
 
+// ─── Limpiar mes ─────────────────────────────────────────────────────────────
+// GET /api/inventario-import/limpiar-mes/preview?anio=2026&mes=5
+// Vista previa: lista vales y compras no-retroactivos del mes sin eliminar nada.
+router.get(
+  "/limpiar-mes/preview",
+  authorize("ADMIN"),
+  inventarioImportController.getLimpiarMesPreview,
+);
+
+// DELETE /api/inventario-import/limpiar-mes
+// Body: { anio, mes }
+// Elimina en una transacción todos los vales y compras no-retroactivos del mes.
+// Solo ADMIN. Irreversible.
+router.delete(
+  "/limpiar-mes",
+  authorize("ADMIN"),
+  inventarioImportController.ejecutarLimpiarMes,
+);
+
 export default router;

@@ -28,6 +28,8 @@ import {
   ajustarPreciosSinIva,
   diagnosticarPrecios,
   diagnosticarSaldos,
+  getLimpiarMesPreview,
+  ejecutarLimpiarMes,
 } from "./inventarioImport.service.js";
 import {
   stockInicialSchema,
@@ -480,6 +482,38 @@ export const inventarioImportController = {
       res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Limpiar mes ─────────────────────────────────────────────────────────
+
+  async getLimpiarMesPreview(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.query?.anio));
+      const mes  = parseInt(String(req.query?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await getLimpiarMesPreview(anio, mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async ejecutarLimpiarMes(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.body?.anio));
+      const mes  = parseInt(String(req.body?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await ejecutarLimpiarMes(anio, mes, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
 };
