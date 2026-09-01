@@ -185,9 +185,6 @@ async function procesarProductoMes(
       ? new Prisma.Decimal(0)
       : currentStock.mul(periodCPP),
   };
-  if (cppInicialVal > 0) {
-    saldoData.totalBsInicial = saldoInicialD.mul(cppDecimal);
-  }
   if (totalCompraQty.gt(0)) {
     saldoData.ingresosBs = totalCompraSinIva;
     saldoData.precioUnit = lastPrecioSinIva;
