@@ -200,6 +200,11 @@ async function procesarProductoMes(
 
 export const backfillService = {
   async backfillCPP({ anio, mes }: { anio: number; mes: number }) {
+    const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
+    if (esCerrado) {
+      return { anio, mes, productosProcessados: 0, movimientosActualizados: 0, saldosActualizados: 0, detalle: [], errores: [], advertencia: "Mes cerrado — reabrir el mes antes de ejecutar el backfill" };
+    }
+
     const saldos = await prisma.saldoMensual.findMany({
       where: { anio, mes },
       select: { productoId: true },
