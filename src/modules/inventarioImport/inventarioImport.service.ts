@@ -579,9 +579,10 @@ export async function ajustarCamposSaldoMensual(
   // ── Cascade: propagar nuevo saldoFinal a los meses siguientes ──────────────
   let mesesCascadeados = 0;
   if (campos.saldoInicial !== undefined) {
-    let prevFinal = newSaldoFinal;
-    let cascAnio  = existing.anio;
-    let cascMes   = existing.mes;
+    let prevFinal   = newSaldoFinal;
+    let prevTotalBs = new Prisma.Decimal(updateData.totalBs != null ? String(updateData.totalBs) : newSaldoFinal.mul(precioUnitActivo).toFixed(6));
+    let cascAnio    = existing.anio;
+    let cascMes     = existing.mes;
 
     for (let i = 0; i < 48; i++) {
       cascMes = cascMes === 12 ? 1 : cascMes + 1;
@@ -594,15 +595,16 @@ export async function ajustarCamposSaldoMensual(
 
       if (!next) break;
 
-      const nextFinal  = prevFinal.add(next.ingresoQty as number).sub(next.salidaQty as number);
+      const nextFinal   = prevFinal.add(next.ingresoQty as number).sub(next.salidaQty as number);
       const nextTotalBs = nextFinal.mul(next.precioUnit as number);
 
       await (prisma.saldoMensual.update as any)({
         where: { id: next.id },
-        data: { saldoInicial: prevFinal, saldoFinal: nextFinal, totalBs: nextTotalBs },
+        data: { saldoInicial: prevFinal, saldoFinal: nextFinal, totalBs: nextTotalBs, totalBsInicial: prevTotalBs },
       });
 
-      prevFinal = nextFinal;
+      prevFinal   = nextFinal;
+      prevTotalBs = nextTotalBs;
       mesesCascadeados++;
     }
   }
@@ -1627,7 +1629,7 @@ export async function ajustarPreciosSinIva(anio: number, mes: number) {
   // Precio promedio ponderado con-IVA por producto, calculado desde CompraItems reales
   const compraMap = buildCompraMapFromItems(comprasRaw);
 
-  type Resumen = { productoId: number; accion: string; precioAnterior: number; precioNuevo: number };
+  type Resumen = { productoId: number; accion: string; precioAnterior: number; precioNuevo: number; totalBsNuevo?: number };
   const resumen: Resumen[] = [];
 
   for (const s of saldos) {
@@ -1668,7 +1670,7 @@ export async function ajustarPreciosSinIva(anio: number, mes: number) {
       },
     });
 
-    resumen.push({ productoId: s.productoId, accion: 'ajustado', precioAnterior: Number(pAnterior), precioNuevo: Number(nuevoPrecio) });
+    resumen.push({ productoId: s.productoId, accion: 'ajustado', precioAnterior: Number(pAnterior), precioNuevo: Number(nuevoPrecio), totalBsNuevo: Number(saldoFinal.mul(nuevoPrecio).toDecimalPlaces(6)) });
   }
 
   // Cascade: propagar hacia meses siguientes recalculando desde CompraItems reales
@@ -1678,6 +1680,7 @@ export async function ajustarPreciosSinIva(anio: number, mes: number) {
 
   for (const item of resumen.filter(r => r.accion === 'ajustado')) {
     let precioVigente = new Prisma.Decimal(item.precioNuevo);
+    let prevTotalBs   = new Prisma.Decimal(item.totalBsNuevo ?? 0);
     let mesIter  = mes === 12 ? 1  : mes  + 1;
     let anioIter = mes === 12 ? anio + 1 : anio;
 
@@ -1699,19 +1702,23 @@ export async function ajustarPreciosSinIva(anio: number, mes: number) {
 
       if (compraSig && !compraSig.qty.isZero()) {
         // Mes con compras: recalcular precio desde CompraItems reales × 0.87
-        const np   = compraSig.bs.div(compraSig.qty).mul('0.87').toDecimalPlaces(6);
-        const nIBs = compraSig.bs.mul('0.87').toDecimalPlaces(6);
+        const np       = compraSig.bs.div(compraSig.qty).mul('0.87').toDecimalPlaces(6);
+        const nIBs     = compraSig.bs.mul('0.87').toDecimalPlaces(6);
+        const newTotalBs = sf.mul(np).toDecimalPlaces(6);
         await (prisma.saldoMensual.update as any)({
           where: { id: saldoSig.id },
-          data: { precioUnit: np, precioUnitProm: np, ingresosBs: nIBs, totalBs: sf.mul(np).toDecimalPlaces(6), totalBsProm: sf.mul(np).toDecimalPlaces(6) },
+          data: { precioUnit: np, precioUnitProm: np, ingresosBs: nIBs, totalBs: newTotalBs, totalBsProm: newTotalBs, totalBsInicial: prevTotalBs },
         });
         precioVigente = np;
+        prevTotalBs   = newTotalBs;
       } else {
         // Mes sin compras: heredar precio vigente del mes anterior
+        const newTotalBs = sf.mul(precioVigente).toDecimalPlaces(6);
         await (prisma.saldoMensual.update as any)({
           where: { id: saldoSig.id },
-          data: { precioUnit: precioVigente, precioUnitProm: precioVigente, totalBs: sf.mul(precioVigente).toDecimalPlaces(6), totalBsProm: sf.mul(precioVigente).toDecimalPlaces(6) },
+          data: { precioUnit: precioVigente, precioUnitProm: precioVigente, totalBs: newTotalBs, totalBsProm: newTotalBs, totalBsInicial: prevTotalBs },
         });
+        prevTotalBs = newTotalBs;
       }
 
       mesIter  = mesIter === 12 ? 1 : mesIter + 1;
