@@ -142,7 +142,8 @@ export async function obtenerHorario(id: number) {
   const h = await prisma.horario.findUnique({ where: { id }, include: {
     asignaciones: {
       where: { hasta: null },
-      include: { employee: { select: { id: true, nombre: true, cargo: true } } },
+      include: { employee: { select: { id: true, nombre: true, cargo: true, tipoPersonal: true, documento: true } } },
+      orderBy: { employee: { nombre: "asc" } },
     },
   }});
   if (!h) throw new HttpError("Horario no encontrado", 404);
