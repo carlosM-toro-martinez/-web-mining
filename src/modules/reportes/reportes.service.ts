@@ -1806,10 +1806,11 @@ export const reportesService = {
           (prisma.saldoMensual.findMany as any)({
             where: { anio, mes },
             select: {
-              productoId: true, precioUnit: true, precioUnitProm: true, saldoInicial: true, totalBsInicial: true,
+              productoId: true, precioUnit: true, precioUnitProm: true, saldoInicial: true,
+              totalBsInicial: true, ingresosBs: true, totalBs: true,
               producto: { select: { categoria: { select: { id: true, parent: { select: { id: true } } } } } },
             },
-          }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown; producto: { categoria: { id: number; parent: { id: number } | null } } }[]>,
+          }) as Promise<{ productoId: number; precioUnit: unknown; precioUnitProm: unknown; saldoInicial: unknown; totalBsInicial: unknown; ingresosBs: unknown; totalBs: unknown; producto: { categoria: { id: number; parent: { id: number } | null } } }[]>,
           // @ts-ignore - totalBs available after prisma generate
           (prisma.compraItem.findMany as any)({
             where: {
@@ -1923,17 +1924,22 @@ export const reportesService = {
           comprasImporteBs += item.totalBs != null ? Number(item.totalBs) : qty * Number(item.precioUnit);
         }
 
-        // comprasSinIva: pre-computado por item con tieneIva, acumulado raw → redondear una vez al final
+        // comprasSinIva: por grupo, fuente depende del estado del mes.
+        // Cerrado → ingresosBs guardado por cerrarMes (idéntico a balance-mensual), redondear por grupo.
+        // Abierto  → sinIvaRaw recomputado desde CompraItems, acumular raw y redondear una vez.
         const grupoIngMap = new Map<number, number>();
         for (const s of saldosMesActual) {
-          const grupoId  = s.producto.categoria.parent?.id ?? s.producto.categoria.id;
-          const exIvaRaw = compraAccDiario.get(s.productoId)?.sinIvaRaw ?? 0;
-          grupoIngMap.set(grupoId, (grupoIngMap.get(grupoId) ?? 0) + exIvaRaw);
+          const grupoId = s.producto.categoria.parent?.id ?? s.producto.categoria.id;
+          const exIva   = esCerrado && (s as any).ingresosBs != null && Number((s as any).ingresosBs) > 0
+            ? Number((s as any).ingresosBs)
+            : (compraAccDiario.get(s.productoId)?.sinIvaRaw ?? 0);
+          grupoIngMap.set(grupoId, (grupoIngMap.get(grupoId) ?? 0) + exIva);
         }
-        // Acumular raw (sin redondear por grupo) → redondear una vez al final, igual que cuadro-suministros y balance-mensual.
-        const comprasSinIva = Math.round(
-          [...grupoIngMap.values()].reduce((a, g) => a + g, 0) * 100,
-        ) / 100;
+        const comprasSinIva = esCerrado
+          // Redondear por grupo igual que balance-mensual (meses cerrados)
+          ? Math.round([...grupoIngMap.values()].reduce((a, g) => a + Math.round(g * 100) / 100, 0) * 100) / 100
+          // Acumular raw → redondear una vez (meses abiertos, IEEE754 idéntico al acumulador plano)
+          : Math.round([...grupoIngMap.values()].reduce((a, g) => a + g, 0) * 100) / 100;
 
         const totalInventarioDebe = saldoInventarioAnterior + comprasSinIva;
 
@@ -2081,8 +2087,22 @@ export const reportesService = {
           }
         }
 
-        // totalSalidasHaber: flat accumulator (same IEEE754 sum order as balance-mensual).
-        const totalSalidasHaber = Math.round(importeBsRawFlat * 100) / 100;
+        // totalSalidasHaber: fuente depende del estado del mes.
+        // Cerrado → derivado de totalBs guardado por cerrarMes (idéntico a balance-mensual con last-absorbs).
+        // Abierto  → flat accumulator desde movimientos (IEEE754 idéntico a balance-mensual abierto).
+        let totalSalidasHaber: number;
+        if (esCerrado) {
+          const grupoSFMap = new Map<number, number>();
+          for (const s of saldosMesActual) {
+            const grupoId = s.producto.categoria.parent?.id ?? s.producto.categoria.id;
+            const tbs     = (s as any).totalBs != null ? Number((s as any).totalBs) : 0;
+            grupoSFMap.set(grupoId, (grupoSFMap.get(grupoId) ?? 0) + tbs);
+          }
+          const saldoFinalTotal = Math.round([...grupoSFMap.values()].reduce((a, g) => a + Math.round(g * 100) / 100, 0) * 100) / 100;
+          totalSalidasHaber = Math.round((totalInventarioDebe - saldoFinalTotal) * 100) / 100;
+        } else {
+          totalSalidasHaber = Math.round(importeBsRawFlat * 100) / 100;
+        }
 
         // saldoInventarioFinal (HABER): totalInventarioDebe - totalSalidasHaber → DEBE = HABER.
         const saldoInventarioFinal = Math.round((totalInventarioDebe - totalSalidasHaber) * 100) / 100;
