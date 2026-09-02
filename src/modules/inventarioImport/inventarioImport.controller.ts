@@ -28,6 +28,8 @@ import {
   ajustarPreciosSinIva,
   diagnosticarPrecios,
   diagnosticarSaldos,
+  diagnosticarRedondeo,
+  fixRedondeo,
   getLimpiarMesPreview,
   ejecutarLimpiarMes,
 } from "./inventarioImport.service.js";
@@ -301,7 +303,7 @@ export const inventarioImportController = {
       if (!parsed.success) {
         return res.status(400).json({ success: false, error: "Datos inválidos", details: parsed.error.flatten() });
       }
-      const data = await cerrarMes(parsed.data.anio, parsed.data.mes, req.user!.id, parsed.data.force);
+      const data = await cerrarMes(parsed.data.anio, parsed.data.mes, req.user!.id, parsed.data.force, parsed.data.soloRegistrarCierre);
       res.status(201).json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
@@ -482,6 +484,36 @@ export const inventarioImportController = {
       res.json({ success: true, data });
     } catch (error) {
       res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // ─── Diagnóstico de redondeo ingresosBs ──────────────────────────────────
+
+  async diagnosticarRedondeo(req: AuthRequest, res: Response) {
+    try {
+      const anio = parseInt(String(req.query?.anio));
+      const mes  = parseInt(String(req.query?.mes));
+      if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ success: false, error: "Se requieren anio y mes válidos" });
+      }
+      const data = await diagnosticarRedondeo(anio, mes);
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async fixRedondeo(req: AuthRequest, res: Response) {
+    try {
+      const { anio, mes, saldoMensualId, ingresosBsNuevo } = req.body ?? {};
+      if (!anio || !mes || !saldoMensualId || ingresosBsNuevo == null) {
+        return res.status(400).json({ success: false, error: "Faltan campos: anio, mes, saldoMensualId, ingresosBsNuevo" });
+      }
+      const data = await fixRedondeo(Number(anio), Number(mes), String(saldoMensualId), Number(ingresosBsNuevo), req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
 

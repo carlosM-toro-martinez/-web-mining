@@ -1208,10 +1208,30 @@ export async function inicializarPeriodo(anio: number, mes: number) {
 // ─── Cerrar mes ──────────────────────────────────────────────────────────────
 // Consolida los movimientos del mes en SaldoMensual y bloquea el período.
 
-export async function cerrarMes(anio: number, mes: number, userId: number, force?: boolean) {
+export async function cerrarMes(anio: number, mes: number, userId: number, force?: boolean, soloRegistrarCierre?: boolean) {
   const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
   if (existing && !force) throw new HttpError(`El período ${mes}/${anio} ya está cerrado`, 409);
   if (existing && force)  await prisma.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
+
+  // Cierre sin recalcular: solo crea el registro CierreMes, preserva todos los valores de SaldoMensual intactos.
+  if (soloRegistrarCierre) {
+    const cierre = await prisma.cierreMes.create({ data: { anio, mes, usuarioId: userId } });
+    await prisma.log.create({
+      data: {
+        usuarioId: userId,
+        accion: "CERRAR_MES",
+        data: { anio, mes, soloRegistrarCierre: true },
+      },
+    });
+    logger.info({ anio, mes, soloRegistrarCierre: true }, "Mes cerrado sin recalcular valores");
+    return {
+      cierre: { id: cierre.id, anio: cierre.anio, mes: cierre.mes, creadoAt: cierre.creadoAt },
+      saldosCreados: 0,
+      saldosActualizados: 0,
+      productosConMovimientos: 0,
+      movimientosRecalculados: 0,
+    };
+  }
 
   // Usamos UTC igual que los reportes para que los filtros coincidan exactamente.
   const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
@@ -1753,6 +1773,135 @@ export async function ajustarPreciosSinIva(anio: number, mes: number) {
     sinCambio: resumen.filter(r => r.accion === 'sin_cambio').length,
     detalle:   resumen,
   };
+}
+
+// ─── Diagnóstico de redondeo ingresosBs ──────────────────────────────────────
+// Detecta si la suma per-grupo de ingresosBs difiere de la suma flat en el total
+// del mes. Devuelve el grupo problemático, el producto a ajustar y el ε mínimo.
+
+export async function diagnosticarRedondeo(anio: number, mes: number) {
+  const registros = await (prisma.saldoMensual.findMany as any)({
+    where: { anio, mes },
+    select: {
+      id: true,
+      productoId: true,
+      ingresosBs: true,
+      producto: {
+        select: {
+          codigo: true,
+          nombre: true,
+          categoria: {
+            select: {
+              id: true, codigo: true, nombre: true,
+              parent: { select: { id: true, codigo: true, nombre: true } },
+            },
+          },
+        },
+      },
+    },
+  }) as any[];
+
+  const grupoMap = new Map<number, {
+    grupoId: number; grupoCodigo: string; grupoNombre: string;
+    productos: { id: string; productoId: number; codigo: string; nombre: string; ingresosBs: number }[];
+    rawSum: number;
+  }>();
+
+  let flatRaw = 0;
+  for (const r of registros) {
+    const v = Number(r.ingresosBs ?? 0);
+    if (v === 0) continue;
+    flatRaw += v;
+    const cat   = r.producto.categoria;
+    const grupo = cat.parent ?? cat;
+    if (!grupoMap.has(grupo.id)) {
+      grupoMap.set(grupo.id, { grupoId: grupo.id, grupoCodigo: grupo.codigo, grupoNombre: grupo.nombre, productos: [], rawSum: 0 });
+    }
+    const e = grupoMap.get(grupo.id)!;
+    e.productos.push({ id: r.id, productoId: r.productoId, codigo: r.producto.codigo, nombre: r.producto.nombre, ingresosBs: v });
+    e.rawSum += v;
+  }
+
+  const grupos = [...grupoMap.values()];
+  let perGrupoSum = 0;
+  for (const g of grupos) perGrupoSum += Math.round(g.rawSum * 100) / 100;
+
+  const flatRnd     = Math.round(flatRaw     * 100) / 100;
+  const perGrupoRnd = Math.round(perGrupoSum * 100) / 100;
+  const discrepancia = Math.round((perGrupoRnd - flatRnd) * 100) / 100;
+
+  if (discrepancia === 0) {
+    return { anio, mes, flatRnd, perGrupoRnd, discrepancia: 0, ok: true, grupos: [] };
+  }
+
+  // Encuentra grupos cuyo rawSum redondea en dirección que aumenta el total
+  const gruposProblema = grupos
+    .filter(g => {
+      const sub = (g.rawSum * 100) % 1;  // fracción del centavo (0–1)
+      return sub >= 0.4999 && sub < 1;   // sub-centavo ≥ 0.005 → redondea arriba
+    })
+    .sort((a, b) => b.rawSum - a.rawSum)
+    .map(g => {
+      const rounded  = Math.round(g.rawSum * 100) / 100;
+      const subCent  = (g.rawSum * 100) % 1;
+      const margin   = flatRaw - (Math.floor(flatRnd * 100) / 100 + 0.005);  // margen antes de cambiar el flat rnd
+      const epsilon  = Math.min(margin * 0.9, 0.0001);
+
+      // Producto con mayor ingresosBs que tiene sub-centavo propio
+      const productoTarget = g.productos
+        .filter(p => ((p.ingresosBs * 100) % 1) > 0.0001)
+        .sort((a, b) => b.ingresosBs - a.ingresosBs)[0] ?? g.productos[0];
+
+      return {
+        grupoId:      g.grupoId,
+        grupoCodigo:  g.grupoCodigo,
+        grupoNombre:  g.grupoNombre,
+        rawSum:       g.rawSum,
+        rounded,
+        subCentavo:   Math.round(subCent * 1e8) / 1e8,
+        productoAjuste: productoTarget ? {
+          saldoMensualId: productoTarget.id,
+          productoId:     productoTarget.productoId,
+          codigo:         productoTarget.codigo,
+          nombre:         productoTarget.nombre,
+          ingresosBsActual: productoTarget.ingresosBs,
+          ingresosBsNuevo:  productoTarget.ingresosBs - epsilon,
+          epsilon:          Math.round(epsilon * 1e10) / 1e10,
+        } : null,
+      };
+    });
+
+  return { anio, mes, flatRnd, perGrupoRnd, discrepancia, ok: false, grupos: gruposProblema };
+}
+
+export async function fixRedondeo(anio: number, mes: number, saldoMensualId: string, ingresosBsNuevo: number, userId: number) {
+  const registro = await (prisma.saldoMensual.findUnique as any)({
+    where: { id: saldoMensualId },
+    select: { id: true, anio: true, mes: true, productoId: true, ingresosBs: true },
+  }) as any;
+  if (!registro || registro.anio !== anio || registro.mes !== mes) {
+    throw new HttpError("Registro no pertenece al período indicado", 400);
+  }
+
+  const anterior = Number(registro.ingresosBs);
+  const diferencia = Math.abs(ingresosBsNuevo - anterior);
+  if (diferencia > 0.01) throw new HttpError("El ajuste excede 0.01 Bs — rechazado por seguridad", 400);
+
+  await (prisma.saldoMensual.update as any)({
+    where: { id: saldoMensualId },
+    data: { ingresosBs: new Prisma.Decimal(ingresosBsNuevo.toFixed(10)) },
+  });
+
+  await prisma.log.create({
+    data: {
+      usuarioId: userId,
+      accion: "FIX_REDONDEO_INGRESOS_BS",
+      data: { anio, mes, saldoMensualId, anterior, nuevo: ingresosBsNuevo, diferencia },
+    },
+  });
+
+  logger.info({ anio, mes, saldoMensualId, anterior, nuevo: ingresosBsNuevo }, "Fix redondeo ingresosBs aplicado");
+  return { saldoMensualId, anterior, nuevo: ingresosBsNuevo, diferencia };
 }
 
 // ─── Diagnóstico de precios ───────────────────────────────────────────────────

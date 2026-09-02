@@ -694,11 +694,16 @@ export const reportesService = {
                 return { grupoCodigo: g.grupoCodigo, grupoNombre: g.grupoNombre, saldoInicial, ingresoMateriales, salidaMateriales, saldoFinal };
               });
 
+            // Totales flat (sin redondeo intermedio por grupo) para coincidir con cuadro-suministros e inventario-general.
+            const _tbSaldoInicial      = Math.round(gruposFinales.reduce((a, g) => a + g.saldoInicial, 0) * 100) / 100;
+            const _tbIngresoMateriales = Math.round([...grupoMap.values()].reduce((a, g) => a + g.ingresosExIvaRaw, 0) * 100) / 100;
+            const _tbSaldoFinal        = Math.round(gruposFinales.reduce((a, g) => a + g.saldoFinal, 0) * 100) / 100;
+            const _tbSalidaMateriales  = Math.round((_tbSaldoInicial + _tbIngresoMateriales - _tbSaldoFinal) * 100) / 100;
             const totales = {
-              saldoInicial:      Math.round(gruposFinales.reduce((a, g) => a + g.saldoInicial, 0) * 100) / 100,
-              ingresoMateriales: Math.round(gruposFinales.reduce((a, g) => a + g.ingresoMateriales, 0) * 100) / 100,
-              salidaMateriales:  Math.round(gruposFinales.reduce((a, g) => a + g.salidaMateriales, 0) * 100) / 100,
-              saldoFinal:        Math.round(gruposFinales.reduce((a, g) => a + g.saldoFinal, 0) * 100) / 100,
+              saldoInicial:      _tbSaldoInicial,
+              ingresoMateriales: _tbIngresoMateriales,
+              salidaMateriales:  _tbSalidaMateriales,
+              saldoFinal:        _tbSaldoFinal,
             };
 
             return { anio, mes, esCerrado, grupos: gruposFinales, totales };
@@ -949,7 +954,7 @@ export const reportesService = {
             };
           });
 
-        // Totales desde raw para coincidir con balance-mensual, cuadro-suministros y diario-almacenes.
+        // Total ingresoMateriales: suma flat (sin redondeo intermedio por grupo) = coincide con suma manual y cuadro-suministros.
         const _tSaldoInicial      = Math.round(grupoValsInv.reduce((a, g) => a + g.saldoInicialRaw,   0) * 100) / 100;
         const _tIngresoMateriales = Math.round(grupoValsInv.reduce((a, g) => a + g.ingresosExIvaRaw,  0) * 100) / 100;
         const _tSalidaMateriales  = Math.round(salidaBsRawFlat * 100) / 100;
@@ -1935,11 +1940,8 @@ export const reportesService = {
             : (compraAccDiario.get(s.productoId)?.sinIvaRaw ?? 0);
           grupoIngMap.set(grupoId, (grupoIngMap.get(grupoId) ?? 0) + exIva);
         }
-        const comprasSinIva = esCerrado
-          // Redondear por grupo igual que balance-mensual (meses cerrados)
-          ? Math.round([...grupoIngMap.values()].reduce((a, g) => a + Math.round(g * 100) / 100, 0) * 100) / 100
-          // Acumular raw → redondear una vez (meses abiertos, IEEE754 idéntico al acumulador plano)
-          : Math.round([...grupoIngMap.values()].reduce((a, g) => a + g, 0) * 100) / 100;
+        // Suma flat (sin redondeo intermedio por grupo) — mismo criterio que cuadro-suministros e inventario-general.
+        const comprasSinIva = Math.round([...grupoIngMap.values()].reduce((a, g) => a + g, 0) * 100) / 100;
 
         const totalInventarioDebe = saldoInventarioAnterior + comprasSinIva;
 
@@ -2426,7 +2428,7 @@ export const reportesService = {
         });
 
         // Acumular × 0.87 por producto primero (todos los decimales), sumar al proveedor/total al final
-        const provMap = new Map<number, { proveedor: any; compras: any[]; totalBsRaw: number; totalSinIVARaw: number }>();
+        const provMap    = new Map<number, { proveedor: any; compras: any[]; totalBsRaw: number; totalSinIVARaw: number }>();
 
         for (const c of comprasRaw) {
           if (!provMap.has(c.proveedorId)) {
@@ -2482,9 +2484,9 @@ export const reportesService = {
           totalSinIVA: Math.round(p.totalSinIVARaw * 100) / 100,
         }));
 
-        const rawProvs           = [...provMap.values()];
-        const _globalBsRaw       = rawProvs.reduce((a, p) => a + p.totalBsRaw, 0);
-        const _globalSinIVARaw   = rawProvs.reduce((a, p) => a + p.totalSinIVARaw, 0);
+        const rawProvs         = [...provMap.values()];
+        const _globalBsRaw     = rawProvs.reduce((a, p) => a + p.totalBsRaw,     0);
+        const _globalSinIVARaw = rawProvs.reduce((a, p) => a + p.totalSinIVARaw, 0);
         const totalGeneral       = Math.round(_globalBsRaw * 100) / 100;
         const totalGeneralSinIVA = Math.round(_globalSinIVARaw * 100) / 100;
 

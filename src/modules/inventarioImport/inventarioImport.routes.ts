@@ -269,6 +269,24 @@ router.get(
   inventarioImportController.diagnosticarSaldos,
 );
 
+// ─── Diagnóstico de redondeo ingresosBs ──────────────────────────────────────
+// GET /api/inventario-import/diagnostico-redondeo?anio=2026&mes=1
+// Detecta si la suma per-grupo difiere de la flat y propone el fix mínimo.
+router.get(
+  "/diagnostico-redondeo",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.diagnosticarRedondeo,
+);
+
+// POST /api/inventario-import/fix-redondeo
+// Body: { anio, mes, saldoMensualId, ingresosBsNuevo }
+// Ajusta un único ingresosBs ≤ 0.01 Bs para eliminar la discrepancia de redondeo.
+router.post(
+  "/fix-redondeo",
+  authorize("ADMIN", "SUPERINTENDENTE"),
+  inventarioImportController.fixRedondeo,
+);
+
 // ─── Limpiar mes ─────────────────────────────────────────────────────────────
 // GET /api/inventario-import/limpiar-mes/preview?anio=2026&mes=5
 // Vista previa: lista vales y compras no-retroactivos del mes sin eliminar nada.
