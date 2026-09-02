@@ -1272,7 +1272,8 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
           ],
         },
       },
-      select: { productoId: true, cantidadRecibida: true, precioUnit: true, compra: { select: { tieneIva: true } } },
+      // @ts-ignore - totalBs available after prisma generate
+      select: { productoId: true, cantidadRecibida: true, precioUnit: true, totalBs: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
     }),
     // Salidas: misma query que inventario-almacen
     prisma.movimiento.findMany({
@@ -1308,10 +1309,11 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
   for (const item of compraItemsRaw) {
     const e      = compraMap.get(item.productoId) ?? { qty: 0, bs: 0, sinIvaRaw: 0 };
     const qty    = Number(item.cantidadRecibida);
-    const bsItem = qty * Number(item.precioUnit);
+    const bsItem = (item as any).totalBs != null ? Number((item as any).totalBs) : qty * Number(item.precioUnit);
+    const esGas  = (item.compra as any).esGasEspecial ?? gasEsp(item.productoId);
     e.qty       += qty;
     e.bs        += bsItem;
-    e.sinIvaRaw += sinIvaRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
+    e.sinIvaRaw += sinIvaRaw(bsItem, esGas, item.compra.tieneIva);
     compraMap.set(item.productoId, e);
   }
 
@@ -1342,13 +1344,15 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
 
   // ── Paso 1: calcular por producto (misma fórmula que inventario-almacen) ──
   type ProdResumen = {
-    productoId:     number;
-    grupoId:        number;
-    ingresoQty:     number;
-    salidaQty:      number;
-    saldoFinal:     number;
-    ingresosBs:     number;
-    totalBsRaw:     number;
+    productoId:              number;
+    grupoId:                 number;
+    ingresoQty:              number;
+    salidaQty:               number;
+    saldoFinal:              number;
+    ingresosBs:              number;
+    saldoInicialBs:          number;
+    totalBsRaw:              number;
+    correctedPrecioUnitProm: number | null;
   };
 
   let sumSI = 0, sumING = 0, sumSAL = 0;
@@ -1377,14 +1381,26 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
 
     const totalBsRaw = saldoInicialBs + ingresosBs - salidasBs;
 
+    // Precisión CPP: si saldoFinal=0 y totalBsRaw<0, el CPP (6dp) superó mínimamente el
+    // valor libro (2dp). Corregir usando el valor libro exacto como salidaBs efectivo,
+    // y ajustar precioUnitProm para que inventario-general compute lo mismo (0).
+    let effectiveSalidasBs       = salidasBs;
+    let effectiveTotalBsRaw      = totalBsRaw;
+    let correctedPrecioUnitProm: number | null = null;
+    if (saldoFinal === 0 && totalBsRaw < 0 && salidaQty > 0) {
+      effectiveSalidasBs      = saldoInicialBs + ingresosBs;
+      effectiveTotalBsRaw     = 0;
+      correctedPrecioUnitProm = effectiveSalidasBs / salidaQty;
+    }
+
     sumSI  += saldoInicialBs;
     sumING += ingresosBs;
-    sumSAL += salidasBs;
+    sumSAL += effectiveSalidasBs;
 
     const cat     = (r as any).producto.categoria;
     const grupoId = cat.parent?.id ?? cat.id;
 
-    prodResumenes.push({ productoId, grupoId, ingresoQty, salidaQty, saldoFinal, ingresosBs, totalBsRaw });
+    prodResumenes.push({ productoId, grupoId, ingresoQty, salidaQty, saldoFinal, ingresosBs, saldoInicialBs, totalBsRaw: effectiveTotalBsRaw, correctedPrecioUnitProm });
   }
 
   // ── Paso 2: totalGeneral idéntico al de inventario-almacen ───────────────
@@ -1432,17 +1448,22 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
     const totalBsNov    = totalBsAjustadoMap.get(productoId)!;
     const precioDecimal = new Prisma.Decimal(precioUnit);
 
-    // Mes actual: actualizamos solo los campos de flujo (qty, saldoFinal, totalBs).
-    // NO tocamos saldoInicial, precioUnit, precioUnitProm ni totalBsInicial — backfill los dejó correctos.
+    // Mes actual: actualizamos campos de flujo (qty, saldoFinal, totalBs).
+    // Si hubo corrección CPP (saldoFinal=0, totalBsRaw<0), también actualizamos precioUnitProm
+    // al valor libro exacto para que inventario-general compute lo mismo que cerrarMes (0).
+    const updateDataMes: Record<string, unknown> = {
+      ingresoQty: new Prisma.Decimal(ingresoQty),
+      salidaQty:  new Prisma.Decimal(salidaQty),
+      saldoFinal: new Prisma.Decimal(saldoFinal),
+      ingresosBs: new Prisma.Decimal(ingresosBs),
+      totalBs:    new Prisma.Decimal(totalBsNov),
+    };
+    if (pr.correctedPrecioUnitProm !== null) {
+      updateDataMes.precioUnitProm = new Prisma.Decimal(pr.correctedPrecioUnitProm).toDecimalPlaces(6);
+    }
     await (prisma.saldoMensual.update as any)({
       where: { productoId_anio_mes: { productoId, anio, mes } },
-      data: {
-        ingresoQty: new Prisma.Decimal(ingresoQty),
-        salidaQty:  new Prisma.Decimal(salidaQty),
-        saldoFinal: new Prisma.Decimal(saldoFinal),
-        ingresosBs: new Prisma.Decimal(ingresosBs),
-        totalBs:    new Prisma.Decimal(totalBsNov),
-      },
+      data: updateDataMes,
     });
     saldosActualizados++;
 

@@ -1893,9 +1893,10 @@ export const reportesService = {
           const e      = compraAccDiario.get(item.productoId) ?? { totalBs: 0, qty: 0, sinIvaRaw: 0 };
           const qty    = Number(item.cantidadRecibida);
           const bsItem = item.totalBs != null ? Number(item.totalBs) : qty * Number(item.precioUnit);
+          const esGas  = (item.compra as any).esGasEspecial ?? gasEsp(item.productoId);
           e.totalBs   += bsItem;
           e.qty        += qty;
-          e.sinIvaRaw  += sinIvaIngresoRaw(bsItem, gasEsp(item.productoId), item.compra.tieneIva);
+          e.sinIvaRaw  += sinIvaIngresoRaw(bsItem, esGas, item.compra.tieneIva);
           compraAccDiario.set(item.productoId, e);
         }
         const compraAvgDiario = new Map<number, number>(

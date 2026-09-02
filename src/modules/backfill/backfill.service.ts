@@ -59,12 +59,13 @@ async function procesarProductoMes(
           cantidadRecibida: { gt: 0 },
           compra: { estado: { not: "ANULADA" } },
         },
-        select: { compraId: true, precioUnit: true, cantidadRecibida: true, compra: { select: { tieneIva: true } } },
+        select: { compraId: true, precioUnit: true, cantidadRecibida: true, compra: { select: { tieneIva: true, esGasEspecial: true } } },
       })
     : [];
 
   const ciMap         = new Map(compraItemsBatch.map((ci: any) => [ci.compraId, Number(ci.precioUnit)]));
   const ciTieneIvaMap = new Map(compraItemsBatch.map((ci: any) => [ci.compraId, (ci.compra?.tieneIva ?? true) as boolean]));
+  const ciEsGasMap    = new Map(compraItemsBatch.map((ci: any) => [ci.compraId, (ci.compra?.esGasEspecial ?? null) as boolean | null]));
 
   const hayCompras = ciMap.size > 0;
 
@@ -97,7 +98,7 @@ async function procesarProductoMes(
 
   for (const ci of compraItemsBatch) {
     const tieneIva     = ((ci as any).compra?.tieneIva ?? true) as boolean;
-    const esGas        = productoId === gasolinaId || productoId === dieselId;
+    const esGas        = (ci as any).compra?.esGasEspecial ?? (productoId === gasolinaId || productoId === dieselId);
     const factor       = !tieneIva ? "1" : esGas ? "0.909" : "0.87";
     const precioSinIva = new Prisma.Decimal((ci as any).precioUnit).mul(factor);
     const qty         = new Prisma.Decimal((ci as any).cantidadRecibida);
@@ -125,7 +126,7 @@ async function procesarProductoMes(
     if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA") {
       const precioConIva = ciMap.get(mov.referenciaId as string) ?? Number(mov.precioUnit);
       const tieneIva     = ciTieneIvaMap.get(mov.referenciaId as string) ?? true;
-      const esGas        = productoId === gasolinaId || productoId === dieselId;
+      const esGas        = ciEsGasMap.get(mov.referenciaId as string) ?? (productoId === gasolinaId || productoId === dieselId);
       const factor       = !tieneIva ? "1" : esGas ? "0.909" : "0.87";
       const precioSinIva = new Prisma.Decimal(precioConIva).mul(factor);
       const newStock     = currentStock.add(qty);
