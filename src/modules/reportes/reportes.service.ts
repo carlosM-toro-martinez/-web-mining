@@ -918,7 +918,9 @@ export const reportesService = {
           const ingresosBs    = compra?.sinIvaRaw ?? 0;  // pre-computado por item con tieneIva
           const salidasBsProd = salidaBsMap.has(r.productoId) ? salidaBsMap.get(r.productoId)! : salidaQty * precioUnit;
           // salidasBsProd ya es raw (acumulado sin redondear); redondear una sola vez al calcular totalBs.
-          const totalBs       = Math.round((saldoInicialBs + ingresosBs - salidasBsProd) * 100) / 100;
+          // Si saldoFinal=0 y el resultado es levemente negativo, es ruido de punto flotante del CPP (mismo clamp que backfill).
+          const _rawTotalBs   = Math.round((saldoInicialBs + ingresosBs - salidasBsProd) * 100) / 100;
+          const totalBs       = (saldoFinal === 0 && _rawTotalBs < 0) ? 0 : _rawTotalBs;
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: r.producto.codigo,
