@@ -103,8 +103,9 @@ export const valesService = {
     }
 
     // Detectar si es retroactivo ANTES de verificar/reservar stock
+    // forceRetroactivo=true fuerza la ruta retroactiva (p.ej. desde vales-históricos)
     const periodoCreacion = await detectarPeriodo(data.fechaOperacion);
-    const esRetroactivoCreacion = periodoCreacion.esRetroactivo;
+    const esRetroactivoCreacion = data.forceRetroactivo === true ? true : periodoCreacion.esRetroactivo;
 
     if (!esRetroactivoCreacion) {
       // Solo verificar stock disponible para vales normales (no retroactivos)
@@ -326,10 +327,21 @@ export const valesService = {
     }
 
     // Detectar retroactividad ANTES de validar stock (retroactivos no tocan Stock)
+    // forceRetroactivo=true fuerza la ruta retroactiva (p.ej. desde vales-históricos)
     const periodoEntrega = await detectarPeriodo(vale.fechaOperacion);
-    const esRetroactivo = periodoEntrega.esRetroactivo;
-    const periodoAnio = periodoEntrega.esRetroactivo ? periodoEntrega.periodoAnio : undefined;
-    const periodoMes = periodoEntrega.esRetroactivo ? periodoEntrega.periodoMes : undefined;
+    const esRetroactivo = data.forceRetroactivo === true ? true : periodoEntrega.esRetroactivo;
+    let periodoAnio: number | undefined;
+    let periodoMes: number | undefined;
+    if (esRetroactivo) {
+      if (periodoEntrega.esRetroactivo) {
+        periodoAnio = periodoEntrega.periodoAnio;
+        periodoMes  = periodoEntrega.periodoMes;
+      } else if (vale.fechaOperacion) {
+        // forceRetroactivo=true pero detectarPeriodo devolvio normal (mes actual)
+        periodoAnio = vale.fechaOperacion.getUTCFullYear();
+        periodoMes  = vale.fechaOperacion.getUTCMonth() + 1;
+      }
+    }
 
     // Validar cantidades
     const entregaIds = Object.keys(data.cantidadesEntregadas);

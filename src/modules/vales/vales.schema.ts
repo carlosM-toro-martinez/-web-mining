@@ -12,6 +12,7 @@ export const createValeSchema = z
       )
       .min(1),
     fechaOperacion: z.coerce.date().optional(),
+    forceRetroactivo: z.boolean().optional(),
   })
   .strict();
 
@@ -25,6 +26,7 @@ export const entregarValeSchema = z
   .object({
     cantidadesEntregadas: z.record(z.string(), z.number().nonnegative()),
     cuentaIds: z.record(z.string(), z.number().int().positive()).optional(),
+    forceRetroactivo: z.boolean().optional(),
   })
   .strict();
 
