@@ -538,6 +538,43 @@ export const valesService = {
           },
         });
 
+        // Actualizar SaldoMensual del mes actual (mantiene las dos fuentes de verdad sincronizadas)
+        {
+          const ahoraV     = new Date();
+          const anioV      = ahoraV.getUTCFullYear();
+          const mesV       = ahoraV.getUTCMonth() + 1;
+          const saldoMesV  = await prisma.saldoMensual.findUnique({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: anioV, mes: mesV } },
+          });
+          const nuevaSalidaV  = new Prisma.Decimal(saldoMesV?.salidaQty ?? 0).add(cantidad);
+          const nuevoFinalV   = new Prisma.Decimal(
+            saldoMesV?.saldoFinal ?? item.producto.stock!.cantidad,
+          ).sub(cantidad);
+          await (prisma.saldoMensual.upsert as any)({
+            where: { productoId_anio_mes: { productoId: item.productoId, anio: anioV, mes: mesV } },
+            update: {
+              salidaQty:   nuevaSalidaV,
+              saldoFinal:  nuevoFinalV,
+              totalBs:     nuevoFinalV.mul(precioUnitActual),
+              totalBsProm: nuevoFinalV.mul(precioUnitActual),
+            },
+            create: {
+              productoId:     item.productoId,
+              anio:           anioV,
+              mes:            mesV,
+              saldoInicial:   item.producto.stock!.cantidad,
+              ingresoQty:     0,
+              ingresosBs:     0,
+              salidaQty:      new Prisma.Decimal(cantidad),
+              saldoFinal:     nuevoFinalV,
+              precioUnit:     precioUnitActual,
+              totalBs:        nuevoFinalV.mul(precioUnitActual),
+              precioUnitProm: precioUnitActual,
+              totalBsProm:    nuevoFinalV.mul(precioUnitActual),
+            },
+          });
+        }
+
         movimientos.push(movimiento);
       }
     }
@@ -889,6 +926,11 @@ export const valesService = {
             id: true,
             createdAt: true,
             solicitante: { select: { id: true, nombre: true, email: true } },
+            items: {
+              select: {
+                producto: { select: { id: true, nombre: true, codigo: true } },
+              },
+            },
           },
         },
       },

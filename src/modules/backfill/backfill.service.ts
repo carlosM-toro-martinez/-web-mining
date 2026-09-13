@@ -251,4 +251,72 @@ export const backfillService = {
       errores,
     };
   },
+
+  async syncStockFromSaldoMensual(): Promise<{
+    actualizados: number;
+    total: number;
+    omitidos: number;
+    errores: Array<{ productoId: number; error: string }>;
+    detalle: Array<{ productoId: number; codigo: string; cantidad: string; precioUnit: string; precioProm: string }>;
+  }> {
+    // Traer todos los SaldoMensual ordenados por producto y período descendente
+    const todos = await prisma.saldoMensual.findMany({
+      orderBy: [
+        { productoId: "asc" },
+        { anio: "desc" },
+        { mes: "desc" },
+      ],
+      include: { producto: { select: { codigo: true } } },
+    });
+
+    // Quedar solo con el más reciente por producto
+    const latestByProducto = new Map<number, typeof todos[0]>();
+    for (const s of todos) {
+      if (!latestByProducto.has(s.productoId)) {
+        latestByProducto.set(s.productoId, s);
+      }
+    }
+
+    let actualizados = 0;
+    let omitidos = 0;
+    const errores: Array<{ productoId: number; error: string }> = [];
+    const detalle: Array<{ productoId: number; codigo: string; cantidad: string; precioUnit: string; precioProm: string }> = [];
+
+    for (const saldo of latestByProducto.values()) {
+      try {
+        const precioUnit = new Prisma.Decimal(saldo.precioUnit);
+        const precioUnitProm = new Prisma.Decimal(saldo.precioUnitProm);
+        const precioFinal = precioUnit.gt(0) ? precioUnit : new Prisma.Decimal(0);
+        const promFinal  = precioUnitProm.gt(0) ? precioUnitProm : precioFinal;
+
+        const stockExiste = await prisma.stock.findUnique({ where: { productoId: saldo.productoId } });
+        if (!stockExiste) {
+          omitidos++;
+          continue;
+        }
+
+        await prisma.stock.update({
+          where: { productoId: saldo.productoId },
+          data: {
+            cantidad:  saldo.saldoFinal,
+            precioUnit: precioFinal,
+            precioProm: promFinal,
+          },
+        });
+
+        actualizados++;
+        detalle.push({
+          productoId: saldo.productoId,
+          codigo:     saldo.producto.codigo,
+          cantidad:   saldo.saldoFinal.toString(),
+          precioUnit: precioFinal.toString(),
+          precioProm: promFinal.toString(),
+        });
+      } catch (err) {
+        errores.push({ productoId: saldo.productoId, error: String(err) });
+      }
+    }
+
+    return { actualizados, total: latestByProducto.size, omitidos, errores, detalle };
+  },
 };

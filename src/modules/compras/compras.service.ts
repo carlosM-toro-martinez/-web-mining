@@ -336,7 +336,8 @@ export const comprasService = {
           const stockAntes = item.producto.stock!.cantidad;
           const stockDespues = new Prisma.Decimal(stockAntes).add(cantidadRecibidaAhora);
 
-          const precioSinIvaAct = new Prisma.Decimal(precioUnit).mul(compra.tieneIva ? '0.87' : '1');
+          const factorIvaAct    = !compra.tieneIva ? '1' : compra.esGasEspecial ? '0.909' : '0.87';
+          const precioSinIvaAct = new Prisma.Decimal(precioUnit).mul(factorIvaAct);
           const movimiento = await prisma.movimiento.create({
             data: {
               operationId: randomUUID(),
@@ -397,7 +398,7 @@ export const comprasService = {
             new Prisma.Decimal(cantidadRecibidaAhora),
             precioSinIvaAct,
           );
-          // CPP para CREATE (primera compra del mes): stock.precioProm es CON IVA → × 0.87 ex-IVA
+          // CPP para CREATE (primera compra del mes): stock.precioProm es CON IVA; 0.87 es aproximación del factor histórico
           const cppCreate = calcularCPP(
             cantidadAntes,
             cantidadAntes.gt(0) ? promAnterior.mul('0.87') : new Prisma.Decimal(0),

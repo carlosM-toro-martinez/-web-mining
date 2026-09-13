@@ -23,4 +23,14 @@ export const backfillController = {
       res.status(500).json({ success: false, error: "Error en el proceso de backfill" });
     }
   },
+
+  async syncStockFromSaldoMensual(_req: Request, res: Response) {
+    try {
+      const result = await backfillService.syncStockFromSaldoMensual();
+      res.json({ success: true, data: result });
+    } catch (error) {
+      console.error("[sync-stock] Error:", error);
+      res.status(500).json({ success: false, error: "Error al sincronizar stock desde SaldoMensual" });
+    }
+  },
 };
