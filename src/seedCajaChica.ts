@@ -389,6 +389,7 @@ const CUENTAS_CONTABLES_CAJA = [
   { codigo: "10.002.000", nombre: "CAJA LA PAZ DOLARES", clase: "MAY", nivel: 2, monedaCodigo: "B", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "10.003.000", nombre: "CAJA BOLIVIANOS LIPEÑA", clase: "MAY", nivel: 2, monedaCodigo: "B", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "16.001.011", nombre: "ANTICIPOS A PROVEEDORES", clase: "IND", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "14.001.003", nombre: "ZENON CANAVIRI APAZA", clase: "IND", nivel: 2, monedaCodigo: "B", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "36.002.000", nombre: "EQUIPOS DE COMPUTACION LIPEÑA", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "37.002.000", nombre: "MUEBLES Y ENSERES LIPEÑA", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "42.002.000", nombre: "OBRAS EN CONSTRUCCION LIPEÑA", clase: "MAY", nivel: 2, monedaCodigo: "B", requiereCentroCosto: false, requiereFuncionGasto: false },
