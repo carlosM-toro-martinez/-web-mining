@@ -416,10 +416,10 @@ const CUENTAS_CONTABLES_CAJA = [
 ] as const;
 
 const CAJAS = [
-  { codigo: "10.001.000", nombre: "Caja La Paz Bolivianos", monedaBase: "BOB", encargadoNombre: null },
-  { codigo: "10.002.000", nombre: "Caja La Paz Dólares", monedaBase: "USD", encargadoNombre: null },
   // Nombre real del administrador de la Caja Lipeña, tal como aparece en los
   // reportes mensuales impresos que sirvieron de referencia para este módulo.
+  // "Caja La Paz Bolivianos"/"Caja La Paz Dólares" ya no se siembran: la
+  // empresa solo usa Caja Bolivianos Lipeña en la práctica.
   { codigo: "10.003.000", nombre: "Caja Bolivianos Lipeña", monedaBase: "BOB", encargadoNombre: "Daniel Fiorilo Zenteno" },
 ] as const;
 
