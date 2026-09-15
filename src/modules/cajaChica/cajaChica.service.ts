@@ -32,6 +32,7 @@ export const cajaChicaService = {
         codigo: data.codigo,
         nombre: data.nombre,
         monedaBase: data.monedaBase ?? "BOB",
+        saldoInicial: data.saldoInicial ?? 0,
         encargadoNombre: data.encargadoNombre ?? null,
         encargadoUsuarioId: data.encargadoUsuarioId ?? null,
         activo: data.activo ?? true,

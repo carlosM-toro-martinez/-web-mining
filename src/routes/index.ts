@@ -47,6 +47,10 @@ import movimientoFondoCajaRoutes from "../modules/movimientoFondoCaja/movimiento
 import rendicionCajaRoutes from "../modules/rendicionCaja/rendicionCaja.routes.js";
 // Caja Chica — Fase 4: reportes
 import reportesCajaChicaRoutes from "../modules/reportesCajaChica/reportesCajaChica.routes.js";
+// Caja Chica — Fase 5: banco y presupuesto
+import cuentaBancariaCajaRoutes from "../modules/cuentaBancariaCaja/cuentaBancariaCaja.routes.js";
+import partidaPresupuestoCajaRoutes from "../modules/partidaPresupuestoCaja/partidaPresupuestoCaja.routes.js";
+import movimientoBancoCajaRoutes from "../modules/movimientoBancoCaja/movimientoBancoCaja.routes.js";
 
 const router = Router();
 
@@ -113,5 +117,10 @@ router.use("/rendiciones-caja", rendicionCajaRoutes);
 
 // Caja Chica — Fase 4
 router.use("/reportes-caja-chica", reportesCajaChicaRoutes);
+
+// Caja Chica — Fase 5: banco y presupuesto
+router.use("/cuentas-bancarias-caja", cuentaBancariaCajaRoutes);
+router.use("/partidas-presupuesto-caja", partidaPresupuestoCajaRoutes);
+router.use("/movimientos-banco-caja", movimientoBancoCajaRoutes);
 
 export default router;

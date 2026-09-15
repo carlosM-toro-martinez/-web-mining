@@ -12,6 +12,7 @@ const INCLUDE_DETALLE = {
   centroCostoCaja: true,
   funcionGastoCaja: true,
   cuentaContableCaja: true,
+  partidaPresupuesto: true,
   anulacion: true,
 } as const;
 
@@ -111,7 +112,7 @@ export const gastoCajaService = {
         where,
         skip,
         take: limit,
-        include: { caja: true, centroCostoCaja: true, funcionGastoCaja: true },
+        include: { caja: true, centroCostoCaja: true, funcionGastoCaja: true, cuentaContableCaja: true, partidaPresupuesto: true },
         orderBy: { fecha: "desc" },
       }),
       prisma.gastoCaja.count({ where }),
@@ -125,23 +126,39 @@ export const gastoCajaService = {
   },
 
   async create(data: CreateGastoCajaDTO, userId: number) {
-    const [caja, centroCosto, funcionGasto] = await Promise.all([
+    const [caja, centroCosto, funcionGasto, cuentaManual, partidaPresupuesto] = await Promise.all([
       prisma.cajaChica.findUnique({ where: { id: data.cajaId } }),
       prisma.centroCostoCaja.findUnique({ where: { id: data.centroCostoCajaId } }),
       prisma.funcionGastoCaja.findUnique({ where: { id: data.funcionGastoCajaId } }),
+      data.cuentaContableCajaId
+        ? prisma.cuentaContableCaja.findUnique({ where: { id: data.cuentaContableCajaId } })
+        : null,
+      data.partidaPresupuestoId
+        ? prisma.partidaPresupuestoCaja.findUnique({ where: { id: data.partidaPresupuestoId } })
+        : null,
     ]);
 
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
     if (!centroCosto) throw new HttpError("Centro de costo no encontrado", 404);
     if (!funcionGasto) throw new HttpError("Función de gasto no encontrada", 404);
+    if (data.cuentaContableCajaId && !cuentaManual) throw new HttpError("Cuenta contable no encontrada", 404);
+    if (data.partidaPresupuestoId && !partidaPresupuesto) {
+      throw new HttpError("Partida de presupuesto no encontrada", 404);
+    }
 
     const impuestos = await calcularImpuestos(data);
 
-    const cuentaResuelta =
-      data.tipoDocumento === "RECIBO_DIRECTO"
-        ? await resolverCuentaNoDeducible()
-        : await resolverCuentaPorCategoria(data.categoriaRendicion);
-    const cuentaContableCajaId = cuentaResuelta?.id ?? null;
+    // La cuenta contable elegida a mano siempre gana; si no se eligió
+    // ninguna, se resuelve sola a partir de la categoría de rendición
+    // (RECIBO_DIRECTO siempre a Gastos No Deducibles).
+    let cuentaContableCajaId = data.cuentaContableCajaId ?? null;
+    if (!cuentaContableCajaId) {
+      const cuentaResuelta =
+        data.tipoDocumento === "RECIBO_DIRECTO"
+          ? await resolverCuentaNoDeducible()
+          : await resolverCuentaPorCategoria(data.categoriaRendicion);
+      cuentaContableCajaId = cuentaResuelta?.id ?? null;
+    }
 
     const gasto = await prisma.$transaction(async (tx) => {
       const creado = await tx.gastoCaja.create({
@@ -160,6 +177,7 @@ export const gastoCajaService = {
           centroCostoCajaId: data.centroCostoCajaId,
           funcionGastoCajaId: data.funcionGastoCajaId,
           cuentaContableCajaId,
+          partidaPresupuestoId: data.partidaPresupuestoId ?? null,
           montoCreditoFiscalIva: impuestos.montoCreditoFiscalIva,
           montoRetencionRcIva: impuestos.montoRetencionRcIva,
           montoRetencionIueCompras: impuestos.montoRetencionIueCompras,

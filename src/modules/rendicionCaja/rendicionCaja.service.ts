@@ -51,9 +51,17 @@ export const rendicionCajaService = {
       throw new HttpError("No hay gastos registrados de esta caja en el rango de fechas indicado", 400);
     }
 
-    const [fondos, ultimaCerrada] = await Promise.all([
+    const [fondos, fondosBanco, ultimaCerrada] = await Promise.all([
       prisma.movimientoFondoCaja.aggregate({
         where: { cajaId: data.cajaId, fecha: { gte: data.periodoDesde, lte: data.periodoHasta } },
+        _sum: { monto: true },
+      }),
+      prisma.movimientoBancoCaja.aggregate({
+        where: {
+          cajaId: data.cajaId,
+          tipo: "SALIDA_A_CAJA",
+          fecha: { gte: data.periodoDesde, lte: data.periodoHasta },
+        },
         _sum: { monto: true },
       }),
       prisma.rendicionCaja.findFirst({
@@ -62,7 +70,7 @@ export const rendicionCajaService = {
       }),
     ]);
 
-    const totalFondos = Number(fondos._sum.monto ?? 0);
+    const totalFondos = Number(fondos._sum.monto ?? 0) + Number(fondosBanco._sum.monto ?? 0);
     const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
     const totalRetenciones = gastosElegibles.reduce(
       (acc, g) =>
@@ -70,7 +78,7 @@ export const rendicionCajaService = {
       0,
     );
     const totalCreditoFiscal = gastosElegibles.reduce((acc, g) => acc + Number(g.montoCreditoFiscalIva), 0);
-    const saldoAnterior = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : 0;
+    const saldoAnterior = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const saldoNuevo = saldoAnterior + totalFondos - totalGastos;
 
     const rendicion = await prisma.$transaction(async (tx) => {

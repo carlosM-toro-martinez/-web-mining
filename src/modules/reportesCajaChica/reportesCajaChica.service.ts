@@ -128,10 +128,11 @@ export const reportesCajaChicaService = {
   },
 
   // Estado de cuenta / libro de caja: saldo inicial (de la última rendición
-  // CERRADA de la caja, 0 si nunca se rindió) + movimientos cronológicos
-  // (fondos recibidos y gastos, sin anulados) con saldo corriente — la
-  // consulta que faltaba para ver "cuánto hay en cada caja ahora mismo"
-  // sin tener que crear una rendición.
+  // CERRADA de la caja; si nunca se rindió, el saldo inicial que se declaró
+  // al configurar la caja, no cero) + movimientos cronológicos (fondos
+  // recibidos y gastos, sin anulados) con saldo corriente — la consulta
+  // que faltaba para ver "cuánto hay en cada caja ahora mismo" sin tener
+  // que crear una rendición.
   async getEstadoCuenta(cajaId: number) {
     const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
@@ -141,12 +142,20 @@ export const reportesCajaChicaService = {
       orderBy: { periodoHasta: "desc" },
     });
 
-    const saldoInicial = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : 0;
+    const saldoInicial = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const cortaDesde = ultimaCerrada ? ultimaCerrada.periodoHasta : undefined;
 
-    const [fondos, gastos] = await Promise.all([
+    const [fondos, movimientosBanco, gastos] = await Promise.all([
       prisma.movimientoFondoCaja.findMany({
         where: { cajaId, ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}) },
+        orderBy: { fecha: "asc" },
+      }),
+      // Solo las SALIDAS del banco hacia esta caja cuentan como ingreso de
+      // la caja — los INGRESO (dinero que llega al banco) todavía no están
+      // en la caja física.
+      prisma.movimientoBancoCaja.findMany({
+        where: { cajaId, tipo: "SALIDA_A_CAJA", ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}) },
+        include: { cuentaBancaria: true },
         orderBy: { fecha: "asc" },
       }),
       prisma.gastoCaja.findMany({
@@ -175,6 +184,14 @@ export const reportesCajaChicaService = {
         detalle: f.tipo,
         referencia: f.referencia,
         ingreso: Number(f.monto),
+        egreso: 0,
+      })),
+      ...movimientosBanco.map((m) => ({
+        fecha: m.fecha,
+        tipo: "FONDO" as const,
+        detalle: `${m.cuentaBancaria.banco} · ${m.formaPago}`,
+        referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
+        ingreso: Number(m.monto),
         egreso: 0,
       })),
       ...gastos.map((g) => ({
@@ -220,10 +237,40 @@ export const reportesCajaChicaService = {
     });
     if (!rendicion) throw new HttpError("Rendición no encontrada", 404);
 
-    const fondos = await prisma.movimientoFondoCaja.findMany({
-      where: { cajaId: rendicion.cajaId, fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta } },
-      orderBy: { fecha: "asc" },
-    });
+    const [fondosCaja, fondosBanco] = await Promise.all([
+      prisma.movimientoFondoCaja.findMany({
+        where: { cajaId: rendicion.cajaId, fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta } },
+        orderBy: { fecha: "asc" },
+      }),
+      prisma.movimientoBancoCaja.findMany({
+        where: {
+          cajaId: rendicion.cajaId,
+          tipo: "SALIDA_A_CAJA",
+          fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta },
+        },
+        include: { cuentaBancaria: true },
+        orderBy: { fecha: "asc" },
+      }),
+    ]);
+
+    const fondos = [
+      ...fondosCaja.map((f) => ({
+        id: f.id,
+        tipo: f.tipo as string,
+        monto: f.monto,
+        moneda: f.moneda,
+        fecha: f.fecha,
+        referencia: f.referencia,
+      })),
+      ...fondosBanco.map((m) => ({
+        id: m.id,
+        tipo: `${m.formaPago}${m.numeroCheque ? ` ${m.numeroCheque}` : ""} - ${m.cuentaBancaria.banco}`,
+        monto: m.monto,
+        moneda: m.moneda,
+        fecha: m.fecha,
+        referencia: m.descripcion,
+      })),
+    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
 
     const gastosDeRendicion = rendicion.detalleGastos
       .map((d) => d.gasto)

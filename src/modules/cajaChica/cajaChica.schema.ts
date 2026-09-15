@@ -7,6 +7,7 @@ export const createCajaChicaSchema = z
     codigo: z.string().min(1),
     nombre: z.string().min(1),
     monedaBase: monedaCajaSchema.optional(),
+    saldoInicial: z.number().min(0).optional(),
     encargadoNombre: z.string().optional(),
     encargadoUsuarioId: z.number().int().positive().nullish(),
     activo: z.boolean().optional(),

@@ -58,6 +58,7 @@ model User {
   movimientosFondoCaja       MovimientoFondoCaja[]
   rendicionesCajaRegistradas RendicionCaja[]
   anulacionesRendicionCaja   AnulacionRendicionCaja[]
+  movimientosBancoCaja       MovimientoBancoCaja[]
 }
 
 model Log {
@@ -1080,14 +1081,20 @@ model CajaChica {
   codigo             String     @unique
   nombre             String
   monedaBase         MonedaCaja @default(BOB)
+  // Cuánto había en esta caja al momento de empezar a usar el sistema (antes
+  // de eso no hay movimientos registrados aquí). El saldo actual siempre
+  // parte de este número, no de cero.
+  saldoInicial       Decimal    @default(0) @db.Decimal(14, 2)
   encargadoNombre    String?
   encargadoUsuarioId Int?
   activo             Boolean    @default(true)
 
-  encargadoUsuario User?                 @relation(fields: [encargadoUsuarioId], references: [id])
-  gastos           GastoCaja[]
-  movimientosFondo MovimientoFondoCaja[]
-  rendiciones      RendicionCaja[]
+  encargadoUsuario    User?                    @relation(fields: [encargadoUsuarioId], references: [id])
+  gastos              GastoCaja[]
+  movimientosFondo    MovimientoFondoCaja[]
+  rendiciones         RendicionCaja[]
+  movimientosBanco    MovimientoBancoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
 }
 
 // Nota: el PDF fuente de Centro de Costo no trae columna de tipo D/N
@@ -1191,6 +1198,7 @@ model GastoCaja {
   centroCostoCajaId        Int
   funcionGastoCajaId       Int
   cuentaContableCajaId     Int?
+  partidaPresupuestoId     Int?
   montoCreditoFiscalIva    Decimal                  @default(0) @db.Decimal(14, 2)
   montoRetencionRcIva      Decimal                  @default(0) @db.Decimal(14, 2)
   montoRetencionIueCompras Decimal                  @default(0) @db.Decimal(14, 2)
@@ -1200,11 +1208,12 @@ model GastoCaja {
   usuarioId                Int
   createdAt                DateTime                 @default(now())
 
-  caja               CajaChica              @relation(fields: [cajaId], references: [id])
-  centroCostoCaja    CentroCostoCaja        @relation(fields: [centroCostoCajaId], references: [id])
-  funcionGastoCaja   FuncionGastoCaja       @relation(fields: [funcionGastoCajaId], references: [id])
-  cuentaContableCaja CuentaContableCaja?    @relation(fields: [cuentaContableCajaId], references: [id])
-  usuario            User                   @relation(fields: [usuarioId], references: [id])
+  caja               CajaChica               @relation(fields: [cajaId], references: [id])
+  centroCostoCaja    CentroCostoCaja         @relation(fields: [centroCostoCajaId], references: [id])
+  funcionGastoCaja   FuncionGastoCaja        @relation(fields: [funcionGastoCajaId], references: [id])
+  cuentaContableCaja CuentaContableCaja?     @relation(fields: [cuentaContableCajaId], references: [id])
+  partidaPresupuesto PartidaPresupuestoCaja? @relation(fields: [partidaPresupuestoId], references: [id])
+  usuario            User                    @relation(fields: [usuarioId], references: [id])
   anulacion          AnulacionGastoCaja?
   rendicionDetalle   RendicionDetalleGasto[]
 
@@ -1355,4 +1364,84 @@ enum EstadoRendicionCaja {
   BORRADOR
   CERRADO
   ANULADO
+}
+
+////////////////////////////////
+// CAJA CHICA — Fase 4: Banco y Presupuesto por partida
+// El presupuesto mensual llega primero a una cuenta bancaria (ahí entran
+// depósitos de presupuesto, sueldos, etc.); de ahí se transfiere a la caja
+// chica por cheque (con su número) o transferencia. Cada gasto puede
+// imputarse a una partida de presupuesto específica (ej. "Internet: 6000
+// Bs este mes") para saber cuánto queda a favor — igual a la "Planilla de
+// Control de Pagos" real.
+////////////////////////////////
+
+model CuentaBancariaCaja {
+  id           Int        @id @default(autoincrement())
+  banco        String
+  numeroCuenta String?
+  nombreCuenta String
+  monedaBase   MonedaCaja @default(BOB)
+  // Cuánto había en esta cuenta bancaria al empezar a usar el sistema. El
+  // saldo actual = saldoInicial + ingresos registrados - salidas hacia cajas.
+  saldoInicial Decimal    @default(0) @db.Decimal(14, 2)
+  activo       Boolean    @default(true)
+
+  movimientos MovimientoBancoCaja[]
+}
+
+model PartidaPresupuestoCaja {
+  id                 Int      @id @default(autoincrement())
+  cajaId             Int
+  anio               Int
+  mes                Int
+  descripcion        String
+  montoPresupuestado Decimal  @db.Decimal(14, 2)
+  activo             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  caja        CajaChica             @relation(fields: [cajaId], references: [id])
+  gastos      GastoCaja[]
+  movimientos MovimientoBancoCaja[]
+
+  @@index([cajaId, anio, mes])
+}
+
+model MovimientoBancoCaja {
+  id                   String              @id @default(uuid())
+  cuentaBancariaId     Int
+  // INGRESO = dinero que llega a la cuenta bancaria (presupuesto, sueldos,
+  // etc. — sin caja destino). SALIDA_A_CAJA = dinero que sale del banco
+  // hacia una caja chica (con caja destino obligatoria).
+  tipo                 TipoMovimientoBanco @default(SALIDA_A_CAJA)
+  cajaId               Int?
+  partidaPresupuestoId Int?
+  fecha                DateTime
+  formaPago            FormaPagoBanco
+  numeroCheque         String?
+  monto                Decimal             @db.Decimal(14, 2)
+  moneda               MonedaCaja
+  depositanteNombre    String?
+  descripcion          String
+  usuarioId            Int
+  createdAt            DateTime            @default(now())
+
+  cuentaBancaria     CuentaBancariaCaja      @relation(fields: [cuentaBancariaId], references: [id])
+  caja               CajaChica?              @relation(fields: [cajaId], references: [id])
+  partidaPresupuesto PartidaPresupuestoCaja? @relation(fields: [partidaPresupuestoId], references: [id])
+  usuario            User                    @relation(fields: [usuarioId], references: [id])
+
+  @@index([cajaId])
+  @@index([cuentaBancariaId])
+}
+
+enum TipoMovimientoBanco {
+  INGRESO
+  SALIDA_A_CAJA
+}
+
+enum FormaPagoBanco {
+  DEPOSITO
+  CHEQUE
+  TRANSFERENCIA
 }

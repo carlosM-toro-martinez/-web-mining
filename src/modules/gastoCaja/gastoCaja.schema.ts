@@ -34,6 +34,8 @@ export const createGastoCajaSchema = z
     moneda: monedaCajaSchema,
     centroCostoCajaId: z.number().int().positive(),
     funcionGastoCajaId: z.number().int().positive(),
+    cuentaContableCajaId: z.number().int().positive().optional(),
+    partidaPresupuestoId: z.number().int().positive().optional(),
   })
   .strict()
   .refine((data) => data.tipoDocumento !== "CONTRATO_RETENCION" || Boolean(data.categoriaRetencion), {
