@@ -10,8 +10,21 @@ type MovimientoBancoCajaQuery = z.infer<typeof movimientoBancoCajaQuerySchema>;
 const INCLUDE_DETALLE = {
   cuentaBancaria: true,
   caja: true,
-  partidaPresupuesto: true,
 } as const;
+
+// Saldo actual de la cuenta al momento de crear el movimiento (misma cuenta
+// aritmética que cuentaBancariaCaja.conSaldo, pero para un solo id) — se usa
+// para no dejar sacar más de lo que realmente hay.
+async function obtenerSaldoActual(cuentaBancariaId: number, saldoInicial: unknown) {
+  const totales = await prisma.movimientoBancoCaja.groupBy({
+    by: ["tipo"],
+    where: { cuentaBancariaId },
+    _sum: { monto: true },
+  });
+  const ingresos = Number(totales.find((t) => t.tipo === "INGRESO")?._sum.monto ?? 0);
+  const salidas = Number(totales.find((t) => t.tipo === "SALIDA_A_CAJA")?._sum.monto ?? 0);
+  return Number(saldoInicial) + ingresos - salidas;
+}
 
 export const movimientoBancoCajaService = {
   async getAll(query: MovimientoBancoCajaQuery) {
@@ -19,7 +32,6 @@ export const movimientoBancoCajaService = {
     if (query.cuentaBancariaId) where.cuentaBancariaId = query.cuentaBancariaId;
     if (query.cajaId) where.cajaId = query.cajaId;
     if (query.tipo) where.tipo = query.tipo;
-    if (query.partidaPresupuestoId) where.partidaPresupuestoId = query.partidaPresupuestoId;
     if (query.fechaInicio || query.fechaFin) {
       where.fecha = {};
       if (query.fechaInicio) where.fecha.gte = query.fechaInicio;
@@ -40,9 +52,21 @@ export const movimientoBancoCajaService = {
     if (!cuentaBancaria) throw new HttpError("Cuenta bancaria no encontrada", 404);
     if (data.cajaId && !caja) throw new HttpError("Caja chica no encontrada", 404);
 
-    if (data.partidaPresupuestoId) {
-      const partida = await prisma.partidaPresupuestoCaja.findUnique({ where: { id: data.partidaPresupuestoId } });
-      if (!partida) throw new HttpError("Partida de presupuesto no encontrada", 404);
+    if (data.moneda !== cuentaBancaria.monedaBase) {
+      throw new HttpError(
+        `La cuenta "${cuentaBancaria.nombreCuenta}" es en ${cuentaBancaria.monedaBase}; registra el movimiento en esa moneda.`,
+        409,
+      );
+    }
+
+    if (data.tipo === "SALIDA_A_CAJA") {
+      const saldoActual = await obtenerSaldoActual(data.cuentaBancariaId, cuentaBancaria.saldoInicial);
+      if (data.monto > saldoActual) {
+        throw new HttpError(
+          `Fondos insuficientes: la cuenta "${cuentaBancaria.nombreCuenta}" tiene disponible ${saldoActual.toFixed(2)} ${cuentaBancaria.monedaBase} y estás intentando sacar ${data.monto.toFixed(2)}.`,
+          409,
+        );
+      }
     }
 
     const movimiento = await prisma.movimientoBancoCaja.create({
@@ -50,7 +74,6 @@ export const movimientoBancoCajaService = {
         cuentaBancariaId: data.cuentaBancariaId,
         tipo: data.tipo,
         cajaId: data.tipo === "SALIDA_A_CAJA" ? (data.cajaId ?? null) : null,
-        partidaPresupuestoId: data.partidaPresupuestoId ?? null,
         fecha: data.fecha,
         formaPago: data.formaPago,
         numeroCheque: data.numeroCheque ?? null,

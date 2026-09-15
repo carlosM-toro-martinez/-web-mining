@@ -1400,36 +1400,38 @@ model PartidaPresupuestoCaja {
   activo             Boolean  @default(true)
   createdAt          DateTime @default(now())
 
-  caja        CajaChica             @relation(fields: [cajaId], references: [id])
-  gastos      GastoCaja[]
-  movimientos MovimientoBancoCaja[]
+  caja   CajaChica   @relation(fields: [cajaId], references: [id])
+  gastos GastoCaja[]
 
   @@index([cajaId, anio, mes])
 }
 
+// El presupuesto vive a nivel de mes (PartidaPresupuestoCaja), no a nivel de
+// cada transferencia bancaria: mover dinero del banco hacia una caja fondea
+// la caja en general para todo el mes, no una partida puntual. Por eso este
+// movimiento NO se vincula a una partida — solo el GastoCaja (el gasto real)
+// se imputa a una partida específica.
 model MovimientoBancoCaja {
-  id                   String              @id @default(uuid())
-  cuentaBancariaId     Int
+  id               String              @id @default(uuid())
+  cuentaBancariaId Int
   // INGRESO = dinero que llega a la cuenta bancaria (presupuesto, sueldos,
   // etc. — sin caja destino). SALIDA_A_CAJA = dinero que sale del banco
   // hacia una caja chica (con caja destino obligatoria).
-  tipo                 TipoMovimientoBanco @default(SALIDA_A_CAJA)
-  cajaId               Int?
-  partidaPresupuestoId Int?
-  fecha                DateTime
-  formaPago            FormaPagoBanco
-  numeroCheque         String?
-  monto                Decimal             @db.Decimal(14, 2)
-  moneda               MonedaCaja
-  depositanteNombre    String?
-  descripcion          String
-  usuarioId            Int
-  createdAt            DateTime            @default(now())
+  tipo              TipoMovimientoBanco @default(SALIDA_A_CAJA)
+  cajaId            Int?
+  fecha             DateTime
+  formaPago         FormaPagoBanco
+  numeroCheque      String?
+  monto             Decimal             @db.Decimal(14, 2)
+  moneda            MonedaCaja
+  depositanteNombre String?
+  descripcion       String
+  usuarioId         Int
+  createdAt         DateTime            @default(now())
 
-  cuentaBancaria     CuentaBancariaCaja      @relation(fields: [cuentaBancariaId], references: [id])
-  caja               CajaChica?              @relation(fields: [cajaId], references: [id])
-  partidaPresupuesto PartidaPresupuestoCaja? @relation(fields: [partidaPresupuestoId], references: [id])
-  usuario            User                    @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
+  caja           CajaChica?         @relation(fields: [cajaId], references: [id])
+  usuario        User               @relation(fields: [usuarioId], references: [id])
 
   @@index([cajaId])
   @@index([cuentaBancariaId])

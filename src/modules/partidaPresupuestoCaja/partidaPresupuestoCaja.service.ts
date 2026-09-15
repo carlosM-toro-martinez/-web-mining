@@ -10,36 +10,27 @@ import type { partidaPresupuestoCajaQuerySchema } from "./partidaPresupuestoCaja
 
 type PartidaPresupuestoCajaQuery = z.infer<typeof partidaPresupuestoCajaQuerySchema>;
 
-// Por cada partida agrega lo pagado desde el banco y lo realmente gastado,
-// para poder mostrar "saldo a favor" (presupuestado - gastado) tal cual la
-// Planilla de Control de Pagos real.
+// Por cada partida agrega lo realmente gastado (vía los gastos imputados a
+// ella), para poder mostrar "saldo a favor" (presupuestado - gastado) tal
+// cual la Planilla de Control de Pagos real.
 async function conEjecucion<T extends { id: number; montoPresupuestado: unknown }>(partidas: T[]) {
   const ids = partidas.map((p) => p.id);
   if (ids.length === 0) return [];
 
-  const [gastos, pagos] = await Promise.all([
-    prisma.gastoCaja.groupBy({
-      by: ["partidaPresupuestoId"],
-      where: { partidaPresupuestoId: { in: ids }, estado: { not: "ANULADO" } },
-      _sum: { montoTotal: true },
-    }),
-    prisma.movimientoBancoCaja.groupBy({
-      by: ["partidaPresupuestoId"],
-      where: { partidaPresupuestoId: { in: ids } },
-      _sum: { monto: true },
-    }),
-  ]);
+  const gastos = await prisma.gastoCaja.groupBy({
+    by: ["partidaPresupuestoId"],
+    where: { partidaPresupuestoId: { in: ids }, estado: { not: "ANULADO" } },
+    _sum: { montoTotal: true },
+  });
 
   const gastadoPorPartida = new Map(gastos.map((g) => [g.partidaPresupuestoId, Number(g._sum.montoTotal ?? 0)]));
-  const pagadoPorPartida = new Map(pagos.map((p) => [p.partidaPresupuestoId, Number(p._sum.monto ?? 0)]));
 
   return partidas.map((partida) => {
     const montoPresupuestado = Number(partida.montoPresupuestado);
     const totalGastado = gastadoPorPartida.get(partida.id) ?? 0;
-    const totalPagado = pagadoPorPartida.get(partida.id) ?? 0;
     const saldoAFavor = montoPresupuestado - totalGastado;
     const porcentajeEjecucion = montoPresupuestado > 0 ? (totalGastado / montoPresupuestado) * 100 : 0;
-    return { ...partida, totalGastado, totalPagado, saldoAFavor, porcentajeEjecucion };
+    return { ...partida, totalGastado, saldoAFavor, porcentajeEjecucion };
   });
 }
 

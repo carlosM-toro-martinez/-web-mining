@@ -3,6 +3,7 @@ import type { CreateCajaChicaDTO, UpdateCajaChicaDTO } from "./cajaChica.types.j
 import type { z } from "zod";
 import type { cajaChicaQuerySchema } from "./cajaChica.schema.js";
 import { logger } from "../../config/logger.js";
+import { HttpError } from "../../errors/http.error.js";
 
 type CajaChicaQuery = z.infer<typeof cajaChicaQuerySchema>;
 
@@ -64,9 +65,34 @@ export const cajaChicaService = {
     return caja;
   },
 
-  // Nota: cuando se agregue GastoCaja/RendicionCaja (Fase 2/3), este método
-  // debe validar que la caja no tenga movimientos asociados antes de eliminar.
   async remove(id: number, userId: number) {
+    const caja = await prisma.cajaChica.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { gastos: true, movimientosFondo: true, rendiciones: true, movimientosBanco: true, partidasPresupuesto: true },
+        },
+      },
+    });
+
+    if (!caja) {
+      throw new HttpError("La caja ya no existe.", 404);
+    }
+
+    const totalMovimientos =
+      caja._count.gastos +
+      caja._count.movimientosFondo +
+      caja._count.rendiciones +
+      caja._count.movimientosBanco +
+      caja._count.partidasPresupuesto;
+
+    if (totalMovimientos > 0) {
+      throw new HttpError(
+        "No se puede eliminar: esta caja ya tiene gastos, movimientos, rendiciones o partidas de presupuesto registrados.",
+        409,
+      );
+    }
+
     await prisma.cajaChica.delete({ where: { id } });
 
     await prisma.log.create({

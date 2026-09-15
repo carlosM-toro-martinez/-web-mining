@@ -9,7 +9,6 @@ export const createMovimientoBancoCajaSchema = z
     cuentaBancariaId: z.number().int().positive(),
     tipo: tipoMovimientoBancoSchema,
     cajaId: z.number().int().positive().optional(),
-    partidaPresupuestoId: z.number().int().positive().optional(),
     fecha: z.coerce.date(),
     formaPago: formaPagoBancoSchema,
     numeroCheque: z.string().trim().optional(),
@@ -33,7 +32,6 @@ export const movimientoBancoCajaQuerySchema = z
     cuentaBancariaId: z.coerce.number().int().positive().optional(),
     cajaId: z.coerce.number().int().positive().optional(),
     tipo: tipoMovimientoBancoSchema.optional(),
-    partidaPresupuestoId: z.coerce.number().int().positive().optional(),
     fechaInicio: z.coerce.date().optional(),
     fechaFin: z.coerce.date().optional(),
   })
