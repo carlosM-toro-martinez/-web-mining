@@ -403,6 +403,15 @@ const CUENTAS_CONTABLES_CAJA = [
   { codigo: "116.001.000", nombre: "GASTOS ADMINISTRATIVOS", clase: "MAY", nivel: 3, monedaCodigo: "A", requiereCentroCosto: true, requiereFuncionGasto: true },
   { codigo: "118.001.000", nombre: "GASTOS NO DEDUCIBLES", clase: "MAY", nivel: 3, monedaCodigo: "B", requiereCentroCosto: false, requiereFuncionGasto: false },
   { codigo: "134.001.000", nombre: "OPERACIONES FUERA DEL COSTO", clase: "MAY", nivel: 3, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: true },
+  // Bancos (del Plan de Cuentas real) — faltaban por completo; ahora que el
+  // módulo registra cuentas bancarias y sus movimientos, cada una necesita
+  // su cuenta contable para imputar correctamente.
+  { codigo: "11.001.000", nombre: "BANCO DE CREDITO DE BOLIVIA BCP", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "11.002.000", nombre: "BANCO FIE S.A.", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "11.003.000", nombre: "BANCO BISA S.A. M/N", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "11.009.000", nombre: "BANCO SOL S.A. M/N", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "12.001.000", nombre: "BANCO DE CREDITO DE BOLIVIA BCP M/E", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
+  { codigo: "12.002.000", nombre: "BANCO DE CREDITO BOLIVIA MIAMI M/E", clase: "MAY", nivel: 2, monedaCodigo: "A", requiereCentroCosto: false, requiereFuncionGasto: false },
 ] as const;
 
 const CAJAS = [
