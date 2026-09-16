@@ -38,10 +38,13 @@ export const createGastoCajaSchema = z
     numeroRespaldo: z.string().optional(),
     montoTotal: z.number().positive(),
     moneda: monedaCajaSchema,
-    centroCostoCajaId: z.number().int().positive(),
-    funcionGastoCajaId: z.number().int().positive(),
-    cuentaContableCajaId: z.number().int().positive(),
-    partidaPresupuestoId: z.number().int().positive(),
+    // Ninguno de estos 4 es obligatorio: un gasto se puede registrar sin
+    // clasificar del todo y completarse después con update() — se marca
+    // como "información incompleta" mientras falte alguno.
+    centroCostoCajaId: z.number().int().positive().optional(),
+    funcionGastoCajaId: z.number().int().positive().optional(),
+    cuentaContableCajaId: z.number().int().positive().optional(),
+    partidaPresupuestoId: z.number().int().positive().optional(),
   })
   .strict()
   .refine((data) => data.tipoDocumento !== "CONTRATO_RETENCION" || Boolean(data.categoriaRetencion), {
@@ -56,6 +59,29 @@ export const createGastoCajaSchema = z
     message: "Debes elegir la cuenta bancaria cuando el gasto sale directo del banco",
     path: ["cuentaBancariaCajaId"],
   });
+
+// Edición posterior: todo opcional (solo se cambia lo que se envía), sin los
+// refine de creación — si el tipoDocumento pasa a CONTRATO_RETENCION sin
+// categoriaRetencion, o el origen sin su caja/cuenta, el service.update()
+// lo valida contra el gasto ya existente (fusionando lo nuevo con lo viejo).
+export const updateGastoCajaSchema = z
+  .object({
+    fecha: z.coerce.date().optional(),
+    tipoDocumento: tipoDocumentoGastoSchema.optional(),
+    categoriaRetencion: categoriaRetencionGastoSchema.nullable().optional(),
+    categoriaRendicion: categoriaRendicionGastoSchema.optional(),
+    proveedorNombre: z.string().min(1).optional(),
+    proveedorNitCi: z.string().nullable().optional(),
+    glosa: z.string().min(1).optional(),
+    numeroRespaldo: z.string().nullable().optional(),
+    montoTotal: z.number().positive().optional(),
+    moneda: monedaCajaSchema.optional(),
+    centroCostoCajaId: z.number().int().positive().nullable().optional(),
+    funcionGastoCajaId: z.number().int().positive().nullable().optional(),
+    cuentaContableCajaId: z.number().int().positive().nullable().optional(),
+    partidaPresupuestoId: z.number().int().positive().nullable().optional(),
+  })
+  .strict();
 
 export const gastoCajaQuerySchema = z
   .object({

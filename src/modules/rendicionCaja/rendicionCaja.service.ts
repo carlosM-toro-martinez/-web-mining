@@ -200,6 +200,28 @@ export const rendicionCajaService = {
         throw new HttpError("Solo se puede cerrar una rendición en BORRADOR", 409);
       }
 
+      // No cerrar con gastos a medio clasificar — el comprobante de diario
+      // necesita la cuenta/centro/función/partida ya resueltos. Se pueden
+      // completar editando el gasto (mientras siga REGISTRADO) antes de
+      // volver a intentar el cierre.
+      const gastosIncompletos = await tx.gastoCaja.count({
+        where: {
+          id: { in: rendicion.detalleGastos.map((d) => d.gastoId) },
+          OR: [
+            { centroCostoCajaId: null },
+            { funcionGastoCajaId: null },
+            { cuentaContableCajaId: null },
+            { partidaPresupuestoId: null },
+          ],
+        },
+      });
+      if (gastosIncompletos > 0) {
+        throw new HttpError(
+          `No se puede cerrar: ${gastosIncompletos} gasto(s) de esta rendición tienen información incompleta (falta centro de costo, función de gasto, cuenta contable o partida de presupuesto). Complétalos en "Gastos" antes de cerrar.`,
+          409,
+        );
+      }
+
       const resultado = await tx.rendicionCaja.updateMany({
         where: { id, estado: "BORRADOR" },
         data: { estado: "CERRADO" },

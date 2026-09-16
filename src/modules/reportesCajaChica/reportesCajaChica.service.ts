@@ -101,13 +101,17 @@ export const reportesCajaChicaService = {
     for (const gasto of gastos) {
       const monto = Number(gasto.montoTotal);
 
-      const centro = porCentro.get(gasto.centroCostoCajaId) ?? { centro: gasto.centroCostoCaja, total: 0 };
-      centro.total += monto;
-      porCentro.set(gasto.centroCostoCajaId, centro);
+      if (gasto.centroCostoCajaId) {
+        const centro = porCentro.get(gasto.centroCostoCajaId) ?? { centro: gasto.centroCostoCaja, total: 0 };
+        centro.total += monto;
+        porCentro.set(gasto.centroCostoCajaId, centro);
+      }
 
-      const funcion = porFuncion.get(gasto.funcionGastoCajaId) ?? { funcion: gasto.funcionGastoCaja, total: 0 };
-      funcion.total += monto;
-      porFuncion.set(gasto.funcionGastoCajaId, funcion);
+      if (gasto.funcionGastoCajaId) {
+        const funcion = porFuncion.get(gasto.funcionGastoCajaId) ?? { funcion: gasto.funcionGastoCaja, total: 0 };
+        funcion.total += monto;
+        porFuncion.set(gasto.funcionGastoCajaId, funcion);
+      }
 
       if (gasto.cuentaContableCajaId) {
         const cuenta = porCuenta.get(gasto.cuentaContableCajaId) ?? { cuenta: gasto.cuentaContableCaja, total: 0 };
@@ -454,7 +458,7 @@ export const reportesCajaChicaService = {
       const monto = Number(gasto.montoTotal);
       const cuenta = gasto.cuentaContableCaja;
       const subLinea =
-        cuenta && (cuenta.requiereCentroCosto || cuenta.requiereFuncionGasto)
+        cuenta && (cuenta.requiereCentroCosto || cuenta.requiereFuncionGasto) && gasto.centroCostoCaja && gasto.funcionGastoCaja
           ? {
               centroCodigo: gasto.centroCostoCaja.codigo,
               centroNombre: gasto.centroCostoCaja.nombre,

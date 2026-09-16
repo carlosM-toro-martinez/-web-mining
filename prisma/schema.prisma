@@ -1287,8 +1287,8 @@ model GastoCaja {
   numeroRespaldo           String?
   montoTotal               Decimal                  @db.Decimal(14, 2)
   moneda                   MonedaCaja
-  centroCostoCajaId        Int
-  funcionGastoCajaId       Int
+  centroCostoCajaId        Int?
+  funcionGastoCajaId       Int?
   cuentaContableCajaId     Int?
   partidaPresupuestoId     Int?
   montoCreditoFiscalIva    Decimal                  @default(0) @db.Decimal(14, 2)
@@ -1302,8 +1302,8 @@ model GastoCaja {
 
   caja               CajaChica?              @relation(fields: [cajaId], references: [id])
   cuentaBancariaCaja CuentaBancariaCaja?     @relation(fields: [cuentaBancariaCajaId], references: [id])
-  centroCostoCaja    CentroCostoCaja         @relation(fields: [centroCostoCajaId], references: [id])
-  funcionGastoCaja   FuncionGastoCaja        @relation(fields: [funcionGastoCajaId], references: [id])
+  centroCostoCaja    CentroCostoCaja?        @relation(fields: [centroCostoCajaId], references: [id])
+  funcionGastoCaja   FuncionGastoCaja?       @relation(fields: [funcionGastoCajaId], references: [id])
   cuentaContableCaja CuentaContableCaja?     @relation(fields: [cuentaContableCajaId], references: [id])
   partidaPresupuesto PartidaPresupuestoCaja? @relation(fields: [partidaPresupuestoId], references: [id])
   usuario            User                    @relation(fields: [usuarioId], references: [id])
