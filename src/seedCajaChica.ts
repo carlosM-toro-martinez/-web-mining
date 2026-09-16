@@ -196,6 +196,7 @@ const FUNCIONES_GASTO: GrupoFuncion[] = [
       { codigo: "378", nombre: "AMORTIZACION", tipo: D },
       { codigo: "379", nombre: "IMPUESTOS - IUE", tipo: D },
       { codigo: "380", nombre: "VARIOS", tipo: D },
+      { codigo: "381", nombre: "ANALISIS E IMPLEMENTACION DE SISTEMAS", tipo: D },
       { codigo: "388", nombre: "TRANSPORTE FERROVIARIO", tipo: D },
       { codigo: "389", nombre: "ALQUILER DE INGENIO", tipo: D },
       { codigo: "390", nombre: "GASTOS SOAT", tipo: D },
