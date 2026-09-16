@@ -66,4 +66,14 @@ export const cajaChicaController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async resetTransaccional(req: AuthRequest, res: Response) {
+    try {
+      const data = await cajaChicaService.resetTransaccional(req.user!.id);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

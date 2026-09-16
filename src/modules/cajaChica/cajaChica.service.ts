@@ -101,4 +101,50 @@ export const cajaChicaService = {
 
     logger.info({ userId, cajaId: id, action: "DELETE_CAJA_CHICA" }, "Caja chica eliminada");
   },
+
+  // Borra TODO lo transaccional de Caja Chica (de todas las cajas): gastos,
+  // rendiciones, movimientos de fondo y de banco, partidas de presupuesto, y
+  // reinicia los correlativos de folio. NO toca cajas, cuentas bancarias,
+  // ni ningún catálogo (centros de costo, funciones de gasto, cuentas
+  // contables, tasas de retención) — eso se conserva siempre. Pensado para
+  // "reiniciar" el módulo y volver a probar/usar desde cero sin perder la
+  // configuración. Reservado solo al rol ADMIN por lo irreversible que es.
+  async resetTransaccional(userId: number) {
+    const resultado = await prisma.$transaction(async (tx) => {
+      const anulacionesRendicion = await tx.anulacionRendicionCaja.deleteMany({});
+      const detalleGastos = await tx.rendicionDetalleGasto.deleteMany({});
+      const anulacionesGasto = await tx.anulacionGastoCaja.deleteMany({});
+      const rendiciones = await tx.rendicionCaja.deleteMany({});
+      const gastos = await tx.gastoCaja.deleteMany({});
+      const movimientosBanco = await tx.movimientoBancoCaja.deleteMany({});
+      const movimientosFondo = await tx.movimientoFondoCaja.deleteMany({});
+      const partidas = await tx.partidaPresupuestoCaja.deleteMany({});
+      const correlativos = await tx.correlativoContador.deleteMany({
+        where: { clave: { startsWith: "RENDICION_CAJA_" } },
+      });
+
+      return {
+        anulacionesRendicion: anulacionesRendicion.count,
+        detalleGastos: detalleGastos.count,
+        anulacionesGasto: anulacionesGasto.count,
+        rendiciones: rendiciones.count,
+        gastos: gastos.count,
+        movimientosBanco: movimientosBanco.count,
+        movimientosFondo: movimientosFondo.count,
+        partidas: partidas.count,
+        correlativos: correlativos.count,
+      };
+    });
+
+    await prisma.log.create({
+      data: { usuarioId: userId, accion: "RESET_TRANSACCIONAL_CAJA_CHICA", data: resultado },
+    });
+
+    logger.warn(
+      { userId, action: "RESET_TRANSACCIONAL_CAJA_CHICA", ...resultado },
+      "Se reiniciaron TODOS los registros transaccionales de Caja Chica",
+    );
+
+    return resultado;
+  },
 };

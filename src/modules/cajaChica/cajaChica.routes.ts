@@ -38,4 +38,10 @@ router.delete(
   cajaChicaController.remove,
 );
 
+// Reinicia TODOS los registros transaccionales del módulo (todas las cajas):
+// gastos, rendiciones, movimientos de fondo/banco, partidas de presupuesto.
+// No toca cajas, cuentas bancarias ni catálogos. Es irreversible, por eso
+// queda reservado solo a ADMIN (ni siquiera ADMINISTRADOR/SUPERINTENDENTE).
+router.post("/reset-transaccional", authorize("ADMIN"), cajaChicaController.resetTransaccional);
+
 export default router;
