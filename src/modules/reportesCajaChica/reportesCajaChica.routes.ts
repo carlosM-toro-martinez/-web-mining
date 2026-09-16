@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { reportesCajaChicaController } from "./reportesCajaChica.controller.js";
 import { validateQuery } from "../../middleware/validate.middleware.js";
-import { estadoCuentaCajaQuerySchema, reporteCajaChicaQuerySchema } from "./reportesCajaChica.schema.js";
+import {
+  estadoCuentaBancariaQuerySchema,
+  estadoCuentaCajaQuerySchema,
+  reporteCajaChicaQuerySchema,
+} from "./reportesCajaChica.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 
 const router = Router();
@@ -16,6 +20,11 @@ router.get(
   "/estado-cuenta",
   validateQuery(estadoCuentaCajaQuerySchema),
   reportesCajaChicaController.getEstadoCuenta,
+);
+router.get(
+  "/estado-cuenta-bancaria",
+  validateQuery(estadoCuentaBancariaQuerySchema),
+  reportesCajaChicaController.getEstadoCuentaBancaria,
 );
 router.get("/rendicion/:rendicionId", reportesCajaChicaController.getReporteRendicion);
 router.get("/rendicion/:rendicionId/comprobante-diario", reportesCajaChicaController.getComprobanteDiario);

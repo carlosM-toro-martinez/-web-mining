@@ -67,34 +67,6 @@ async function calcularImpuestos(data: CreateGastoCajaDTO) {
   return { montoCreditoFiscalIva, montoRetencionRcIva, montoRetencionIueCompras, montoRetencionIt, esNoDeducible };
 }
 
-async function resolverCuentaNoDeducible() {
-  return prisma.cuentaContableCaja.findUnique({ where: { codigo: "118.001.000" } });
-}
-
-// Una cuenta contable no es una combinación libre de centro de costo +
-// función de gasto (eso ya lo cubren esos dos campos por separado): es el
-// mayor contable al que se imputa el gasto según su naturaleza, y se
-// resuelve solo a partir de la categoría de rendición — el usuario ya no
-// la elige a mano. RECIBO_DIRECTO siempre gana e imputa a No Deducibles,
-// sin importar la categoría (ver resolverCuentaNoDeducible).
-const CUENTA_CODIGO_POR_CATEGORIA: Record<CreateGastoCajaDTO["categoriaRendicion"], string> = {
-  MATERIALES_SUMINISTROS: "100.001.000",
-  TRANSPORTES: "100.001.000",
-  MANTENIMIENTO_SERVICIOS: "100.001.000",
-  MEDIO_AMBIENTE: "100.001.000",
-  OTROS: "100.001.000",
-  ACTIVOS_FIJOS: "37.002.000",
-  OBLIGACIONES_SOCIALES: "85.001.000",
-  OBRAS_CONSTRUCCION: "42.002.000",
-  GASTOS_ADMINISTRATIVOS: "116.001.000",
-  OTROS_GASTOS_ADMINISTRATIVOS: "116.001.000",
-};
-
-async function resolverCuentaPorCategoria(categoriaRendicion: CreateGastoCajaDTO["categoriaRendicion"]) {
-  const codigo = CUENTA_CODIGO_POR_CATEGORIA[categoriaRendicion];
-  return prisma.cuentaContableCaja.findUnique({ where: { codigo } });
-}
-
 export const gastoCajaService = {
   async getAll(query: GastoCajaQuery) {
     const page = Number(query.page ?? 1);
@@ -145,22 +117,16 @@ export const gastoCajaService = {
         : null,
       prisma.centroCostoCaja.findUnique({ where: { id: data.centroCostoCajaId } }),
       prisma.funcionGastoCaja.findUnique({ where: { id: data.funcionGastoCajaId } }),
-      data.cuentaContableCajaId
-        ? prisma.cuentaContableCaja.findUnique({ where: { id: data.cuentaContableCajaId } })
-        : null,
-      data.partidaPresupuestoId
-        ? prisma.partidaPresupuestoCaja.findUnique({ where: { id: data.partidaPresupuestoId } })
-        : null,
+      prisma.cuentaContableCaja.findUnique({ where: { id: data.cuentaContableCajaId } }),
+      prisma.partidaPresupuestoCaja.findUnique({ where: { id: data.partidaPresupuestoId } }),
     ]);
 
     if (data.origen === "CAJA" && !caja) throw new HttpError("Caja chica no encontrada", 404);
     if (data.origen === "BANCO" && !cuentaBancariaCaja) throw new HttpError("Cuenta bancaria no encontrada", 404);
     if (!centroCosto) throw new HttpError("Centro de costo no encontrado", 404);
     if (!funcionGasto) throw new HttpError("Función de gasto no encontrada", 404);
-    if (data.cuentaContableCajaId && !cuentaManual) throw new HttpError("Cuenta contable no encontrada", 404);
-    if (data.partidaPresupuestoId && !partidaPresupuesto) {
-      throw new HttpError("Partida de presupuesto no encontrada", 404);
-    }
+    if (!cuentaManual) throw new HttpError("Cuenta contable no encontrada", 404);
+    if (!partidaPresupuesto) throw new HttpError("Partida de presupuesto no encontrada", 404);
 
     // No dejar registrar un gasto por más de lo que realmente hay disponible
     // — ni en la caja física, ni en la cuenta bancaria cuando el pago se
@@ -192,18 +158,6 @@ export const gastoCajaService = {
 
     const impuestos = await calcularImpuestos(data);
 
-    // La cuenta contable elegida a mano siempre gana; si no se eligió
-    // ninguna, se resuelve sola a partir de la categoría de rendición
-    // (RECIBO_DIRECTO siempre a Gastos No Deducibles).
-    let cuentaContableCajaId = data.cuentaContableCajaId ?? null;
-    if (!cuentaContableCajaId) {
-      const cuentaResuelta =
-        data.tipoDocumento === "RECIBO_DIRECTO"
-          ? await resolverCuentaNoDeducible()
-          : await resolverCuentaPorCategoria(data.categoriaRendicion);
-      cuentaContableCajaId = cuentaResuelta?.id ?? null;
-    }
-
     const gasto = await prisma.$transaction(async (tx) => {
       const creado = await tx.gastoCaja.create({
         data: {
@@ -222,8 +176,8 @@ export const gastoCajaService = {
           moneda: data.moneda,
           centroCostoCajaId: data.centroCostoCajaId,
           funcionGastoCajaId: data.funcionGastoCajaId,
-          cuentaContableCajaId,
-          partidaPresupuestoId: data.partidaPresupuestoId ?? null,
+          cuentaContableCajaId: data.cuentaContableCajaId,
+          partidaPresupuestoId: data.partidaPresupuestoId,
           montoCreditoFiscalIva: impuestos.montoCreditoFiscalIva,
           montoRetencionRcIva: impuestos.montoRetencionRcIva,
           montoRetencionIueCompras: impuestos.montoRetencionIueCompras,

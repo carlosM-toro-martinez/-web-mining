@@ -1,6 +1,10 @@
 import type { Response } from "express";
 import { reportesCajaChicaService } from "./reportesCajaChica.service.js";
-import { estadoCuentaCajaQuerySchema, reporteCajaChicaQuerySchema } from "./reportesCajaChica.schema.js";
+import {
+  estadoCuentaBancariaQuerySchema,
+  estadoCuentaCajaQuerySchema,
+  reporteCajaChicaQuerySchema,
+} from "./reportesCajaChica.schema.js";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
@@ -46,6 +50,17 @@ export const reportesCajaChicaController = {
     try {
       const query = estadoCuentaCajaQuerySchema.parse(req.query);
       const data = await reportesCajaChicaService.getEstadoCuenta(query.cajaId);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getEstadoCuentaBancaria(req: AuthRequest, res: Response) {
+    try {
+      const query = estadoCuentaBancariaQuerySchema.parse(req.query);
+      const data = await reportesCajaChicaService.getEstadoCuentaBancaria(query.cuentaBancariaId);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

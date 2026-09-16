@@ -93,6 +93,10 @@ export const reportesCajaChicaService = {
     const porFuncion = new Map<number, { funcion: unknown; total: number }>();
     const porCuenta = new Map<number, { cuenta: unknown; total: number }>();
     const porCategoria = new Map<string, { categoria: string; total: number }>();
+    // Separado por moneda porque sumar BOB y USD en un mismo total no tiene
+    // sentido — es "cuánto gasté de banco y cuánto de caja" que pidió el
+    // usuario, con la moneda de cada uno bien clara.
+    const porOrigen = new Map<string, { origen: "CAJA" | "BANCO"; moneda: string; total: number; cantidad: number }>();
 
     for (const gasto of gastos) {
       const monto = Number(gasto.montoTotal);
@@ -117,6 +121,12 @@ export const reportesCajaChicaService = {
       };
       categoria.total += monto;
       porCategoria.set(gasto.categoriaRendicion, categoria);
+
+      const claveOrigen = `${gasto.origen}-${gasto.moneda}`;
+      const origen = porOrigen.get(claveOrigen) ?? { origen: gasto.origen, moneda: gasto.moneda, total: 0, cantidad: 0 };
+      origen.total += monto;
+      origen.cantidad += 1;
+      porOrigen.set(claveOrigen, origen);
     }
 
     return {
@@ -124,6 +134,7 @@ export const reportesCajaChicaService = {
       porFuncionGasto: Array.from(porFuncion.values()),
       porCuentaContable: Array.from(porCuenta.values()),
       porCategoria: Array.from(porCategoria.values()),
+      porOrigen: Array.from(porOrigen.values()),
     };
   },
 
@@ -217,6 +228,80 @@ export const reportesCajaChicaService = {
       caja,
       saldoInicial,
       fechaCorte: cortaDesde ?? null,
+      totalIngresos,
+      totalEgresos,
+      saldoActual: saldo,
+      movimientos: detalle,
+    };
+  },
+
+  // Mismo concepto que getEstadoCuenta() pero para una cuenta bancaria: no
+  // existe una "rendición" que cierre una cuenta bancaria (esas solo cierran
+  // cajas), así que el saldo inicial siempre es el declarado en Parámetros,
+  // sin fecha de corte. Movimientos: INGRESO (dinero que llega al banco) y
+  // SALIDA_A_CAJA (dinero que sale hacia una caja) de MovimientoBancoCaja,
+  // más los gastos pagados directo desde esta cuenta (origen BANCO).
+  async getEstadoCuentaBancaria(cuentaBancariaId: number) {
+    const cuenta = await prisma.cuentaBancariaCaja.findUnique({ where: { id: cuentaBancariaId } });
+    if (!cuenta) throw new HttpError("Cuenta bancaria no encontrada", 404);
+
+    const saldoInicial = Number(cuenta.saldoInicial);
+
+    const [movimientosBanco, gastosDirectos] = await Promise.all([
+      prisma.movimientoBancoCaja.findMany({
+        where: { cuentaBancariaId },
+        include: { caja: true },
+        orderBy: { fecha: "asc" },
+      }),
+      prisma.gastoCaja.findMany({
+        where: { cuentaBancariaCajaId: cuentaBancariaId, estado: { not: "ANULADO" } },
+        orderBy: { fecha: "asc" },
+      }),
+    ]);
+
+    type Movimiento = {
+      fecha: Date;
+      tipo: "FONDO" | "GASTO";
+      detalle: string;
+      referencia: string | null;
+      ingreso: number;
+      egreso: number;
+    };
+
+    const movimientos: Movimiento[] = [
+      ...movimientosBanco.map((m) => ({
+        fecha: m.fecha,
+        tipo: "FONDO" as const,
+        detalle:
+          m.tipo === "INGRESO"
+            ? `Ingreso · ${m.formaPago}`
+            : `Salida hacia ${m.caja?.nombre ?? "caja"} · ${m.formaPago}`,
+        referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
+        ingreso: m.tipo === "INGRESO" ? Number(m.monto) : 0,
+        egreso: m.tipo === "SALIDA_A_CAJA" ? Number(m.monto) : 0,
+      })),
+      ...gastosDirectos.map((g) => ({
+        fecha: g.fecha,
+        tipo: "GASTO" as const,
+        detalle: `${g.proveedorNombre} - ${g.glosa}`,
+        referencia: g.numeroRespaldo,
+        ingreso: 0,
+        egreso: Number(g.montoTotal),
+      })),
+    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+
+    let saldo = saldoInicial;
+    const detalle = movimientos.map((m) => {
+      saldo = saldo + m.ingreso - m.egreso;
+      return { ...m, saldo };
+    });
+
+    const totalIngresos = movimientos.reduce((acc, m) => acc + m.ingreso, 0);
+    const totalEgresos = movimientos.reduce((acc, m) => acc + m.egreso, 0);
+
+    return {
+      cuenta,
+      saldoInicial,
       totalIngresos,
       totalEgresos,
       saldoActual: saldo,

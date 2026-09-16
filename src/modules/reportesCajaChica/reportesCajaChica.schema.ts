@@ -13,3 +13,9 @@ export const estadoCuentaCajaQuerySchema = z
     cajaId: z.coerce.number().int().positive(),
   })
   .strict();
+
+export const estadoCuentaBancariaQuerySchema = z
+  .object({
+    cuentaBancariaId: z.coerce.number().int().positive(),
+  })
+  .strict();

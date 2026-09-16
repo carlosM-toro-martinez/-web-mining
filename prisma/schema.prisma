@@ -882,8 +882,8 @@ enum OrigenCambioFlota {
 ////////////////////////////////
 
 model LoteDespacho {
-  id                    String              @id @default(uuid())
-  correlativo           String              @unique
+  id                    String             @id @default(uuid())
+  correlativo           String             @unique
   municipioOrigenId     Int
   remitenteId           Int
   vehiculoId            Int
@@ -893,9 +893,9 @@ model LoteDespacho {
   nivel                 String?
   fechaDespachoReal     DateTime
   fechaDocumentalFiscal DateTime
-  estadoLote            EstadoLoteDespacho  @default(REGISTRADO)
+  estadoLote            EstadoLoteDespacho @default(REGISTRADO)
   usuarioRegistroId     Int
-  createdAt             DateTime            @default(now())
+  createdAt             DateTime           @default(now())
 
   municipioOrigen MunicipioOrigen @relation(fields: [municipioOrigenId], references: [id])
   remitente       Remitente       @relation(fields: [remitenteId], references: [id])
@@ -952,8 +952,8 @@ model Formulario101 {
   usuarioId Int
   createdAt DateTime            @default(now())
 
-  lote      LoteDespacho?            @relation(fields: [loteId], references: [id])
-  usuario   User                     @relation(fields: [usuarioId], references: [id])
+  lote      LoteDespacho?           @relation(fields: [loteId], references: [id])
+  usuario   User                    @relation(fields: [usuarioId], references: [id])
   anulacion AnulacionFormulario101?
 }
 
@@ -1182,9 +1182,10 @@ model CentroCostoCaja {
   parentId Int?
   activo   Boolean @default(true)
 
-  parent   CentroCostoCaja?  @relation("CentroCostoCajaTree", fields: [parentId], references: [id])
-  children CentroCostoCaja[] @relation("CentroCostoCajaTree")
-  gastos   GastoCaja[]
+  parent              CentroCostoCaja?         @relation("CentroCostoCajaTree", fields: [parentId], references: [id])
+  children            CentroCostoCaja[]        @relation("CentroCostoCajaTree")
+  gastos              GastoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
 }
 
 model FuncionGastoCaja {
@@ -1195,9 +1196,10 @@ model FuncionGastoCaja {
   parentId Int?
   activo   Boolean        @default(true)
 
-  parent   FuncionGastoCaja?  @relation("FuncionGastoCajaTree", fields: [parentId], references: [id])
-  children FuncionGastoCaja[] @relation("FuncionGastoCajaTree")
-  gastos   GastoCaja[]
+  parent              FuncionGastoCaja?        @relation("FuncionGastoCajaTree", fields: [parentId], references: [id])
+  children            FuncionGastoCaja[]       @relation("FuncionGastoCajaTree")
+  gastos              GastoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
 }
 
 model CuentaContableCaja {
@@ -1211,8 +1213,9 @@ model CuentaContableCaja {
   requiereFuncionGasto Boolean         @default(false)
   activo               Boolean         @default(true)
 
-  conceptosRetencion ConceptoRetencionCaja[]
-  gastos             GastoCaja[]
+  conceptosRetencion  ConceptoRetencionCaja[]
+  gastos              GastoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
 }
 
 model ConceptoRetencionCaja {
@@ -1501,23 +1504,35 @@ model PresupuestoCaja {
   asignadoMovimientoBancoId String?   @unique
   asignadoEn                DateTime?
 
-  caja                    CajaChica            @relation(fields: [cajaId], references: [id])
-  asignadoMovimientoBanco MovimientoBancoCaja? @relation(fields: [asignadoMovimientoBancoId], references: [id])
+  caja                    CajaChica                @relation(fields: [cajaId], references: [id])
+  asignadoMovimientoBanco MovimientoBancoCaja?     @relation(fields: [asignadoMovimientoBancoId], references: [id])
   partidas                PartidaPresupuestoCaja[]
 
   @@index([cajaId, anio, mes])
 }
 
+// Los campos de clasificación (centro de costo/función de gasto/cuenta
+// contable/categoría de rendición) son opcionales: quedan como plantilla
+// de la partida para que, al registrar el gasto real que la ejecuta, el
+// formulario se autocomplete casi entero — solo falta poner el origen
+// (caja/banco) y el proveedor/beneficiario real de ese gasto puntual.
 model PartidaPresupuestoCaja {
-  id                 Int      @id @default(autoincrement())
-  presupuestoId      Int
-  descripcion        String
-  montoPresupuestado Decimal  @db.Decimal(14, 2)
-  activo             Boolean  @default(true)
-  createdAt          DateTime @default(now())
+  id                   Int                      @id @default(autoincrement())
+  presupuestoId        Int
+  descripcion          String
+  montoPresupuestado   Decimal                  @db.Decimal(14, 2)
+  centroCostoCajaId    Int?
+  funcionGastoCajaId   Int?
+  cuentaContableCajaId Int?
+  categoriaRendicion   CategoriaRendicionGasto?
+  activo               Boolean                  @default(true)
+  createdAt            DateTime                 @default(now())
 
-  presupuesto PresupuestoCaja @relation(fields: [presupuestoId], references: [id])
-  gastos      GastoCaja[]
+  presupuesto        PresupuestoCaja     @relation(fields: [presupuestoId], references: [id])
+  centroCostoCaja    CentroCostoCaja?    @relation(fields: [centroCostoCajaId], references: [id])
+  funcionGastoCaja   FuncionGastoCaja?   @relation(fields: [funcionGastoCajaId], references: [id])
+  cuentaContableCaja CuentaContableCaja? @relation(fields: [cuentaContableCajaId], references: [id])
+  gastos             GastoCaja[]
 
   @@index([presupuestoId])
 }
@@ -1529,8 +1544,8 @@ model PartidaPresupuestoCaja {
 // partida específica, y una remesa completa se vincula a UN movimiento
 // cuando se aprueba y asigna al banco (ver PresupuestoCaja arriba).
 model MovimientoBancoCaja {
-  id               String              @id @default(uuid())
-  cuentaBancariaId Int
+  id                String              @id @default(uuid())
+  cuentaBancariaId  Int
   // INGRESO = dinero que llega a la cuenta bancaria (presupuesto, sueldos,
   // etc. — sin caja destino). SALIDA_A_CAJA = dinero que sale del banco
   // hacia una caja chica (con caja destino obligatoria).
@@ -1546,9 +1561,9 @@ model MovimientoBancoCaja {
   usuarioId         Int
   createdAt         DateTime            @default(now())
 
-  cuentaBancaria      CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
-  caja                CajaChica?         @relation(fields: [cajaId], references: [id])
-  usuario             User               @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria        CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
+  caja                  CajaChica?         @relation(fields: [cajaId], references: [id])
+  usuario               User               @relation(fields: [usuarioId], references: [id])
   presupuestosAsignados PresupuestoCaja[]
 
   @@index([cajaId])
