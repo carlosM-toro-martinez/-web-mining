@@ -1182,9 +1182,22 @@ enum TipoRetencionCaja {
 // Mismo patrón de anulación lógica que el resto del sistema.
 ////////////////////////////////
 
+// Un gasto normalmente sale de una caja física (origen CAJA), pero algunos
+// pagos se hacen directo desde el banco sin pasar por ninguna caja chica
+// (origen BANCO) — ej. una transferencia directa a un proveedor. Por eso
+// cajaId es opcional y hay un cuentaBancariaCajaId alternativo; el service
+// exige exactamente uno de los dos según `origen`. Los gastos BANCO no
+// entran a ninguna Rendición (esas son siempre por caja).
+enum OrigenGastoCaja {
+  CAJA
+  BANCO
+}
+
 model GastoCaja {
   id                       String                   @id @default(uuid())
-  cajaId                   Int
+  cajaId                   Int?
+  cuentaBancariaCajaId     Int?
+  origen                   OrigenGastoCaja          @default(CAJA)
   fecha                    DateTime
   tipoDocumento            TipoDocumentoGasto
   categoriaRetencion       CategoriaRetencionGasto?
@@ -1208,7 +1221,8 @@ model GastoCaja {
   usuarioId                Int
   createdAt                DateTime                 @default(now())
 
-  caja               CajaChica               @relation(fields: [cajaId], references: [id])
+  caja               CajaChica?              @relation(fields: [cajaId], references: [id])
+  cuentaBancariaCaja CuentaBancariaCaja?     @relation(fields: [cuentaBancariaCajaId], references: [id])
   centroCostoCaja    CentroCostoCaja         @relation(fields: [centroCostoCajaId], references: [id])
   funcionGastoCaja   FuncionGastoCaja        @relation(fields: [funcionGastoCajaId], references: [id])
   cuentaContableCaja CuentaContableCaja?     @relation(fields: [cuentaContableCajaId], references: [id])
@@ -1218,6 +1232,7 @@ model GastoCaja {
   rendicionDetalle   RendicionDetalleGasto[]
 
   @@index([cajaId])
+  @@index([cuentaBancariaCajaId])
   @@index([estado])
   @@index([fecha])
 }
@@ -1388,6 +1403,7 @@ model CuentaBancariaCaja {
   activo       Boolean    @default(true)
 
   movimientos MovimientoBancoCaja[]
+  gastos      GastoCaja[]
 }
 
 model PartidaPresupuestoCaja {

@@ -31,6 +31,56 @@ export const rendicionCajaService = {
     return prisma.rendicionCaja.findUnique({ where: { id }, include: INCLUDE_DETALLE });
   },
 
+  // Misma lectura que create() (gastos elegibles, fondos, saldo
+  // anterior/nuevo) pero sin escribir nada ni gastar un folio — para que el
+  // usuario vea qué incluiría la rendición del período antes de decidirse a
+  // crearla de verdad.
+  async preview(cajaId: number, periodoDesde: Date, periodoHasta: Date) {
+    const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
+    if (!caja) throw new HttpError("Caja chica no encontrada", 404);
+
+    const [gastosElegibles, fondos, fondosBanco, ultimaCerrada] = await Promise.all([
+      prisma.gastoCaja.findMany({
+        where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
+        orderBy: { fecha: "asc" },
+      }),
+      prisma.movimientoFondoCaja.aggregate({
+        where: { cajaId, fecha: { gte: periodoDesde, lte: periodoHasta } },
+        _sum: { monto: true },
+      }),
+      prisma.movimientoBancoCaja.aggregate({
+        where: { cajaId, tipo: "SALIDA_A_CAJA", fecha: { gte: periodoDesde, lte: periodoHasta } },
+        _sum: { monto: true },
+      }),
+      prisma.rendicionCaja.findFirst({
+        where: { cajaId, estado: "CERRADO" },
+        orderBy: { periodoHasta: "desc" },
+      }),
+    ]);
+
+    const totalFondos = Number(fondos._sum.monto ?? 0) + Number(fondosBanco._sum.monto ?? 0);
+    const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
+    const totalRetenciones = gastosElegibles.reduce(
+      (acc, g) =>
+        acc + Number(g.montoRetencionRcIva) + Number(g.montoRetencionIueCompras) + Number(g.montoRetencionIt),
+      0,
+    );
+    const totalCreditoFiscal = gastosElegibles.reduce((acc, g) => acc + Number(g.montoCreditoFiscalIva), 0);
+    const saldoAnterior = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
+    const saldoNuevo = saldoAnterior + totalFondos - totalGastos;
+
+    return {
+      caja,
+      gastos: gastosElegibles,
+      totalFondos,
+      totalGastos,
+      totalRetenciones,
+      totalCreditoFiscal,
+      saldoAnterior,
+      saldoNuevo,
+    };
+  },
+
   // Arma el detalle desde los gastos REGISTRADO de la caja en el rango de
   // fechas, y calcula saldoAnterior a partir de la última rendición
   // CERRADA de la misma caja (0 si es la primera) — mismo esquema

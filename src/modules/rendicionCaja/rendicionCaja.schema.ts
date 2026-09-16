@@ -22,6 +22,17 @@ export const rendicionCajaQuerySchema = z
   })
   .strict();
 
+// Consulta de solo lectura para "previsualizar" una rendición antes de
+// crearla de verdad: mismos filtros que create(), pero sin folio ni gastos
+// obligatorios (útil mientras el usuario todavía está eligiendo el rango).
+export const previewRendicionCajaQuerySchema = z
+  .object({
+    cajaId: z.coerce.number().int().positive(),
+    periodoDesde: z.coerce.date(),
+    periodoHasta: z.coerce.date(),
+  })
+  .strict();
+
 export const anularRendicionCajaSchema = z
   .object({
     motivo: z.string().trim().min(1),

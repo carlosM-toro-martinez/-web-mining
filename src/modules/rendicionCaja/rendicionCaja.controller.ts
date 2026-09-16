@@ -1,10 +1,23 @@
 import type { Response } from "express";
 import { rendicionCajaService } from "./rendicionCaja.service.js";
-import { rendicionCajaQuerySchema } from "./rendicionCaja.schema.js";
+import { previewRendicionCajaQuerySchema, rendicionCajaQuerySchema } from "./rendicionCaja.schema.js";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
 export const rendicionCajaController = {
+  async preview(req: AuthRequest, res: Response) {
+    try {
+      // Express 5: mismo motivo que en getAll — req.query es de solo
+      // lectura, se re-parsea aquí para que cajaId/fechas lleguen coercidos.
+      const query = previewRendicionCajaQuerySchema.parse(req.query);
+      const data = await rendicionCajaService.preview(query.cajaId, query.periodoDesde, query.periodoHasta);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getAll(req: AuthRequest, res: Response) {
     try {
       // Ver nota en gastoCaja.controller.ts: validateQuery() no puede

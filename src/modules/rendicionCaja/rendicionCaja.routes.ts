@@ -4,6 +4,7 @@ import { validate, validateQuery, validateParams } from "../../middleware/valida
 import {
   anularRendicionCajaSchema,
   createRendicionCajaSchema,
+  previewRendicionCajaQuerySchema,
   rendicionCajaQuerySchema,
 } from "./rendicionCaja.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
@@ -15,6 +16,8 @@ const router = Router();
 
 router.use(authenticate);
 
+// Antes de "/:id" para que Express no confunda "preview" con un id.
+router.get("/preview", validateQuery(previewRendicionCajaQuerySchema), rendicionCajaController.preview);
 router.get("/", validateQuery(rendicionCajaQuerySchema), rendicionCajaController.getAll);
 router.get("/:id", validateParams(idSchema), rendicionCajaController.getById);
 
@@ -25,18 +28,19 @@ router.post(
   rendicionCajaController.create,
 );
 
-// Cierre y anulación quedan reservados a ADMIN/SUPERINTENDENTE: fijan el
-// estado final de los gastos, igual que el cierre de liquidaciones en Logística.
+// Cierre y anulación quedan reservados a ADMIN/ADMINISTRADOR/SUPERINTENDENTE:
+// fijan el estado final de los gastos, igual que el cierre de liquidaciones
+// en Logística.
 router.post(
   "/:id/cerrar",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
   validateParams(idSchema),
   rendicionCajaController.cerrar,
 );
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(anularRendicionCajaSchema),
   rendicionCajaController.anular,

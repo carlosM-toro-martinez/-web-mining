@@ -1,6 +1,8 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBancariaCaja.service.js";
+import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
 import type { AnularGastoCajaDTO, CreateGastoCajaDTO } from "./gastoCaja.types.js";
 import type { z } from "zod";
 import type { gastoCajaQuerySchema } from "./gastoCaja.schema.js";
@@ -9,6 +11,7 @@ type GastoCajaQuery = z.infer<typeof gastoCajaQuerySchema>;
 
 const INCLUDE_DETALLE = {
   caja: true,
+  cuentaBancariaCaja: true,
   centroCostoCaja: true,
   funcionGastoCaja: true,
   cuentaContableCaja: true,
@@ -100,6 +103,8 @@ export const gastoCajaService = {
 
     const where: any = {};
     if (query.cajaId) where.cajaId = query.cajaId;
+    if (query.cuentaBancariaCajaId) where.cuentaBancariaCajaId = query.cuentaBancariaCajaId;
+    if (query.origen) where.origen = query.origen;
     if (query.estado) where.estado = query.estado;
     if (query.fechaInicio || query.fechaFin) {
       where.fecha = {};
@@ -112,7 +117,14 @@ export const gastoCajaService = {
         where,
         skip,
         take: limit,
-        include: { caja: true, centroCostoCaja: true, funcionGastoCaja: true, cuentaContableCaja: true, partidaPresupuesto: true },
+        include: {
+          caja: true,
+          cuentaBancariaCaja: true,
+          centroCostoCaja: true,
+          funcionGastoCaja: true,
+          cuentaContableCaja: true,
+          partidaPresupuesto: true,
+        },
         orderBy: { fecha: "desc" },
       }),
       prisma.gastoCaja.count({ where }),
@@ -126,8 +138,11 @@ export const gastoCajaService = {
   },
 
   async create(data: CreateGastoCajaDTO, userId: number) {
-    const [caja, centroCosto, funcionGasto, cuentaManual, partidaPresupuesto] = await Promise.all([
-      prisma.cajaChica.findUnique({ where: { id: data.cajaId } }),
+    const [caja, cuentaBancariaCaja, centroCosto, funcionGasto, cuentaManual, partidaPresupuesto] = await Promise.all([
+      data.origen === "CAJA" && data.cajaId ? prisma.cajaChica.findUnique({ where: { id: data.cajaId } }) : null,
+      data.origen === "BANCO" && data.cuentaBancariaCajaId
+        ? prisma.cuentaBancariaCaja.findUnique({ where: { id: data.cuentaBancariaCajaId } })
+        : null,
       prisma.centroCostoCaja.findUnique({ where: { id: data.centroCostoCajaId } }),
       prisma.funcionGastoCaja.findUnique({ where: { id: data.funcionGastoCajaId } }),
       data.cuentaContableCajaId
@@ -138,12 +153,41 @@ export const gastoCajaService = {
         : null,
     ]);
 
-    if (!caja) throw new HttpError("Caja chica no encontrada", 404);
+    if (data.origen === "CAJA" && !caja) throw new HttpError("Caja chica no encontrada", 404);
+    if (data.origen === "BANCO" && !cuentaBancariaCaja) throw new HttpError("Cuenta bancaria no encontrada", 404);
     if (!centroCosto) throw new HttpError("Centro de costo no encontrado", 404);
     if (!funcionGasto) throw new HttpError("Función de gasto no encontrada", 404);
     if (data.cuentaContableCajaId && !cuentaManual) throw new HttpError("Cuenta contable no encontrada", 404);
     if (data.partidaPresupuestoId && !partidaPresupuesto) {
       throw new HttpError("Partida de presupuesto no encontrada", 404);
+    }
+
+    // No dejar registrar un gasto por más de lo que realmente hay disponible
+    // — ni en la caja física, ni en la cuenta bancaria cuando el pago se
+    // hace directo desde ahí.
+    if (data.origen === "CAJA" && caja) {
+      const estadoCuenta = await reportesCajaChicaService.getEstadoCuenta(caja.id);
+      if (data.montoTotal > estadoCuenta.saldoActual) {
+        throw new HttpError(
+          `Fondos insuficientes: la caja "${caja.nombre}" tiene disponible ${estadoCuenta.saldoActual.toFixed(2)} y el gasto es de ${data.montoTotal.toFixed(2)}.`,
+          409,
+        );
+      }
+    }
+    if (data.origen === "BANCO" && cuentaBancariaCaja) {
+      if (data.moneda !== cuentaBancariaCaja.monedaBase) {
+        throw new HttpError(
+          `La cuenta "${cuentaBancariaCaja.nombreCuenta}" es en ${cuentaBancariaCaja.monedaBase}; registra el gasto en esa moneda.`,
+          409,
+        );
+      }
+      const { saldoActual } = await obtenerSaldoActualCuentaBancaria(cuentaBancariaCaja.id);
+      if (data.montoTotal > saldoActual) {
+        throw new HttpError(
+          `Fondos insuficientes: la cuenta "${cuentaBancariaCaja.nombreCuenta}" tiene disponible ${saldoActual.toFixed(2)} ${cuentaBancariaCaja.monedaBase} y el gasto es de ${data.montoTotal.toFixed(2)}.`,
+          409,
+        );
+      }
     }
 
     const impuestos = await calcularImpuestos(data);
@@ -163,7 +207,9 @@ export const gastoCajaService = {
     const gasto = await prisma.$transaction(async (tx) => {
       const creado = await tx.gastoCaja.create({
         data: {
-          cajaId: data.cajaId,
+          origen: data.origen,
+          cajaId: data.origen === "CAJA" ? (data.cajaId ?? null) : null,
+          cuentaBancariaCajaId: data.origen === "BANCO" ? (data.cuentaBancariaCajaId ?? null) : null,
           fecha: data.fecha,
           tipoDocumento: data.tipoDocumento,
           categoriaRetencion: data.categoriaRetencion ?? null,

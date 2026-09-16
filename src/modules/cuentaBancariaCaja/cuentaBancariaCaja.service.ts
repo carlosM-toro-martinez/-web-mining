@@ -8,30 +8,54 @@ import type { cuentaBancariaCajaQuerySchema } from "./cuentaBancariaCaja.schema.
 type CuentaBancariaCajaQuery = z.infer<typeof cuentaBancariaCajaQuerySchema>;
 
 // Saldo actual = saldo inicial declarado + ingresos registrados - salidas
-// hacia cajas. Se calcula al vuelo, nunca se guarda como número fijo.
+// hacia cajas - gastos pagados directo desde esta cuenta (sin pasar por
+// ninguna caja). Se calcula al vuelo, nunca se guarda como número fijo.
 async function conSaldo<T extends { id: number; saldoInicial: unknown }>(cuentas: T[]) {
   const ids = cuentas.map((c) => c.id);
   if (ids.length === 0) return [];
 
-  const movimientos = await prisma.movimientoBancoCaja.groupBy({
-    by: ["cuentaBancariaId", "tipo"],
-    where: { cuentaBancariaId: { in: ids } },
-    _sum: { monto: true },
-  });
+  const [movimientos, gastosDirectos] = await Promise.all([
+    prisma.movimientoBancoCaja.groupBy({
+      by: ["cuentaBancariaId", "tipo"],
+      where: { cuentaBancariaId: { in: ids } },
+      _sum: { monto: true },
+    }),
+    prisma.gastoCaja.groupBy({
+      by: ["cuentaBancariaCajaId"],
+      where: { cuentaBancariaCajaId: { in: ids }, estado: { not: "ANULADO" } },
+      _sum: { montoTotal: true },
+    }),
+  ]);
 
-  const totalesPorCuenta = new Map<number, { ingresos: number; salidas: number }>();
+  const totalesPorCuenta = new Map<number, { ingresos: number; salidas: number; gastos: number }>();
   for (const m of movimientos) {
-    const actual = totalesPorCuenta.get(m.cuentaBancariaId) ?? { ingresos: 0, salidas: 0 };
+    const actual = totalesPorCuenta.get(m.cuentaBancariaId) ?? { ingresos: 0, salidas: 0, gastos: 0 };
     if (m.tipo === "INGRESO") actual.ingresos += Number(m._sum.monto ?? 0);
     else actual.salidas += Number(m._sum.monto ?? 0);
     totalesPorCuenta.set(m.cuentaBancariaId, actual);
   }
+  for (const g of gastosDirectos) {
+    if (g.cuentaBancariaCajaId === null) continue;
+    const actual = totalesPorCuenta.get(g.cuentaBancariaCajaId) ?? { ingresos: 0, salidas: 0, gastos: 0 };
+    actual.gastos += Number(g._sum.montoTotal ?? 0);
+    totalesPorCuenta.set(g.cuentaBancariaCajaId, actual);
+  }
 
   return cuentas.map((cuenta) => {
-    const totales = totalesPorCuenta.get(cuenta.id) ?? { ingresos: 0, salidas: 0 };
-    const saldoActual = Number(cuenta.saldoInicial) + totales.ingresos - totales.salidas;
+    const totales = totalesPorCuenta.get(cuenta.id) ?? { ingresos: 0, salidas: 0, gastos: 0 };
+    const saldoActual = Number(cuenta.saldoInicial) + totales.ingresos - totales.salidas - totales.gastos;
     return { ...cuenta, totalIngresos: totales.ingresos, totalSalidas: totales.salidas, saldoActual };
   });
+}
+
+// Para chequeos de un solo id (validar fondos antes de una salida o un
+// gasto directo del banco) — misma fórmula que conSaldo(), sin traer todas
+// las cuentas.
+export async function obtenerSaldoActualCuentaBancaria(cuentaBancariaId: number) {
+  const cuenta = await prisma.cuentaBancariaCaja.findUnique({ where: { id: cuentaBancariaId } });
+  if (!cuenta) throw new HttpError("Cuenta bancaria no encontrada", 404);
+  const [conDatos] = await conSaldo([cuenta]);
+  return { cuenta, saldoActual: conDatos!.saldoActual };
 }
 
 export const cuentaBancariaCajaService = {
@@ -84,9 +108,12 @@ export const cuentaBancariaCajaService = {
   },
 
   async remove(id: number, userId: number) {
-    const enUso = await prisma.movimientoBancoCaja.count({ where: { cuentaBancariaId: id } });
-    if (enUso > 0) {
-      throw new HttpError("No se puede eliminar: la cuenta bancaria tiene movimientos registrados", 409);
+    const [movimientos, gastosDirectos] = await Promise.all([
+      prisma.movimientoBancoCaja.count({ where: { cuentaBancariaId: id } }),
+      prisma.gastoCaja.count({ where: { cuentaBancariaCajaId: id } }),
+    ]);
+    if (movimientos + gastosDirectos > 0) {
+      throw new HttpError("No se puede eliminar: la cuenta bancaria tiene movimientos o gastos registrados", 409);
     }
 
     await prisma.cuentaBancariaCaja.delete({ where: { id } });

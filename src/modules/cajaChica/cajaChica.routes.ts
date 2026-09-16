@@ -33,7 +33,7 @@ router.put(
 
 router.delete(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
   validateParams(idSchema),
   cajaChicaController.remove,
 );

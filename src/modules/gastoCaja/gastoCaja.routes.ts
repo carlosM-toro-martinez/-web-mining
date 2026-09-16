@@ -23,7 +23,7 @@ router.post(
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
   validateParams(idSchema),
   validate(anularGastoCajaSchema),
   gastoCajaController.anular,

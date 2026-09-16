@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBancariaCaja.service.js";
 import type { CreateMovimientoBancoCajaDTO } from "./movimientoBancoCaja.types.js";
 import type { z } from "zod";
 import type { movimientoBancoCajaQuerySchema } from "./movimientoBancoCaja.schema.js";
@@ -11,20 +12,6 @@ const INCLUDE_DETALLE = {
   cuentaBancaria: true,
   caja: true,
 } as const;
-
-// Saldo actual de la cuenta al momento de crear el movimiento (misma cuenta
-// aritmética que cuentaBancariaCaja.conSaldo, pero para un solo id) — se usa
-// para no dejar sacar más de lo que realmente hay.
-async function obtenerSaldoActual(cuentaBancariaId: number, saldoInicial: unknown) {
-  const totales = await prisma.movimientoBancoCaja.groupBy({
-    by: ["tipo"],
-    where: { cuentaBancariaId },
-    _sum: { monto: true },
-  });
-  const ingresos = Number(totales.find((t) => t.tipo === "INGRESO")?._sum.monto ?? 0);
-  const salidas = Number(totales.find((t) => t.tipo === "SALIDA_A_CAJA")?._sum.monto ?? 0);
-  return Number(saldoInicial) + ingresos - salidas;
-}
 
 export const movimientoBancoCajaService = {
   async getAll(query: MovimientoBancoCajaQuery) {
@@ -60,7 +47,7 @@ export const movimientoBancoCajaService = {
     }
 
     if (data.tipo === "SALIDA_A_CAJA") {
-      const saldoActual = await obtenerSaldoActual(data.cuentaBancariaId, cuentaBancaria.saldoInicial);
+      const { saldoActual } = await obtenerSaldoActualCuentaBancaria(data.cuentaBancariaId);
       if (data.monto > saldoActual) {
         throw new HttpError(
           `Fondos insuficientes: la cuenta "${cuentaBancaria.nombreCuenta}" tiene disponible ${saldoActual.toFixed(2)} ${cuentaBancaria.monedaBase} y estás intentando sacar ${data.monto.toFixed(2)}.`,
