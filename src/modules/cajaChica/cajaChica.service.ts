@@ -70,7 +70,7 @@ export const cajaChicaService = {
       where: { id },
       include: {
         _count: {
-          select: { gastos: true, movimientosFondo: true, rendiciones: true, movimientosBanco: true, partidasPresupuesto: true },
+          select: { gastos: true, movimientosFondo: true, rendiciones: true, movimientosBanco: true, presupuestos: true },
         },
       },
     });
@@ -84,11 +84,11 @@ export const cajaChicaService = {
       caja._count.movimientosFondo +
       caja._count.rendiciones +
       caja._count.movimientosBanco +
-      caja._count.partidasPresupuesto;
+      caja._count.presupuestos;
 
     if (totalMovimientos > 0) {
       throw new HttpError(
-        "No se puede eliminar: esta caja ya tiene gastos, movimientos, rendiciones o partidas de presupuesto registrados.",
+        "No se puede eliminar: esta caja ya tiene gastos, movimientos, rendiciones o presupuestos registrados.",
         409,
       );
     }

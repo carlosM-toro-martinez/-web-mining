@@ -1089,12 +1089,12 @@ model CajaChica {
   encargadoUsuarioId Int?
   activo             Boolean    @default(true)
 
-  encargadoUsuario    User?                    @relation(fields: [encargadoUsuarioId], references: [id])
-  gastos              GastoCaja[]
-  movimientosFondo    MovimientoFondoCaja[]
-  rendiciones         RendicionCaja[]
-  movimientosBanco    MovimientoBancoCaja[]
-  partidasPresupuesto PartidaPresupuestoCaja[]
+  encargadoUsuario User?                 @relation(fields: [encargadoUsuarioId], references: [id])
+  gastos           GastoCaja[]
+  movimientosFondo MovimientoFondoCaja[]
+  rendiciones      RendicionCaja[]
+  movimientosBanco MovimientoBancoCaja[]
+  presupuestos     PresupuestoCaja[]
 }
 
 // Nota: el PDF fuente de Centro de Costo no trae columna de tipo D/N
@@ -1406,27 +1406,52 @@ model CuentaBancariaCaja {
   gastos      GastoCaja[]
 }
 
+// Un "presupuesto" (remesa) agrupa varias partidas de detalle bajo un mismo
+// nombre — ej. "Remesa Presupuesto Octubre" (Internet, combustible, ...),
+// "Remesa para pago de salarios" (sueldo de fulano, de mengano, ...),
+// "Remesa para pago de varios" — todas del mismo mes y caja, pero
+// independientes entre sí. Cada una se asigna a un banco UNA sola vez
+// (asignadoMovimientoBancoId queda fijo apenas se aprueba, así el botón de
+// "aprobar y asignar" no se puede volver a presionar para la misma remesa).
+model PresupuestoCaja {
+  id        Int      @id @default(autoincrement())
+  cajaId    Int
+  anio      Int
+  mes       Int
+  nombre    String
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  asignadoMovimientoBancoId String?   @unique
+  asignadoEn                DateTime?
+
+  caja                    CajaChica            @relation(fields: [cajaId], references: [id])
+  asignadoMovimientoBanco MovimientoBancoCaja? @relation(fields: [asignadoMovimientoBancoId], references: [id])
+  partidas                PartidaPresupuestoCaja[]
+
+  @@index([cajaId, anio, mes])
+}
+
 model PartidaPresupuestoCaja {
   id                 Int      @id @default(autoincrement())
-  cajaId             Int
-  anio               Int
-  mes                Int
+  presupuestoId      Int
   descripcion        String
   montoPresupuestado Decimal  @db.Decimal(14, 2)
   activo             Boolean  @default(true)
   createdAt          DateTime @default(now())
 
-  caja   CajaChica   @relation(fields: [cajaId], references: [id])
-  gastos GastoCaja[]
+  presupuesto PresupuestoCaja @relation(fields: [presupuestoId], references: [id])
+  gastos      GastoCaja[]
 
-  @@index([cajaId, anio, mes])
+  @@index([presupuestoId])
 }
 
-// El presupuesto vive a nivel de mes (PartidaPresupuestoCaja), no a nivel de
+// El presupuesto vive a nivel de remesa (PresupuestoCaja), no a nivel de
 // cada transferencia bancaria: mover dinero del banco hacia una caja fondea
-// la caja en general para todo el mes, no una partida puntual. Por eso este
-// movimiento NO se vincula a una partida — solo el GastoCaja (el gasto real)
-// se imputa a una partida específica.
+// la caja en general, no una partida puntual. Por eso este movimiento NO se
+// vincula a una partida — solo el GastoCaja (el gasto real) se imputa a una
+// partida específica, y una remesa completa se vincula a UN movimiento
+// cuando se aprueba y asigna al banco (ver PresupuestoCaja arriba).
 model MovimientoBancoCaja {
   id               String              @id @default(uuid())
   cuentaBancariaId Int
@@ -1445,9 +1470,10 @@ model MovimientoBancoCaja {
   usuarioId         Int
   createdAt         DateTime            @default(now())
 
-  cuentaBancaria CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
-  caja           CajaChica?         @relation(fields: [cajaId], references: [id])
-  usuario        User               @relation(fields: [usuarioId], references: [id])
+  cuentaBancaria      CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
+  caja                CajaChica?         @relation(fields: [cajaId], references: [id])
+  usuario             User               @relation(fields: [usuarioId], references: [id])
+  presupuestosAsignados PresupuestoCaja[]
 
   @@index([cajaId])
   @@index([cuentaBancariaId])

@@ -49,6 +49,7 @@ import rendicionCajaRoutes from "../modules/rendicionCaja/rendicionCaja.routes.j
 import reportesCajaChicaRoutes from "../modules/reportesCajaChica/reportesCajaChica.routes.js";
 // Caja Chica — Fase 5: banco y presupuesto
 import cuentaBancariaCajaRoutes from "../modules/cuentaBancariaCaja/cuentaBancariaCaja.routes.js";
+import presupuestoCajaRoutes from "../modules/presupuestoCaja/presupuestoCaja.routes.js";
 import partidaPresupuestoCajaRoutes from "../modules/partidaPresupuestoCaja/partidaPresupuestoCaja.routes.js";
 import movimientoBancoCajaRoutes from "../modules/movimientoBancoCaja/movimientoBancoCaja.routes.js";
 
@@ -120,6 +121,7 @@ router.use("/reportes-caja-chica", reportesCajaChicaRoutes);
 
 // Caja Chica — Fase 5: banco y presupuesto
 router.use("/cuentas-bancarias-caja", cuentaBancariaCajaRoutes);
+router.use("/presupuestos-caja", presupuestoCajaRoutes);
 router.use("/partidas-presupuesto-caja", partidaPresupuestoCajaRoutes);
 router.use("/movimientos-banco-caja", movimientoBancoCajaRoutes);
 

@@ -10,6 +10,8 @@ import type { partidaPresupuestoCajaQuerySchema } from "./partidaPresupuestoCaja
 
 type PartidaPresupuestoCajaQuery = z.infer<typeof partidaPresupuestoCajaQuerySchema>;
 
+const INCLUDE_PRESUPUESTO = { presupuesto: { include: { caja: true } } } as const;
+
 // Por cada partida agrega lo realmente gastado (vía los gastos imputados a
 // ella), para poder mostrar "saldo a favor" (presupuestado - gastado) tal
 // cual la Planilla de Control de Pagos real.
@@ -34,44 +36,55 @@ async function conEjecucion<T extends { id: number; montoPresupuestado: unknown 
   });
 }
 
+// La partida vive bajo una remesa (PresupuestoCaja), que a su vez pertenece
+// a una caja — para no romper a nadie que ya esperaba `partida.caja`
+// (exports de Excel/PDF, etc.), se "aplana" la caja de la remesa aquí mismo.
+function conCajaAplanada<T extends { presupuesto?: { caja: unknown } | null }>(partida: T) {
+  const { presupuesto, ...resto } = partida;
+  return { ...resto, presupuesto, caja: presupuesto?.caja ?? null };
+}
+
 export const partidaPresupuestoCajaService = {
   async getAll(query: PartidaPresupuestoCajaQuery) {
     const where: any = {};
-    if (query.cajaId) where.cajaId = query.cajaId;
-    if (query.anio) where.anio = query.anio;
-    if (query.mes) where.mes = query.mes;
-    if (query.soloActivas) where.activo = true;
+    if (query.presupuestoId) where.presupuestoId = query.presupuestoId;
+    if (query.cajaId || query.anio || query.mes || query.soloActivas) {
+      where.presupuesto = {};
+      if (query.cajaId) where.presupuesto.cajaId = query.cajaId;
+      if (query.anio) where.presupuesto.anio = query.anio;
+      if (query.mes) where.presupuesto.mes = query.mes;
+      if (query.soloActivas) where.presupuesto.activo = true;
+    }
 
     const partidas = await prisma.partidaPresupuestoCaja.findMany({
       where,
-      include: { caja: true },
-      orderBy: [{ anio: "desc" }, { mes: "desc" }, { descripcion: "asc" }],
+      include: INCLUDE_PRESUPUESTO,
+      orderBy: [{ presupuesto: { anio: "desc" } }, { presupuesto: { mes: "desc" } }, { descripcion: "asc" }],
     });
 
-    return conEjecucion(partidas);
+    const conDatos = await conEjecucion(partidas);
+    return conDatos.map(conCajaAplanada);
   },
 
   async getById(id: number) {
-    const partida = await prisma.partidaPresupuestoCaja.findUnique({ where: { id }, include: { caja: true } });
+    const partida = await prisma.partidaPresupuestoCaja.findUnique({ where: { id }, include: INCLUDE_PRESUPUESTO });
     if (!partida) return null;
     const [conDatos] = await conEjecucion([partida]);
-    return conDatos;
+    return conCajaAplanada(conDatos!);
   },
 
   async create(data: CreatePartidaPresupuestoCajaDTO, userId: number) {
-    const caja = await prisma.cajaChica.findUnique({ where: { id: data.cajaId } });
-    if (!caja) throw new HttpError("Caja chica no encontrada", 404);
+    const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id: data.presupuestoId } });
+    if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
 
     const partida = await prisma.partidaPresupuestoCaja.create({
       data: {
-        cajaId: data.cajaId,
-        anio: data.anio,
-        mes: data.mes,
+        presupuestoId: data.presupuestoId,
         descripcion: data.descripcion,
         montoPresupuestado: data.montoPresupuestado,
         activo: data.activo ?? true,
       },
-      include: { caja: true },
+      include: INCLUDE_PRESUPUESTO,
     });
 
     await prisma.log.create({
@@ -82,13 +95,17 @@ export const partidaPresupuestoCajaService = {
       "Partida de presupuesto creada",
     );
 
-    return partida;
+    return conCajaAplanada(partida);
   },
 
   async update(id: number, data: UpdatePartidaPresupuestoCajaDTO, userId: number) {
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
 
-    const partida = await prisma.partidaPresupuestoCaja.update({ where: { id }, data: cleanData, include: { caja: true } });
+    const partida = await prisma.partidaPresupuestoCaja.update({
+      where: { id },
+      data: cleanData,
+      include: INCLUDE_PRESUPUESTO,
+    });
 
     await prisma.log.create({
       data: { usuarioId: userId, accion: "UPDATE_PARTIDA_PRESUPUESTO_CAJA", data: { partidaId: id, ...cleanData } },
@@ -98,7 +115,7 @@ export const partidaPresupuestoCajaService = {
       "Partida de presupuesto actualizada",
     );
 
-    return partida;
+    return conCajaAplanada(partida);
   },
 
   async remove(id: number, userId: number) {

@@ -2,9 +2,7 @@ import { z } from "zod";
 
 export const createPartidaPresupuestoCajaSchema = z
   .object({
-    cajaId: z.number().int().positive(),
-    anio: z.number().int().min(2000).max(2100),
-    mes: z.number().int().min(1).max(12),
+    presupuestoId: z.number().int().positive(),
     descripcion: z.string().trim().min(1),
     montoPresupuestado: z.number().positive(),
     activo: z.boolean().optional(),
@@ -15,6 +13,7 @@ export const updatePartidaPresupuestoCajaSchema = createPartidaPresupuestoCajaSc
 
 export const partidaPresupuestoCajaQuerySchema = z
   .object({
+    presupuestoId: z.coerce.number().int().positive().optional(),
     cajaId: z.coerce.number().int().positive().optional(),
     anio: z.coerce.number().int().optional(),
     mes: z.coerce.number().int().optional(),
