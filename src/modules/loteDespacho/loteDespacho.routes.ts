@@ -7,7 +7,7 @@ import {
   createLoteDespachoSchema,
   loteDespachoQuerySchema,
   registrarPesajeSchema,
-  regularizarFormulario101Schema,
+  transbordarLoteSchema,
 } from "./loteDespacho.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 import { z } from "zod";
@@ -26,14 +26,6 @@ router.post(
   authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
   validate(createLoteDespachoSchema),
   loteDespachoController.create,
-);
-
-router.patch(
-  "/:id/regularizar-f101",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
-  validateParams(idSchema),
-  validate(regularizarFormulario101Schema),
-  loteDespachoController.regularizarFormulario101,
 );
 
 router.patch(
@@ -58,6 +50,14 @@ router.post(
   validateParams(idSchema),
   validate(anularLoteSchema),
   loteDespachoController.anular,
+);
+
+router.post(
+  "/:id/transbordo",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  validateParams(idSchema),
+  validate(transbordarLoteSchema),
+  loteDespachoController.transbordar,
 );
 
 export default router;

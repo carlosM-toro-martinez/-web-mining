@@ -7,7 +7,7 @@ import type {
   AvanzarEstadoLoteDTO,
   CreateLoteDespachoDTO,
   RegistrarPesajeDTO,
-  RegularizarFormulario101DTO,
+  TransbordarLoteDTO,
 } from "./loteDespacho.types.js";
 import type { z } from "zod";
 import type { loteDespachoQuerySchema } from "./loteDespacho.schema.js";
@@ -22,8 +22,10 @@ const INCLUDE_DETALLE = {
   tipoMineral: true,
   destinoIngenio: true,
   conocimientoCarga: true,
+  formulario101: { include: { anulacion: true } },
   pesaje: true,
   anulacion: true,
+  transbordos: { include: { vehiculoOriginal: true, vehiculoNuevo: true, choferNuevo: true } },
 } as const;
 
 // Transiciones manuales permitidas del lote (paperwork). PESADO/ACOPIADO se
@@ -41,7 +43,6 @@ export const loteDespachoService = {
 
     const where: any = {};
     if (query.estadoLote) where.estadoLote = query.estadoLote;
-    if (query.estadoFormulario101) where.estadoFormulario101 = query.estadoFormulario101;
     if (query.municipioOrigenId) where.municipioOrigenId = query.municipioOrigenId;
     if (query.remitenteId) where.remitenteId = query.remitenteId;
     if (query.fechaInicio || query.fechaFin) {
@@ -61,6 +62,7 @@ export const loteDespachoService = {
           vehiculo: true,
           tipoMineral: true,
           destinoIngenio: true,
+          formulario101: true,
           pesaje: true,
         },
         orderBy: { createdAt: "desc" },
@@ -114,12 +116,14 @@ export const loteDespachoService = {
           nivel: data.nivel ?? null,
           fechaDespachoReal: data.fechaDespachoReal,
           fechaDocumentalFiscal: data.fechaDocumentalFiscal ?? data.fechaDespachoReal,
-          codigoFormulario101: data.codigoFormulario101 ?? null,
-          estadoFormulario101: data.codigoFormulario101 ? "REGULARIZADO" : "PENDIENTE",
           estadoLote: "REGISTRADO",
           usuarioRegistroId: userId,
           conocimientoCarga: {
             create: {
+              fecha: data.conocimientoFecha ?? data.fechaDespachoReal,
+              detalleCarga: data.detalleCarga ?? "Carga Chami",
+              descripcion: data.descripcion ?? null,
+              observaciones: data.observaciones ?? null,
               copiasEmitidas: { ingenio: true, chofer: true, empresa: true },
             },
           },
@@ -155,32 +159,6 @@ export const loteDespachoService = {
     );
 
     return lote;
-  },
-
-  async regularizarFormulario101(id: string, data: RegularizarFormulario101DTO, userId: number) {
-    const lote = await prisma.loteDespacho.findUnique({ where: { id } });
-    if (!lote) throw new HttpError("Lote no encontrado", 404);
-    if (lote.estadoLote === "ANULADO") throw new HttpError("El lote está anulado", 409);
-    if (lote.estadoFormulario101 === "REGULARIZADO") {
-      throw new HttpError("El Formulario 101 ya fue regularizado", 409);
-    }
-
-    const actualizado = await prisma.loteDespacho.update({
-      where: { id },
-      data: { codigoFormulario101: data.codigoFormulario101, estadoFormulario101: "REGULARIZADO" },
-    });
-
-    await prisma.log.create({
-      data: {
-        usuarioId: userId,
-        accion: "REGULARIZAR_F101_LOTE",
-        data: { loteId: id, codigoFormulario101: data.codigoFormulario101 },
-      },
-    });
-
-    logger.info({ userId, loteId: id, action: "REGULARIZAR_F101_LOTE" }, "Formulario 101 regularizado");
-
-    return actualizado;
   },
 
   // Transición manual del lote — sincroniza el tablero de flota del
@@ -242,6 +220,7 @@ export const loteDespachoService = {
           tonelajeBruto: data.tonelajeBruto,
           tonelajeTara: data.tonelajeTara,
           tonelajeNeto,
+          observaciones: data.observaciones ?? null,
           usuarioId: userId,
         },
       });
@@ -279,9 +258,13 @@ export const loteDespachoService = {
     });
   },
 
+  // Anular el lote NO anula su Formulario 101 (el papel del Municipio
+  // sigue siendo válido): si tenía uno vinculado, se libera (queda
+  // DISPONIBLE) para poder reutilizarlo en otro lote — es el camino
+  // contrario a anularFormulario101(), que si arrastra al lote consigo.
   async anular(id: string, data: AnularLoteDTO, userId: number) {
     return prisma.$transaction(async (tx) => {
-      const lote = await tx.loteDespacho.findUnique({ where: { id } });
+      const lote = await tx.loteDespacho.findUnique({ where: { id }, include: { formulario101: true, pesaje: true } });
       if (!lote) throw new HttpError("Lote no encontrado", 404);
       if (lote.estadoLote === "ANULADO") throw new HttpError("El lote ya está anulado", 409);
       if (lote.estadoLote === "LIQUIDADO") {
@@ -297,11 +280,115 @@ export const loteDespachoService = {
         data: { loteId: id, usuarioId: userId, motivo: data.motivo },
       });
 
+      if (lote.formulario101 && lote.formulario101.estado === "VINCULADO") {
+        await tx.formulario101.update({
+          where: { id: lote.formulario101.id },
+          data: { loteId: null, estado: "DISPONIBLE" },
+        });
+      }
+
+      // Si el viaje no llegó a pesarse, su vehículo sigue "ocupado" con este
+      // lote (EN_TRANSITO/EN_BALANZA desde que se creó) — al anular, queda
+      // libre de nuevo, o si no podrá volver a asignarse a ningún otro lote.
+      if (!lote.pesaje) {
+        await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: "DISPONIBLE" } });
+        await tx.estadoFlotaHistorico.create({
+          data: {
+            vehiculoId: lote.vehiculoId,
+            estado: "DISPONIBLE",
+            motivo: `Lote ${lote.correlativo} anulado: ${data.motivo}`,
+            origenCambio: "MANUAL",
+            usuarioId: userId,
+          },
+        });
+      }
+
       await tx.log.create({
         data: { usuarioId: userId, accion: "ANULAR_LOTE", data: { loteId: id, motivo: data.motivo } },
       });
 
       return actualizado;
+    });
+  },
+
+  // Transbordo: la volqueta original sufre una falla mecánica a mitad de
+  // camino y otra completa el traslado — sigue siendo el MISMO lote
+  // (mismo Conocimiento, mismo Formulario 101), solo cambia el vehículo/
+  // chofer desde este punto en adelante. El vehículo original pasa a
+  // CON_FALLA_MECANICA, el nuevo a EN_TRANSITO.
+  async transbordar(id: string, data: TransbordarLoteDTO, userId: number) {
+    return prisma.$transaction(async (tx) => {
+      const lote = await tx.loteDespacho.findUnique({ where: { id } });
+      if (!lote) throw new HttpError("Lote no encontrado", 404);
+      if (lote.estadoLote === "ANULADO") throw new HttpError("El lote está anulado", 409);
+      if (lote.estadoLote !== "EN_TRANSITO") {
+        throw new HttpError("Solo se puede transbordar un lote que está en tránsito", 409);
+      }
+      if (data.vehiculoNuevoId === lote.vehiculoId) {
+        throw new HttpError("El vehículo nuevo debe ser distinto al original", 400);
+      }
+
+      const vehiculoNuevo = await tx.vehiculo.findUnique({ where: { id: data.vehiculoNuevoId } });
+      if (!vehiculoNuevo) throw new HttpError("Vehículo nuevo no encontrado", 404);
+      if (vehiculoNuevo.estadoActual !== "DISPONIBLE") {
+        throw new HttpError(`El vehículo ${vehiculoNuevo.placa} no está disponible`, 409);
+      }
+
+      if (data.choferNuevoId) {
+        const choferNuevo = await tx.chofer.findUnique({ where: { id: data.choferNuevoId } });
+        if (!choferNuevo) throw new HttpError("Chofer nuevo no encontrado", 404);
+      }
+
+      await tx.transbordoLote.create({
+        data: {
+          loteId: id,
+          vehiculoOriginalId: lote.vehiculoId,
+          vehiculoNuevoId: data.vehiculoNuevoId,
+          choferNuevoId: data.choferNuevoId ?? null,
+          motivo: data.motivo,
+          usuarioId: userId,
+        },
+      });
+
+      const actualizado = await tx.loteDespacho.update({
+        where: { id },
+        data: {
+          vehiculoId: data.vehiculoNuevoId,
+          choferId: data.choferNuevoId ?? lote.choferId,
+        },
+      });
+
+      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: "CON_FALLA_MECANICA" } });
+      await tx.estadoFlotaHistorico.create({
+        data: {
+          vehiculoId: lote.vehiculoId,
+          estado: "CON_FALLA_MECANICA",
+          motivo: `Transbordo del lote ${lote.correlativo}: ${data.motivo}`,
+          origenCambio: "MANUAL",
+          usuarioId: userId,
+        },
+      });
+
+      await tx.vehiculo.update({ where: { id: data.vehiculoNuevoId }, data: { estadoActual: "EN_TRANSITO" } });
+      await tx.estadoFlotaHistorico.create({
+        data: {
+          vehiculoId: data.vehiculoNuevoId,
+          estado: "EN_TRANSITO",
+          motivo: `Transbordo del lote ${lote.correlativo}: completa el traslado`,
+          origenCambio: "MANUAL",
+          usuarioId: userId,
+        },
+      });
+
+      await tx.log.create({
+        data: {
+          usuarioId: userId,
+          accion: "TRANSBORDO_LOTE",
+          data: { loteId: id, vehiculoOriginalId: lote.vehiculoId, vehiculoNuevoId: data.vehiculoNuevoId, motivo: data.motivo },
+        },
+      });
+
+      return tx.loteDespacho.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
     });
   },
 };

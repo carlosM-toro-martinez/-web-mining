@@ -30,6 +30,7 @@ import vehiculoRoutes from "../modules/vehiculo/vehiculo.routes.js";
 import choferRoutes from "../modules/chofer/chofer.routes.js";
 // Logística — Fase 3: núcleo de lotes de despacho
 import loteDespachoRoutes from "../modules/loteDespacho/loteDespacho.routes.js";
+import formulario101Routes from "../modules/formulario101/formulario101.routes.js";
 // Logística — Fase 4: liquidaciones
 import liquidacionRoutes from "../modules/liquidacion/liquidacion.routes.js";
 // Logística — Fase 5: reportes y cierre mensual
@@ -95,6 +96,7 @@ router.use("/choferes", choferRoutes);
 
 // Logística, Acopio y Liquidación Minera — Fase 3
 router.use("/lotes-despacho", loteDespachoRoutes);
+router.use("/formularios-101", formulario101Routes);
 
 // Logística, Acopio y Liquidación Minera — Fase 4
 router.use("/liquidaciones", liquidacionRoutes);

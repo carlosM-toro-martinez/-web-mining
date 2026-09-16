@@ -24,10 +24,12 @@ export const logisticaReportesService = {
       },
       include: {
         remitente: true,
+        vehiculo: true,
         tipoMineral: true,
         destinoIngenio: true,
         pesaje: true,
         conocimientoCarga: true,
+        formulario101: true,
       },
       orderBy: { fechaDocumentalFiscal: "asc" },
     });
@@ -39,7 +41,7 @@ export const logisticaReportesService = {
     });
 
     const totalTonelajeNeto = lotes.reduce((acc, l) => acc + Number(l.pesaje?.tonelajeNeto ?? 0), 0);
-    const pendientesF101 = lotes.filter((l) => l.estadoFormulario101 === "PENDIENTE").length;
+    const pendientesF101 = lotes.filter((l) => !l.formulario101).length;
 
     return {
       lotes,
@@ -59,7 +61,7 @@ export const logisticaReportesService = {
         municipioOrigenId: data.municipioId,
         fechaDocumentalFiscal: { gte: inicio, lt: fin },
         estadoLote: { not: "ANULADO" },
-        estadoFormulario101: "PENDIENTE",
+        formulario101: null,
       },
     });
 

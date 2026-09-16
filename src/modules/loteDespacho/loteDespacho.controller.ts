@@ -42,20 +42,6 @@ export const loteDespachoController = {
     }
   },
 
-  async regularizarFormulario101(req: AuthRequest, res: Response) {
-    try {
-      const lote = await loteDespachoService.regularizarFormulario101(
-        req.params.id as string,
-        req.body,
-        req.user!.id,
-      );
-      res.json({ success: true, data: lote });
-    } catch (error) {
-      const status = error instanceof HttpError ? error.statusCode : 400;
-      res.status(status).json({ success: false, error: (error as Error).message });
-    }
-  },
-
   async avanzarEstado(req: AuthRequest, res: Response) {
     try {
       const lote = await loteDespachoService.avanzarEstado(req.params.id as string, req.body, req.user!.id);
@@ -79,6 +65,16 @@ export const loteDespachoController = {
   async anular(req: AuthRequest, res: Response) {
     try {
       const lote = await loteDespachoService.anular(req.params.id as string, req.body, req.user!.id);
+      res.json({ success: true, data: lote });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async transbordar(req: AuthRequest, res: Response) {
+    try {
+      const lote = await loteDespachoService.transbordar(req.params.id as string, req.body, req.user!.id);
       res.json({ success: true, data: lote });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 400;

@@ -10,7 +10,7 @@ type LiquidacionQuery = z.infer<typeof liquidacionQuerySchema>;
 
 const INCLUDE_DETALLE = {
   remitente: true,
-  detalleLotes: { include: { lote: true } },
+  detalleLotes: { include: { lote: { include: { vehiculo: true, tipoMineral: true } } } },
   itemsConcepto: { include: { concepto: true } },
   anulacion: true,
 } as const;

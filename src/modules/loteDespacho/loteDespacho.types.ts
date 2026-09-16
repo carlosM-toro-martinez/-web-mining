@@ -4,11 +4,11 @@ import type {
   avanzarEstadoLoteSchema,
   createLoteDespachoSchema,
   registrarPesajeSchema,
-  regularizarFormulario101Schema,
+  transbordarLoteSchema,
 } from "./loteDespacho.schema.js";
 
 export type CreateLoteDespachoDTO = z.infer<typeof createLoteDespachoSchema>;
-export type RegularizarFormulario101DTO = z.infer<typeof regularizarFormulario101Schema>;
 export type AvanzarEstadoLoteDTO = z.infer<typeof avanzarEstadoLoteSchema>;
 export type RegistrarPesajeDTO = z.infer<typeof registrarPesajeSchema>;
 export type AnularLoteDTO = z.infer<typeof anularLoteSchema>;
+export type TransbordarLoteDTO = z.infer<typeof transbordarLoteSchema>;

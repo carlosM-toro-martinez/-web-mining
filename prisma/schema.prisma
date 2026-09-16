@@ -50,6 +50,9 @@ model User {
   lotesRegistrados           LoteDespacho[]           @relation("UsuarioRegistroLote")
   pesajesIngenio             PesajeIngenio[]
   anulacionesLote            AnulacionLote[]
+  formulario101Emitidos      Formulario101[]
+  anulacionesFormulario101   AnulacionFormulario101[]
+  transbordosRegistrados     TransbordoLote[]
   liquidacionesRegistradas   LiquidacionPeriodo[]
   anulacionesLiquidacion     AnulacionLiquidacion[]
   cajasChicasEncargadas      CajaChica[]
@@ -823,9 +826,11 @@ model Vehiculo {
   estadoActual  EstadoVehiculo @default(DISPONIBLE)
   activo        Boolean        @default(true)
 
-  propietario      Remitente?             @relation(fields: [propietarioId], references: [id])
-  historialEstados EstadoFlotaHistorico[]
-  lotesDespacho    LoteDespacho[]
+  propietario         Remitente?             @relation(fields: [propietarioId], references: [id])
+  historialEstados    EstadoFlotaHistorico[]
+  lotesDespacho       LoteDespacho[]
+  transbordosOriginal TransbordoLote[]       @relation("TransbordoVehiculoOriginal")
+  transbordosNuevo    TransbordoLote[]       @relation("TransbordoVehiculoNuevo")
 
   @@index([propietarioId])
 }
@@ -837,7 +842,8 @@ model Chofer {
   licencia String?
   activo   Boolean @default(true)
 
-  lotesDespacho LoteDespacho[]
+  lotesDespacho     LoteDespacho[]
+  transbordosNuevos TransbordoLote[]
 }
 
 model EstadoFlotaHistorico {
@@ -887,8 +893,6 @@ model LoteDespacho {
   nivel                 String?
   fechaDespachoReal     DateTime
   fechaDocumentalFiscal DateTime
-  codigoFormulario101   String?
-  estadoFormulario101   EstadoFormulario101 @default(PENDIENTE)
   estadoLote            EstadoLoteDespacho  @default(REGISTRADO)
   usuarioRegistroId     Int
   createdAt             DateTime            @default(now())
@@ -902,8 +906,10 @@ model LoteDespacho {
   usuarioRegistro User            @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
 
   conocimientoCarga   ConocimientoCarga?
+  formulario101       Formulario101?
   pesaje              PesajeIngenio?
   anulacion           AnulacionLote?
+  transbordos         TransbordoLote[]
   detallesLiquidacion LiquidacionDetalleLote[]
 
   @@index([municipioOrigenId])
@@ -914,13 +920,57 @@ model LoteDespacho {
 
 // Un lote = un conocimiento: usa el mismo correlativo del lote como
 // número de documento, así que no lleva un campo de numeración propio.
+// "fecha" es la fecha propia del documento (la que debe coincidir sí o sí
+// con la fecha del Formulario 101 vinculado); "detalleCarga" es el campo
+// "Con: ..." del formulario físico (por defecto "Carga Chami", editable);
+// "descripcion" es el detalle de la tabla CANTIDAD/UNIDAD/DESCRIPCION.
 model ConocimientoCarga {
   id             String   @id @default(uuid())
   loteId         String   @unique
+  fecha          DateTime
+  detalleCarga   String   @default("Carga Chami")
+  descripcion    String?
+  observaciones  String?
   copiasEmitidas Json
   createdAt      DateTime @default(now())
 
   lote LoteDespacho @relation(fields: [loteId], references: [id])
+}
+
+// El Formulario 101 es una entidad propia (no un campo embebido en el
+// lote) porque el Municipio permite reutilizar el mismo formulario en
+// otro Conocimiento/lote si el original no se llegó a usar (válido 48h
+// desde su propia fecha) — por eso loteId es opcional y único: un F101
+// "suelto" (loteId=null, estado=DISPONIBLE) puede vincularse después a
+// cualquier lote que todavía no tenga uno.
+model Formulario101 {
+  id        String              @id @default(uuid())
+  codigo    String              @unique
+  fecha     DateTime
+  estado    EstadoFormulario101 @default(VINCULADO)
+  loteId    String?             @unique
+  usuarioId Int
+  createdAt DateTime            @default(now())
+
+  lote      LoteDespacho?            @relation(fields: [loteId], references: [id])
+  usuario   User                     @relation(fields: [usuarioId], references: [id])
+  anulacion AnulacionFormulario101?
+}
+
+// Igual patrón que AnulacionLote: anular el F101 también anula (en la
+// misma transacción) el lote al que estuviera vinculado, y deja
+// registrado si ya se entregó al Municipio la Petición de Anulación del
+// Conocimiento asociado.
+model AnulacionFormulario101 {
+  id              String   @id @default(uuid())
+  formulario101Id String   @unique
+  usuarioId       Int
+  motivo          String
+  peticionEnviada Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  formulario101 Formulario101 @relation(fields: [formulario101Id], references: [id])
+  usuario       User          @relation(fields: [usuarioId], references: [id])
 }
 
 model PesajeIngenio {
@@ -930,6 +980,7 @@ model PesajeIngenio {
   tonelajeTara  Decimal  @db.Decimal(10, 3)
   tonelajeNeto  Decimal  @db.Decimal(10, 3)
   fechaPesaje   DateTime @default(now())
+  observaciones String?
   usuarioId     Int
   createdAt     DateTime @default(now())
 
@@ -946,6 +997,30 @@ model AnulacionLote {
 
   lote    LoteDespacho @relation(fields: [loteId], references: [id])
   usuario User         @relation(fields: [usuarioId], references: [id])
+}
+
+// Registra el cambio de vehículo/chofer a mitad de camino cuando el
+// original sufre una falla mecánica: el lote sigue siendo el MISMO
+// (mismo Conocimiento, mismo Formulario 101 — es la misma carga), solo
+// cambia qué vehículo/chofer la completa. El vehículo original queda en
+// CON_FALLA_MECANICA, el nuevo pasa a EN_TRANSITO.
+model TransbordoLote {
+  id                 String   @id @default(uuid())
+  loteId             String
+  vehiculoOriginalId Int
+  vehiculoNuevoId    Int
+  choferNuevoId      Int?
+  motivo             String
+  usuarioId          Int
+  createdAt          DateTime @default(now())
+
+  lote             LoteDespacho @relation(fields: [loteId], references: [id])
+  vehiculoOriginal Vehiculo     @relation("TransbordoVehiculoOriginal", fields: [vehiculoOriginalId], references: [id])
+  vehiculoNuevo    Vehiculo     @relation("TransbordoVehiculoNuevo", fields: [vehiculoNuevoId], references: [id])
+  choferNuevo      Chofer?      @relation(fields: [choferNuevoId], references: [id])
+  usuario          User         @relation(fields: [usuarioId], references: [id])
+
+  @@index([loteId])
 }
 
 model CorrelativoContador {
@@ -966,8 +1041,9 @@ enum EstadoLoteDespacho {
 }
 
 enum EstadoFormulario101 {
-  PENDIENTE
-  REGULARIZADO
+  DISPONIBLE
+  VINCULADO
+  ANULADO
 }
 
 ////////////////////////////////
