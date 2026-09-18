@@ -95,6 +95,12 @@ export const presupuestoCajaService = {
   },
 
   async update(id: number, data: UpdatePresupuestoCajaDTO, userId: number) {
+    const existente = await prisma.presupuestoCaja.findUnique({ where: { id } });
+    if (!existente) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
+    if (existente.asignadoMovimientoBancoId) {
+      throw new HttpError("No se puede editar: esta remesa ya fue aprobada y asignada al banco.", 409);
+    }
+
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
 
     const presupuesto = await prisma.presupuestoCaja.update({ where: { id }, data: cleanData, include: INCLUDE_DETALLE });
