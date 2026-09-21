@@ -2380,7 +2380,9 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
     const saldoInicial   = Number(r.saldoInicial);
     const ingresoQty     = Number(r.ingresoQty);
     const salidaQty      = Number(r.salidaQty);
-    const saldoFinal     = Number(r.saldoFinal);
+    // Siempre calcular en vivo para que refleje movimientos recientes
+    // aunque el campo almacenado en DB esté desfasado.
+    const saldoFinal     = saldoInicial + ingresoQty - salidaQty;
     const precioUnit     = Number(r.precioUnit);
     const precioUnitProm = Number((r as any).precioUnitProm ?? r.precioUnit);
     return {
@@ -2395,9 +2397,9 @@ export async function getPreviewPeriodo(anio: number, mes: number) {
       salidaQty,
       saldoFinal,
       precioUnit,
-      totalBs:        Number(r.totalBs),
+      totalBs:        saldoFinal * precioUnit,
       precioUnitProm,
-      totalBsProm:    Number((r as any).totalBsProm ?? r.totalBs),
+      totalBsProm:    saldoFinal * precioUnitProm,
     };
   });
 
