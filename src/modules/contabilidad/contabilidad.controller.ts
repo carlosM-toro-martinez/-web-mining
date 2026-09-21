@@ -251,4 +251,16 @@ export const contabilidadController = {
         .json({ success: false, error: (error as Error).message });
     }
   },
+
+  async getCuentaMovimientos(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      const data = await contabilidadService.getCuentaMovimientos(id);
+      res.json({ success: true, data });
+    } catch (error) {
+      res
+        .status(getErrorStatus(error, 500))
+        .json({ success: false, error: (error as Error).message });
+    }
+  },
 };

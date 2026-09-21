@@ -7,10 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-////////////////////////////////
-// SISTEMA
-////////////////////////////////
-
 model Configuracion {
   id           Int          @id @default(autoincrement())
   metodoCosteo MetodoCosteo @default(ULTIMO_PRECIO)
@@ -29,39 +25,39 @@ model User {
   refreshToken               String?
   refreshTokenExpiry         DateTime?
   activo                     Boolean                  @default(true)
+  anulacionesCompra          AnulacionCompra[]
+  anulacionesFormulario101   AnulacionFormulario101[]
+  anulacionesGastoCaja       AnulacionGastoCaja[]
+  anulacionesLiquidacion     AnulacionLiquidacion[]
+  anulacionesLote            AnulacionLote[]
+  anulacionesRendicionCaja   AnulacionRendicionCaja[]
+  anulaciones                AnulacionVale[]
+  cajasChicasEncargadas      CajaChica[]
   comprasRecibidas           Compra[]                 @relation("UsuarioRecibe")
   comprasRegistradas         Compra[]                 @relation("UsuarioRegistro")
-  anulacionesCompra          AnulacionCompra[]
   eppAsignaciones            EppAsignacion[]
+  estadosFlotaHistorico      EstadoFlotaHistorico[]
+  formulario101Emitidos      Formulario101[]
+  gastosCajaRegistrados      GastoCaja[]
+  liquidacionesRegistradas   LiquidacionPeriodo[]
   logs                       Log[]
+  lotesRegistrados           LoteDespacho[]           @relation("UsuarioRegistroLote")
+  manifiestos                ManifiestoAmbiental[]
   movimientosEntregados      Movimiento[]             @relation("UsuarioEntrega")
   movimientos                Movimiento[]             @relation("UsuarioRegistro")
   movimientosRecibidos       Movimiento[]             @relation("UsuarioRecibido")
-  valesEntregadosPor         Vale[]                   @relation("Almacenero")
-  valesSolicitados           Vale[]                   @relation("Solicitante")
-  valesAprobados             Vale[]                   @relation("Supervisor")
-  anulaciones                AnulacionVale[]
+  movimientosBancoCaja       MovimientoBancoCaja[]
+  movimientosFondoCaja       MovimientoFondoCaja[]
+  pesajesIngenio             PesajeIngenio[]
   registrosHidricos          RegistroHidrico[]
   registrosResiduo           RegistroResiduo[]
   registrosRuido             RegistroRuido[]
   registrosSuelo             RegistroSuelo[]
-  manifiestos                ManifiestoAmbiental[]
-  estadosFlotaHistorico      EstadoFlotaHistorico[]
-  lotesRegistrados           LoteDespacho[]           @relation("UsuarioRegistroLote")
-  pesajesIngenio             PesajeIngenio[]
-  anulacionesLote            AnulacionLote[]
-  formulario101Emitidos      Formulario101[]
-  anulacionesFormulario101   AnulacionFormulario101[]
-  transbordosRegistrados     TransbordoLote[]
-  liquidacionesRegistradas   LiquidacionPeriodo[]
-  anulacionesLiquidacion     AnulacionLiquidacion[]
-  cajasChicasEncargadas      CajaChica[]
-  gastosCajaRegistrados      GastoCaja[]
-  anulacionesGastoCaja       AnulacionGastoCaja[]
-  movimientosFondoCaja       MovimientoFondoCaja[]
   rendicionesCajaRegistradas RendicionCaja[]
-  anulacionesRendicionCaja   AnulacionRendicionCaja[]
-  movimientosBancoCaja       MovimientoBancoCaja[]
+  transbordosRegistrados     TransbordoLote[]
+  valesEntregadosPor         Vale[]                   @relation("Almacenero")
+  valesSolicitados           Vale[]                   @relation("Solicitante")
+  valesAprobados             Vale[]                   @relation("Supervisor")
 }
 
 model Log {
@@ -72,14 +68,6 @@ model Log {
   createdAt DateTime @default(now())
   usuario   User?    @relation(fields: [usuarioId], references: [id])
 }
-
-////////////////////////////////
-// INVENTARIO
-////////////////////////////////
-
-////////////////////////////////
-// CONTABILIDAD
-////////////////////////////////
 
 model CentroCosto {
   id      Int              @id @default(autoincrement())
@@ -138,9 +126,9 @@ model Producto {
   eppAsignaciones EppAsignacion[]
   movimientos     Movimiento[]
   pedidoItems     PedidoItem[]
-  saldosMensuales SaldoMensual[]
   categoria       CategoriaInventario @relation(fields: [categoriaId], references: [id])
   cuenta          CuentaContable?     @relation(fields: [cuentaId], references: [id])
+  saldosMensuales SaldoMensual[]
   stock           Stock?
   valeItems       ValeItem[]
 }
@@ -154,14 +142,14 @@ model SaldoMensual {
   ingresoQty     Decimal  @default(0) @db.Decimal(14, 4)
   salidaQty      Decimal  @default(0) @db.Decimal(14, 4)
   saldoFinal     Decimal  @default(0) @db.Decimal(14, 4)
-  precioUnit     Decimal  @default(0) @db.Decimal(14, 4) // último precio de compra del período
-  totalBs        Decimal  @default(0) @db.Decimal(14, 4) // saldoFinal × precioUnit
-  totalBsInicial Decimal? @db.Decimal(14, 2) // override manual del monto inicial en Bs
-  ingresosBs     Decimal  @default(0) @db.Decimal(14, 4) // suma(cantidad × precioUnit) de todas las entradas → para calcular promedio
-  precioUnitProm Decimal  @default(0) @db.Decimal(14, 6) // promedio ponderado = ingresosBs / ingresoQty
-  totalBsProm    Decimal  @default(0) @db.Decimal(14, 6) // saldoFinal × precioUnitProm
+  precioUnit     Decimal  @default(0) @db.Decimal(14, 4)
+  totalBs        Decimal  @default(0) @db.Decimal(14, 4)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  ingresosBs     Decimal  @default(0) @db.Decimal(14, 4)
+  precioUnitProm Decimal  @default(0) @db.Decimal(14, 6)
+  totalBsProm    Decimal  @default(0) @db.Decimal(14, 6)
+  totalBsInicial Decimal? @db.Decimal(14, 2)
   producto       Producto @relation(fields: [productoId], references: [id])
 
   @@unique([productoId, anio, mes])
@@ -172,10 +160,10 @@ model Stock {
   id                Int      @id @default(autoincrement())
   productoId        Int      @unique
   cantidad          Decimal  @db.Decimal(12, 2)
-  cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
   precioUnit        Decimal  @db.Decimal(14, 6)
   precioProm        Decimal  @db.Decimal(14, 6)
   updatedAt         DateTime @updatedAt
+  cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
   producto          Producto @relation(fields: [productoId], references: [id])
 }
 
@@ -195,22 +183,18 @@ model Movimiento {
   cuentaId          Int?
   referencia        String?
   referenciaId      String?
-  esRetroactivo     Boolean         @default(false)
-  periodoAnio       Int?
-  periodoMes        Int?
   createdAt         DateTime        @default(now())
   usuarioEntregaId  Int?
   usuarioRecibidoId Int?
+  esRetroactivo     Boolean         @default(false)
+  periodoAnio       Int?
+  periodoMes        Int?
   cuenta            CuentaContable? @relation(fields: [cuentaId], references: [id])
   producto          Producto        @relation(fields: [productoId], references: [id])
   usuarioEntrega    User?           @relation("UsuarioEntrega", fields: [usuarioEntregaId], references: [id])
   usuario           User            @relation("UsuarioRegistro", fields: [usuarioId], references: [id])
   usuarioRecibido   User?           @relation("UsuarioRecibido", fields: [usuarioRecibidoId], references: [id])
 }
-
-////////////////////////////////
-// COMPRAS
-////////////////////////////////
 
 model Proveedor {
   id          Int      @id @default(autoincrement())
@@ -249,19 +233,19 @@ model Compra {
   estado            EstadoCompra
   createdAt         DateTime         @default(now())
   observacion       String?
-  numeroFactura     String?
-  descuento         Decimal          @default(0) @db.Decimal(5, 2)
   recibidoAt        DateTime?
-  fechaOperacion    DateTime?
   usuarioRecibidoId Int?
   usuarioRegistroId Int
+  numeroFactura     String?
+  descuento         Decimal          @default(0) @db.Decimal(5, 2)
+  fechaOperacion    DateTime?
   tieneIva          Boolean          @default(true)
   esGasEspecial     Boolean?
+  anulacion         AnulacionCompra?
   proveedor         Proveedor        @relation(fields: [proveedorId], references: [id])
   usuarioRecibe     User?            @relation("UsuarioRecibe", fields: [usuarioRecibidoId], references: [id])
   usuarioRegistro   User             @relation("UsuarioRegistro", fields: [usuarioRegistroId], references: [id])
   items             CompraItem[]
-  anulacion         AnulacionCompra?
 }
 
 model CompraItem {
@@ -276,10 +260,6 @@ model CompraItem {
   producto         Producto @relation(fields: [productoId], references: [id])
 }
 
-////////////////////////////////
-// VALES / EPP
-////////////////////////////////
-
 model Vale {
   id                String         @id @default(uuid())
   solicitanteId     Int
@@ -287,14 +267,14 @@ model Vale {
   estado            EstadoVale
   aprobadoAt        DateTime?
   entregadoAt       DateTime?
-  fechaOperacion    DateTime?
   createdAt         DateTime       @default(now())
   almaceneroId      Int?
+  fechaOperacion    DateTime?
+  anulacion         AnulacionVale?
   almacenero        User?          @relation("Almacenero", fields: [almaceneroId], references: [id])
   solicitante       User           @relation("Solicitante", fields: [solicitanteId], references: [id])
   superintendente   User?          @relation("Supervisor", fields: [superintendenteId], references: [id])
   items             ValeItem[]
-  anulacion         AnulacionVale?
 }
 
 model AnulacionVale {
@@ -303,8 +283,8 @@ model AnulacionVale {
   usuarioId Int
   motivo    String
   createdAt DateTime @default(now())
-  vale      Vale     @relation(fields: [valeId], references: [id])
   usuario   User     @relation(fields: [usuarioId], references: [id])
+  vale      Vale     @relation(fields: [valeId], references: [id])
 }
 
 model AnulacionCompra {
@@ -342,21 +322,16 @@ model EppAsignacion {
   @@index([usuarioId])
 }
 
-////////////////////////////////
-// AMBIENTAL
-////////////////////////////////
-
 model PuntoMonitoreo {
-  id          Int       @id @default(autoincrement())
-  nombre      String
-  descripcion String?
-  latitud     Float
-  longitud    Float
-  tipo        TipoPunto @default(GENERAL)
-  activo      Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
+  id                Int               @id @default(autoincrement())
+  nombre            String
+  descripcion       String?
+  latitud           Float
+  longitud          Float
+  tipo              TipoPunto         @default(GENERAL)
+  activo            Boolean           @default(true)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
   registrosHidricos RegistroHidrico[]
   registrosResiduo  RegistroResiduo[]
   registrosRuido    RegistroRuido[]
@@ -366,7 +341,7 @@ model PuntoMonitoreo {
 }
 
 model RegistroHidrico {
-  id                Int         @id @default(autoincrement())
+  id                Int            @id @default(autoincrement())
   puntoId           Int
   fecha             DateTime
   ph                Float?
@@ -375,20 +350,19 @@ model RegistroHidrico {
   oxigenoDisuelto   Float?
   temperatura       Float?
   coliformesFecales Float?
-  calidadAgua       CalidadAgua @default(BUENA)
+  calidadAgua       CalidadAgua    @default(BUENA)
   observaciones     String?
   usuarioId         Int
-  createdAt         DateTime    @default(now())
-
-  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
-  usuario User           @relation(fields: [usuarioId], references: [id])
+  createdAt         DateTime       @default(now())
+  punto             PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario           User           @relation(fields: [usuarioId], references: [id])
 
   @@index([puntoId])
   @@index([fecha])
 }
 
 model RegistroResiduo {
-  id            Int         @id @default(autoincrement())
+  id            Int             @id @default(autoincrement())
   puntoId       Int?
   fecha         DateTime
   tipoResiduo   TipoResiduo
@@ -399,17 +373,16 @@ model RegistroResiduo {
   manifiestoNum String?
   observaciones String?
   usuarioId     Int
-  createdAt     DateTime    @default(now())
-
-  punto   PuntoMonitoreo? @relation(fields: [puntoId], references: [id])
-  usuario User            @relation(fields: [usuarioId], references: [id])
+  createdAt     DateTime        @default(now())
+  punto         PuntoMonitoreo? @relation(fields: [puntoId], references: [id])
+  usuario       User            @relation(fields: [usuarioId], references: [id])
 
   @@index([puntoId])
   @@index([fecha])
 }
 
 model RegistroRuido {
-  id              Int      @id @default(autoincrement())
+  id              Int            @id @default(autoincrement())
   puntoId         Int
   fecha           DateTime
   nivelRuido      Float
@@ -418,17 +391,16 @@ model RegistroRuido {
   particulasPm25  Float?
   observaciones   String?
   usuarioId       Int
-  createdAt       DateTime @default(now())
-
-  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
-  usuario User           @relation(fields: [usuarioId], references: [id])
+  createdAt       DateTime       @default(now())
+  punto           PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario         User           @relation(fields: [usuarioId], references: [id])
 
   @@index([puntoId])
   @@index([fecha])
 }
 
 model RegistroSuelo {
-  id                  Int      @id @default(autoincrement())
+  id                  Int            @id @default(autoincrement())
   puntoId             Int
   fecha               DateTime
   ph                  Float?
@@ -437,10 +409,9 @@ model RegistroSuelo {
   especiesRegistradas String?
   observaciones       String?
   usuarioId           Int
-  createdAt           DateTime @default(now())
-
-  punto   PuntoMonitoreo @relation(fields: [puntoId], references: [id])
-  usuario User           @relation(fields: [usuarioId], references: [id])
+  createdAt           DateTime       @default(now())
+  punto               PuntoMonitoreo @relation(fields: [puntoId], references: [id])
+  usuario             User           @relation(fields: [usuarioId], references: [id])
 
   @@index([puntoId])
   @@index([fecha])
@@ -474,50 +445,44 @@ model ManifiestoAmbiental {
   usuarioId   Int
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-
-  usuario User @relation(fields: [usuarioId], references: [id])
+  usuario     User      @relation(fields: [usuarioId], references: [id])
 
   @@index([anio])
 }
-
-////////////////////////////////
-// BIOMÉTRICO / ASISTENCIA
-////////////////////////////////
 
 model Employee {
   id           Int                @id @default(autoincrement())
   nombre       String
   documento    String?            @unique
-  cargo        String?
-  tipoPersonal TipoPersonal       @default(OBRERO)
   deviceUserId String             @unique
   activo       Boolean            @default(true)
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
   syncStatus   SyncStatus         @default(PENDING)
+  cargo        String?
+  tipoPersonal TipoPersonal       @default(OBRERO)
   logs         AsistenciaLog[]
-  horarios     EmpleadoHorario[]
   ausencias    AusenciaEmpleado[]
+  horarios     EmpleadoHorario[]
 }
 
 model Horario {
-  id          Int      @id @default(autoincrement())
-  nombre      String
-  descripcion String?
-  horaEntrada String // "HH:MM" hora local Bolivia
-  horaSalida  String // "HH:MM" hora local Bolivia
-  tolerancia  Int      @default(15) // minutos de tolerancia para tardanza
-  lunes       Boolean  @default(true)
-  martes      Boolean  @default(true)
-  miercoles   Boolean  @default(true)
-  jueves      Boolean  @default(true)
-  viernes     Boolean  @default(true)
-  sabado      Boolean  @default(false)
-  domingo     Boolean  @default(false)
-  activo      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
+  id           Int               @id @default(autoincrement())
+  nombre       String
+  descripcion  String?
+  horaEntrada  String
+  horaSalida   String
+  tolerancia   Int               @default(15)
+  lunes        Boolean           @default(true)
+  martes       Boolean           @default(true)
+  miercoles    Boolean           @default(true)
+  jueves       Boolean           @default(true)
+  viernes      Boolean           @default(true)
+  sabado       Boolean           @default(false)
+  domingo      Boolean           @default(false)
+  activo       Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
   asignaciones EmpleadoHorario[]
 }
 
@@ -525,12 +490,11 @@ model EmpleadoHorario {
   id         Int       @id @default(autoincrement())
   employeeId Int
   horarioId  Int
-  desde      DateTime // fecha desde la que aplica este horario
-  hasta      DateTime? // null = vigente actualmente
+  desde      DateTime
+  hasta      DateTime?
   createdAt  DateTime  @default(now())
-
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  horario  Horario  @relation(fields: [horarioId], references: [id])
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  horario    Horario   @relation(fields: [horarioId], references: [id])
 
   @@index([employeeId])
   @@index([horarioId])
@@ -540,15 +504,14 @@ model AusenciaEmpleado {
   id         Int          @id @default(autoincrement())
   employeeId Int
   tipo       AusenciaTipo
-  desde      DateTime // inicio del período (fecha, hora ignorada)
-  hasta      DateTime // fin del período inclusivo (fecha, hora ignorada)
+  desde      DateTime
+  hasta      DateTime
   motivo     String?
   aprobado   Boolean      @default(false)
-  creadoPor  String? // nombre o ID del que aprueba
+  creadoPor  String?
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
-
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee   Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([desde, hasta])
@@ -593,9 +556,571 @@ model AsistenciaLog {
   @@index([employeeId])
 }
 
-////////////////////////////////
-// ENUMS
-////////////////////////////////
+model MunicipioOrigen {
+  id            Int               @id @default(autoincrement())
+  codigo        String            @unique
+  nombre        String
+  activo        Boolean           @default(true)
+  alicuotas     AlicuotaRegalia[]
+  lotesDespacho LoteDespacho[]
+  remitentes    Remitente[]
+}
+
+model TipoMineral {
+  id            Int                 @id @default(autoincrement())
+  codigo        String              @unique
+  nombre        String
+  activo        Boolean             @default(true)
+  alicuotas     AlicuotaRegalia[]
+  lotesDespacho LoteDespacho[]
+  tarifas       TarifaLiquidacion[]
+}
+
+model Ingenio {
+  id            Int            @id @default(autoincrement())
+  codigo        String         @unique
+  nombre        String
+  activo        Boolean        @default(true)
+  lotesDespacho LoteDespacho[]
+}
+
+model AlicuotaRegalia {
+  id                Int             @id @default(autoincrement())
+  municipioOrigenId Int
+  tipoMineralId     Int
+  porcentaje        Decimal         @db.Decimal(5, 2)
+  vigenteDesde      DateTime
+  vigenteHasta      DateTime?
+  municipioOrigen   MunicipioOrigen @relation(fields: [municipioOrigenId], references: [id])
+  tipoMineral       TipoMineral     @relation(fields: [tipoMineralId], references: [id])
+
+  @@index([municipioOrigenId, tipoMineralId])
+}
+
+model TarifaLiquidacion {
+  id                Int                  @id @default(autoincrement())
+  tipoEntidad       TipoEntidadRemitente
+  tipoMineralId     Int?
+  precioPorTonelada Decimal              @db.Decimal(14, 6)
+  vigenteDesde      DateTime
+  vigenteHasta      DateTime?
+  tipoMineral       TipoMineral?         @relation(fields: [tipoMineralId], references: [id])
+
+  @@index([tipoEntidad, tipoMineralId])
+}
+
+model ConceptoLiquidacion {
+  id     Int                       @id @default(autoincrement())
+  nombre String
+  tipo   TipoConceptoLiquidacion
+  activo Boolean                   @default(true)
+  items  LiquidacionItemConcepto[]
+}
+
+model Remitente {
+  id                 Int                  @id @default(autoincrement())
+  tipoEntidad        TipoEntidadRemitente
+  nombreORazonSocial String
+  nitOCi             String
+  municipioId        Int?
+  cuentaContableId   Int?
+  activo             Boolean              @default(true)
+  liquidaciones      LiquidacionPeriodo[]
+  lotesDespacho      LoteDespacho[]
+  cuentaContable     CuentaContable?      @relation(fields: [cuentaContableId], references: [id])
+  municipio          MunicipioOrigen?     @relation(fields: [municipioId], references: [id])
+  vehiculos          Vehiculo[]
+
+  @@index([municipioId])
+  @@index([cuentaContableId])
+}
+
+model Vehiculo {
+  id                  Int                    @id @default(autoincrement())
+  placa               String                 @unique
+  tipo                String
+  capacidadTon        Decimal                @db.Decimal(8, 2)
+  propietarioId       Int?
+  estadoActual        EstadoVehiculo         @default(DISPONIBLE)
+  activo              Boolean                @default(true)
+  historialEstados    EstadoFlotaHistorico[]
+  lotesDespacho       LoteDespacho[]
+  transbordosNuevo    TransbordoLote[]       @relation("TransbordoVehiculoNuevo")
+  transbordosOriginal TransbordoLote[]       @relation("TransbordoVehiculoOriginal")
+  propietario         Remitente?             @relation(fields: [propietarioId], references: [id])
+
+  @@index([propietarioId])
+}
+
+model Chofer {
+  id                Int              @id @default(autoincrement())
+  nombre            String
+  ci                String           @unique
+  licencia          String?
+  activo            Boolean          @default(true)
+  lotesDespacho     LoteDespacho[]
+  transbordosNuevos TransbordoLote[]
+}
+
+model EstadoFlotaHistorico {
+  id           String            @id @default(uuid())
+  vehiculoId   Int
+  estado       EstadoVehiculo
+  motivo       String?
+  origenCambio OrigenCambioFlota @default(MANUAL)
+  usuarioId    Int
+  createdAt    DateTime          @default(now())
+  usuario      User              @relation(fields: [usuarioId], references: [id])
+  vehiculo     Vehiculo          @relation(fields: [vehiculoId], references: [id])
+
+  @@index([vehiculoId])
+}
+
+model LoteDespacho {
+  id                    String                   @id @default(uuid())
+  correlativo           String                   @unique
+  municipioOrigenId     Int
+  remitenteId           Int
+  vehiculoId            Int
+  choferId              Int
+  tipoMineralId         Int
+  destinoIngenioId      Int
+  nivel                 String?
+  fechaDespachoReal     DateTime
+  fechaDocumentalFiscal DateTime
+  estadoLote            EstadoLoteDespacho       @default(REGISTRADO)
+  usuarioRegistroId     Int
+  createdAt             DateTime                 @default(now())
+  anulacion             AnulacionLote?
+  conocimientoCarga     ConocimientoCarga?
+  formulario101         Formulario101?
+  detallesLiquidacion   LiquidacionDetalleLote[]
+  chofer                Chofer                   @relation(fields: [choferId], references: [id])
+  destinoIngenio        Ingenio                  @relation(fields: [destinoIngenioId], references: [id])
+  municipioOrigen       MunicipioOrigen          @relation(fields: [municipioOrigenId], references: [id])
+  remitente             Remitente                @relation(fields: [remitenteId], references: [id])
+  tipoMineral           TipoMineral              @relation(fields: [tipoMineralId], references: [id])
+  usuarioRegistro       User                     @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
+  vehiculo              Vehiculo                 @relation(fields: [vehiculoId], references: [id])
+  pesaje                PesajeIngenio?
+  transbordos           TransbordoLote[]
+
+  @@index([municipioOrigenId])
+  @@index([remitenteId])
+  @@index([vehiculoId])
+  @@index([estadoLote])
+}
+
+model ConocimientoCarga {
+  id             String       @id @default(uuid())
+  loteId         String       @unique
+  copiasEmitidas Json
+  createdAt      DateTime     @default(now())
+  fecha          DateTime
+  detalleCarga   String       @default("Carga Chami")
+  descripcion    String?
+  observaciones  String?
+  lote           LoteDespacho @relation(fields: [loteId], references: [id])
+}
+
+model Formulario101 {
+  id        String                  @id @default(uuid())
+  codigo    String                  @unique
+  fecha     DateTime
+  estado    EstadoFormulario101     @default(VINCULADO)
+  loteId    String?                 @unique
+  usuarioId Int
+  createdAt DateTime                @default(now())
+  anulacion AnulacionFormulario101?
+  lote      LoteDespacho?           @relation(fields: [loteId], references: [id])
+  usuario   User                    @relation(fields: [usuarioId], references: [id])
+}
+
+model AnulacionFormulario101 {
+  id              String        @id @default(uuid())
+  formulario101Id String        @unique
+  usuarioId       Int
+  motivo          String
+  peticionEnviada Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  formulario101   Formulario101 @relation(fields: [formulario101Id], references: [id])
+  usuario         User          @relation(fields: [usuarioId], references: [id])
+}
+
+model PesajeIngenio {
+  id            String       @id @default(uuid())
+  loteId        String       @unique
+  tonelajeBruto Decimal      @db.Decimal(10, 3)
+  tonelajeTara  Decimal      @db.Decimal(10, 3)
+  tonelajeNeto  Decimal      @db.Decimal(10, 3)
+  fechaPesaje   DateTime     @default(now())
+  usuarioId     Int
+  createdAt     DateTime     @default(now())
+  observaciones String?
+  lote          LoteDespacho @relation(fields: [loteId], references: [id])
+  usuario       User         @relation(fields: [usuarioId], references: [id])
+}
+
+model AnulacionLote {
+  id        String       @id @default(uuid())
+  loteId    String       @unique
+  usuarioId Int
+  motivo    String
+  createdAt DateTime     @default(now())
+  lote      LoteDespacho @relation(fields: [loteId], references: [id])
+  usuario   User         @relation(fields: [usuarioId], references: [id])
+}
+
+model TransbordoLote {
+  id                 String       @id @default(uuid())
+  loteId             String
+  vehiculoOriginalId Int
+  vehiculoNuevoId    Int
+  choferNuevoId      Int?
+  motivo             String
+  usuarioId          Int
+  createdAt          DateTime     @default(now())
+  choferNuevo        Chofer?      @relation(fields: [choferNuevoId], references: [id])
+  lote               LoteDespacho @relation(fields: [loteId], references: [id])
+  usuario            User         @relation(fields: [usuarioId], references: [id])
+  vehiculoNuevo      Vehiculo     @relation("TransbordoVehiculoNuevo", fields: [vehiculoNuevoId], references: [id])
+  vehiculoOriginal   Vehiculo     @relation("TransbordoVehiculoOriginal", fields: [vehiculoOriginalId], references: [id])
+
+  @@index([loteId])
+}
+
+model CorrelativoContador {
+  id           String   @id @default(uuid())
+  clave        String   @unique
+  ultimoNumero Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+model LiquidacionPeriodo {
+  id               String                    @id @default(uuid())
+  remitenteId      Int
+  tipoPeriodo      TipoPeriodoLiquidacion
+  fechaInicio      DateTime
+  fechaFin         DateTime
+  estado           EstadoLiquidacion         @default(BORRADOR)
+  totalBruto       Decimal                   @default(0) @db.Decimal(14, 2)
+  totalAbonos      Decimal                   @default(0) @db.Decimal(14, 2)
+  totalDeducciones Decimal                   @default(0) @db.Decimal(14, 2)
+  totalNeto        Decimal                   @default(0) @db.Decimal(14, 2)
+  usuarioId        Int
+  createdAt        DateTime                  @default(now())
+  anulacion        AnulacionLiquidacion?
+  detalleLotes     LiquidacionDetalleLote[]
+  itemsConcepto    LiquidacionItemConcepto[]
+  remitente        Remitente                 @relation(fields: [remitenteId], references: [id])
+  usuario          User                      @relation(fields: [usuarioId], references: [id])
+
+  @@index([remitenteId])
+  @@index([estado])
+}
+
+model LiquidacionDetalleLote {
+  id             String             @id @default(uuid())
+  liquidacionId  String
+  loteId         String
+  tonelajeNeto   Decimal            @db.Decimal(10, 3)
+  precioAplicado Decimal            @db.Decimal(14, 6)
+  subtotal       Decimal            @db.Decimal(14, 2)
+  liquidacion    LiquidacionPeriodo @relation(fields: [liquidacionId], references: [id])
+  lote           LoteDespacho       @relation(fields: [loteId], references: [id])
+
+  @@index([liquidacionId])
+  @@index([loteId])
+}
+
+model LiquidacionItemConcepto {
+  id            String              @id @default(uuid())
+  liquidacionId String
+  conceptoId    Int
+  descripcion   String?
+  monto         Decimal             @db.Decimal(14, 2)
+  concepto      ConceptoLiquidacion @relation(fields: [conceptoId], references: [id])
+  liquidacion   LiquidacionPeriodo  @relation(fields: [liquidacionId], references: [id])
+
+  @@index([liquidacionId])
+}
+
+model AnulacionLiquidacion {
+  id            String             @id @default(uuid())
+  liquidacionId String             @unique
+  usuarioId     Int
+  motivo        String
+  createdAt     DateTime           @default(now())
+  liquidacion   LiquidacionPeriodo @relation(fields: [liquidacionId], references: [id])
+  usuario       User               @relation(fields: [usuarioId], references: [id])
+}
+
+model CierreLogisticaMensual {
+  id          Int      @id @default(autoincrement())
+  municipioId Int
+  anio        Int
+  mes         Int
+  usuarioId   Int
+  createdAt   DateTime @default(now())
+
+  @@unique([municipioId, anio, mes])
+}
+
+model CajaChica {
+  id                 Int                   @id @default(autoincrement())
+  codigo             String                @unique
+  nombre             String
+  monedaBase         MonedaCaja            @default(BOB)
+  encargadoNombre    String?
+  encargadoUsuarioId Int?
+  activo             Boolean               @default(true)
+  saldoInicial       Decimal               @default(0) @db.Decimal(14, 2)
+  encargadoUsuario   User?                 @relation(fields: [encargadoUsuarioId], references: [id])
+  gastos             GastoCaja[]
+  movimientosBanco   MovimientoBancoCaja[]
+  movimientosFondo   MovimientoFondoCaja[]
+  presupuestos       PresupuestoCaja[]
+  rendiciones        RendicionCaja[]
+}
+
+model CentroCostoCaja {
+  id                  Int                      @id @default(autoincrement())
+  codigo              String                   @unique
+  nombre              String
+  parentId            Int?
+  activo              Boolean                  @default(true)
+  parent              CentroCostoCaja?         @relation("CentroCostoCajaTree", fields: [parentId], references: [id])
+  children            CentroCostoCaja[]        @relation("CentroCostoCajaTree")
+  gastos              GastoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
+}
+
+model FuncionGastoCaja {
+  id                  Int                      @id @default(autoincrement())
+  codigo              String                   @unique
+  nombre              String
+  tipo                TipoCosteoCaja
+  parentId            Int?
+  activo              Boolean                  @default(true)
+  parent              FuncionGastoCaja?        @relation("FuncionGastoCajaTree", fields: [parentId], references: [id])
+  children            FuncionGastoCaja[]       @relation("FuncionGastoCajaTree")
+  gastos              GastoCaja[]
+  partidasPresupuesto PartidaPresupuestoCaja[]
+}
+
+model CuentaContableCaja {
+  id                   Int                      @id @default(autoincrement())
+  codigo               String                   @unique
+  nombre               String
+  clase                ClaseCuentaCaja
+  nivel                Int
+  monedaCodigo         String
+  requiereCentroCosto  Boolean                  @default(false)
+  requiereFuncionGasto Boolean                  @default(false)
+  activo               Boolean                  @default(true)
+  conceptosRetencion   ConceptoRetencionCaja[]
+  gastos               GastoCaja[]
+  partidasPresupuesto  PartidaPresupuestoCaja[]
+}
+
+model ConceptoRetencionCaja {
+  id                   Int                @id @default(autoincrement())
+  codigo               TipoRetencionCaja  @unique
+  nombre               String
+  porcentaje           Decimal            @db.Decimal(5, 2)
+  cuentaContableCajaId Int
+  activo               Boolean            @default(true)
+  cuentaContableCaja   CuentaContableCaja @relation(fields: [cuentaContableCajaId], references: [id])
+}
+
+model GastoCaja {
+  id                       String                   @id @default(uuid())
+  cajaId                   Int?
+  fecha                    DateTime
+  tipoDocumento            TipoDocumentoGasto
+  categoriaRetencion       CategoriaRetencionGasto?
+  proveedorNombre          String
+  proveedorNitCi           String?
+  glosa                    String
+  numeroRespaldo           String?
+  montoTotal               Decimal                  @db.Decimal(14, 2)
+  moneda                   MonedaCaja
+  centroCostoCajaId        Int?
+  funcionGastoCajaId       Int?
+  cuentaContableCajaId     Int?
+  montoCreditoFiscalIva    Decimal                  @default(0) @db.Decimal(14, 2)
+  montoRetencionRcIva      Decimal                  @default(0) @db.Decimal(14, 2)
+  montoRetencionIueCompras Decimal                  @default(0) @db.Decimal(14, 2)
+  montoRetencionIt         Decimal                  @default(0) @db.Decimal(14, 2)
+  esNoDeducible            Boolean                  @default(false)
+  estado                   EstadoGastoCaja          @default(REGISTRADO)
+  usuarioId                Int
+  createdAt                DateTime                 @default(now())
+  categoriaRendicion       CategoriaRendicionGasto  @default(OTROS)
+  partidaPresupuestoId     Int?
+  cuentaBancariaCajaId     Int?
+  origen                   OrigenGastoCaja          @default(CAJA)
+  anulacion                AnulacionGastoCaja?
+  caja                     CajaChica?               @relation(fields: [cajaId], references: [id])
+  centroCostoCaja          CentroCostoCaja?         @relation(fields: [centroCostoCajaId], references: [id])
+  cuentaBancariaCaja       CuentaBancariaCaja?      @relation(fields: [cuentaBancariaCajaId], references: [id])
+  cuentaContableCaja       CuentaContableCaja?      @relation(fields: [cuentaContableCajaId], references: [id])
+  funcionGastoCaja         FuncionGastoCaja?        @relation(fields: [funcionGastoCajaId], references: [id])
+  partidaPresupuesto       PartidaPresupuestoCaja?  @relation(fields: [partidaPresupuestoId], references: [id])
+  usuario                  User                     @relation(fields: [usuarioId], references: [id])
+  rendicionDetalle         RendicionDetalleGasto[]
+
+  @@index([cajaId])
+  @@index([cuentaBancariaCajaId])
+  @@index([estado])
+  @@index([fecha])
+}
+
+model AnulacionGastoCaja {
+  id        String    @id @default(uuid())
+  gastoId   String    @unique
+  usuarioId Int
+  motivo    String
+  createdAt DateTime  @default(now())
+  gasto     GastoCaja @relation(fields: [gastoId], references: [id])
+  usuario   User      @relation(fields: [usuarioId], references: [id])
+}
+
+model MovimientoFondoCaja {
+  id         String                  @id @default(uuid())
+  cajaId     Int
+  tipo       TipoMovimientoFondoCaja
+  monto      Decimal                 @db.Decimal(14, 2)
+  moneda     MonedaCaja
+  fecha      DateTime
+  referencia String?
+  usuarioId  Int
+  createdAt  DateTime                @default(now())
+  caja       CajaChica               @relation(fields: [cajaId], references: [id])
+  usuario    User                    @relation(fields: [usuarioId], references: [id])
+
+  @@index([cajaId])
+}
+
+model RendicionCaja {
+  id                 String                  @id @default(uuid())
+  cajaId             Int
+  periodoDesde       DateTime
+  periodoHasta       DateTime
+  numero             String
+  tipoCambio         Decimal                 @db.Decimal(10, 4)
+  estado             EstadoRendicionCaja     @default(BORRADOR)
+  totalFondos        Decimal                 @default(0) @db.Decimal(14, 2)
+  totalGastos        Decimal                 @default(0) @db.Decimal(14, 2)
+  totalRetenciones   Decimal                 @default(0) @db.Decimal(14, 2)
+  totalCreditoFiscal Decimal                 @default(0) @db.Decimal(14, 2)
+  saldoAnterior      Decimal                 @default(0) @db.Decimal(14, 2)
+  saldoNuevo         Decimal                 @default(0) @db.Decimal(14, 2)
+  usuarioId          Int
+  createdAt          DateTime                @default(now())
+  anulacion          AnulacionRendicionCaja?
+  caja               CajaChica               @relation(fields: [cajaId], references: [id])
+  usuario            User                    @relation(fields: [usuarioId], references: [id])
+  detalleGastos      RendicionDetalleGasto[]
+
+  @@index([cajaId])
+  @@index([estado])
+}
+
+model RendicionDetalleGasto {
+  id            String        @id @default(uuid())
+  rendicionId   String
+  gastoId       String
+  montoIncluido Decimal       @db.Decimal(14, 2)
+  gasto         GastoCaja     @relation(fields: [gastoId], references: [id])
+  rendicion     RendicionCaja @relation(fields: [rendicionId], references: [id])
+
+  @@unique([rendicionId, gastoId])
+  @@index([rendicionId])
+  @@index([gastoId])
+}
+
+model AnulacionRendicionCaja {
+  id          String        @id @default(uuid())
+  rendicionId String        @unique
+  usuarioId   Int
+  motivo      String
+  createdAt   DateTime      @default(now())
+  rendicion   RendicionCaja @relation(fields: [rendicionId], references: [id])
+  usuario     User          @relation(fields: [usuarioId], references: [id])
+}
+
+model CuentaBancariaCaja {
+  id           Int                   @id @default(autoincrement())
+  banco        String
+  numeroCuenta String?
+  nombreCuenta String
+  monedaBase   MonedaCaja            @default(BOB)
+  activo       Boolean               @default(true)
+  saldoInicial Decimal               @default(0) @db.Decimal(14, 2)
+  gastos       GastoCaja[]
+  movimientos  MovimientoBancoCaja[]
+}
+
+model PresupuestoCaja {
+  id                        Int                      @id @default(autoincrement())
+  cajaId                    Int
+  anio                      Int
+  mes                       Int
+  nombre                    String
+  activo                    Boolean                  @default(true)
+  createdAt                 DateTime                 @default(now())
+  asignadoMovimientoBancoId String?                  @unique
+  asignadoEn                DateTime?
+  partidas                  PartidaPresupuestoCaja[]
+  asignadoMovimientoBanco   MovimientoBancoCaja?     @relation(fields: [asignadoMovimientoBancoId], references: [id])
+  caja                      CajaChica                @relation(fields: [cajaId], references: [id])
+
+  @@index([cajaId, anio, mes])
+}
+
+model PartidaPresupuestoCaja {
+  id                   Int                      @id @default(autoincrement())
+  descripcion          String
+  montoPresupuestado   Decimal                  @db.Decimal(14, 2)
+  activo               Boolean                  @default(true)
+  createdAt            DateTime                 @default(now())
+  presupuestoId        Int
+  categoriaRendicion   CategoriaRendicionGasto?
+  centroCostoCajaId    Int?
+  cuentaContableCajaId Int?
+  funcionGastoCajaId   Int?
+  gastos               GastoCaja[]
+  centroCostoCaja      CentroCostoCaja?         @relation(fields: [centroCostoCajaId], references: [id])
+  cuentaContableCaja   CuentaContableCaja?      @relation(fields: [cuentaContableCajaId], references: [id])
+  funcionGastoCaja     FuncionGastoCaja?        @relation(fields: [funcionGastoCajaId], references: [id])
+  presupuesto          PresupuestoCaja          @relation(fields: [presupuestoId], references: [id])
+
+  @@index([presupuestoId])
+}
+
+model MovimientoBancoCaja {
+  id                    String              @id @default(uuid())
+  cuentaBancariaId      Int
+  cajaId                Int?
+  fecha                 DateTime
+  formaPago             FormaPagoBanco
+  numeroCheque          String?
+  monto                 Decimal             @db.Decimal(14, 2)
+  moneda                MonedaCaja
+  depositanteNombre     String?
+  descripcion           String
+  usuarioId             Int
+  createdAt             DateTime            @default(now())
+  tipo                  TipoMovimientoBanco @default(SALIDA_A_CAJA)
+  caja                  CajaChica?          @relation(fields: [cajaId], references: [id])
+  cuentaBancaria        CuentaBancariaCaja  @relation(fields: [cuentaBancariaId], references: [id])
+  usuario               User                @relation(fields: [usuarioId], references: [id])
+  presupuestosAsignados PresupuestoCaja?
+
+  @@index([cajaId])
+  @@index([cuentaBancariaId])
+}
 
 enum MetodoCosteo {
   ULTIMO_PRECIO
@@ -709,79 +1234,6 @@ enum EstadoInfraestructura {
   CRITICO
 }
 
-////////////////////////////////
-// LOGÍSTICA, ACOPIO Y LIQUIDACIÓN
-// (Fase 1: catálogos parametrizables. Los modelos núcleo —
-// Remitente, Vehiculo, LoteDespacho, LiquidacionPeriodo, etc. —
-// se agregan en fases posteriores y añaden sus relaciones inversas
-// a estos catálogos en ese momento.)
-////////////////////////////////
-
-model MunicipioOrigen {
-  id     Int     @id @default(autoincrement())
-  codigo String  @unique
-  nombre String
-  activo Boolean @default(true)
-
-  alicuotas     AlicuotaRegalia[]
-  remitentes    Remitente[]
-  lotesDespacho LoteDespacho[]
-}
-
-model TipoMineral {
-  id     Int     @id @default(autoincrement())
-  codigo String  @unique
-  nombre String
-  activo Boolean @default(true)
-
-  alicuotas     AlicuotaRegalia[]
-  tarifas       TarifaLiquidacion[]
-  lotesDespacho LoteDespacho[]
-}
-
-model Ingenio {
-  id     Int     @id @default(autoincrement())
-  codigo String  @unique
-  nombre String
-  activo Boolean @default(true)
-
-  lotesDespacho LoteDespacho[]
-}
-
-model AlicuotaRegalia {
-  id                Int             @id @default(autoincrement())
-  municipioOrigenId Int
-  tipoMineralId     Int
-  porcentaje        Decimal         @db.Decimal(5, 2)
-  vigenteDesde      DateTime
-  vigenteHasta      DateTime?
-  municipioOrigen   MunicipioOrigen @relation(fields: [municipioOrigenId], references: [id])
-  tipoMineral       TipoMineral     @relation(fields: [tipoMineralId], references: [id])
-
-  @@index([municipioOrigenId, tipoMineralId])
-}
-
-model TarifaLiquidacion {
-  id                Int                  @id @default(autoincrement())
-  tipoEntidad       TipoEntidadRemitente
-  tipoMineralId     Int?
-  precioPorTonelada Decimal              @db.Decimal(14, 6)
-  vigenteDesde      DateTime
-  vigenteHasta      DateTime?
-  tipoMineral       TipoMineral?         @relation(fields: [tipoMineralId], references: [id])
-
-  @@index([tipoEntidad, tipoMineralId])
-}
-
-model ConceptoLiquidacion {
-  id     Int                     @id @default(autoincrement())
-  nombre String
-  tipo   TipoConceptoLiquidacion
-  activo Boolean                 @default(true)
-
-  items LiquidacionItemConcepto[]
-}
-
 enum TipoEntidadRemitente {
   EMPRESA
   TRABAJADOR_PARTICULAR
@@ -790,75 +1242,6 @@ enum TipoEntidadRemitente {
 enum TipoConceptoLiquidacion {
   ABONO
   DEDUCCION
-}
-
-////////////////////////////////
-// LOGÍSTICA — Fase 2: Remitente y Flota
-// (Vehiculo/Chofer no tienen relaciones hacia LoteDespacho todavía;
-// esa relación inversa se agrega en la Fase 3.)
-////////////////////////////////
-
-model Remitente {
-  id                 Int                  @id @default(autoincrement())
-  tipoEntidad        TipoEntidadRemitente
-  nombreORazonSocial String
-  nitOCi             String
-  municipioId        Int?
-  cuentaContableId   Int?
-  activo             Boolean              @default(true)
-
-  municipio      MunicipioOrigen?     @relation(fields: [municipioId], references: [id])
-  cuentaContable CuentaContable?      @relation(fields: [cuentaContableId], references: [id])
-  vehiculos      Vehiculo[]
-  lotesDespacho  LoteDespacho[]
-  liquidaciones  LiquidacionPeriodo[]
-
-  @@index([municipioId])
-  @@index([cuentaContableId])
-}
-
-model Vehiculo {
-  id            Int            @id @default(autoincrement())
-  placa         String         @unique
-  tipo          String
-  capacidadTon  Decimal        @db.Decimal(8, 2)
-  propietarioId Int?
-  estadoActual  EstadoVehiculo @default(DISPONIBLE)
-  activo        Boolean        @default(true)
-
-  propietario         Remitente?             @relation(fields: [propietarioId], references: [id])
-  historialEstados    EstadoFlotaHistorico[]
-  lotesDespacho       LoteDespacho[]
-  transbordosOriginal TransbordoLote[]       @relation("TransbordoVehiculoOriginal")
-  transbordosNuevo    TransbordoLote[]       @relation("TransbordoVehiculoNuevo")
-
-  @@index([propietarioId])
-}
-
-model Chofer {
-  id       Int     @id @default(autoincrement())
-  nombre   String
-  ci       String  @unique
-  licencia String?
-  activo   Boolean @default(true)
-
-  lotesDespacho     LoteDespacho[]
-  transbordosNuevos TransbordoLote[]
-}
-
-model EstadoFlotaHistorico {
-  id           String            @id @default(uuid())
-  vehiculoId   Int
-  estado       EstadoVehiculo
-  motivo       String?
-  origenCambio OrigenCambioFlota @default(MANUAL)
-  usuarioId    Int
-  createdAt    DateTime          @default(now())
-
-  vehiculo Vehiculo @relation(fields: [vehiculoId], references: [id])
-  usuario  User     @relation(fields: [usuarioId], references: [id])
-
-  @@index([vehiculoId])
 }
 
 enum EstadoVehiculo {
@@ -872,162 +1255,6 @@ enum EstadoVehiculo {
 enum OrigenCambioFlota {
   MANUAL
   API_GPS
-}
-
-////////////////////////////////
-// LOGÍSTICA — Fase 3: Lotes de despacho (núcleo operativo)
-// Patrón de anulación lógica idéntico a Compra/Vale: nunca se borra,
-// el estado final ANULADO + AnulacionLote conservan la trazabilidad
-// del correlativo para auditoría municipal/fiscal.
-////////////////////////////////
-
-model LoteDespacho {
-  id                    String             @id @default(uuid())
-  correlativo           String             @unique
-  municipioOrigenId     Int
-  remitenteId           Int
-  vehiculoId            Int
-  choferId              Int
-  tipoMineralId         Int
-  destinoIngenioId      Int
-  nivel                 String?
-  fechaDespachoReal     DateTime
-  fechaDocumentalFiscal DateTime
-  estadoLote            EstadoLoteDespacho @default(REGISTRADO)
-  usuarioRegistroId     Int
-  createdAt             DateTime           @default(now())
-
-  municipioOrigen MunicipioOrigen @relation(fields: [municipioOrigenId], references: [id])
-  remitente       Remitente       @relation(fields: [remitenteId], references: [id])
-  vehiculo        Vehiculo        @relation(fields: [vehiculoId], references: [id])
-  chofer          Chofer          @relation(fields: [choferId], references: [id])
-  tipoMineral     TipoMineral     @relation(fields: [tipoMineralId], references: [id])
-  destinoIngenio  Ingenio         @relation(fields: [destinoIngenioId], references: [id])
-  usuarioRegistro User            @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
-
-  conocimientoCarga   ConocimientoCarga?
-  formulario101       Formulario101?
-  pesaje              PesajeIngenio?
-  anulacion           AnulacionLote?
-  transbordos         TransbordoLote[]
-  detallesLiquidacion LiquidacionDetalleLote[]
-
-  @@index([municipioOrigenId])
-  @@index([remitenteId])
-  @@index([vehiculoId])
-  @@index([estadoLote])
-}
-
-// Un lote = un conocimiento: usa el mismo correlativo del lote como
-// número de documento, así que no lleva un campo de numeración propio.
-// "fecha" es la fecha propia del documento (la que debe coincidir sí o sí
-// con la fecha del Formulario 101 vinculado); "detalleCarga" es el campo
-// "Con: ..." del formulario físico (por defecto "Carga Chami", editable);
-// "descripcion" es el detalle de la tabla CANTIDAD/UNIDAD/DESCRIPCION.
-model ConocimientoCarga {
-  id             String   @id @default(uuid())
-  loteId         String   @unique
-  fecha          DateTime
-  detalleCarga   String   @default("Carga Chami")
-  descripcion    String?
-  observaciones  String?
-  copiasEmitidas Json
-  createdAt      DateTime @default(now())
-
-  lote LoteDespacho @relation(fields: [loteId], references: [id])
-}
-
-// El Formulario 101 es una entidad propia (no un campo embebido en el
-// lote) porque el Municipio permite reutilizar el mismo formulario en
-// otro Conocimiento/lote si el original no se llegó a usar (válido 48h
-// desde su propia fecha) — por eso loteId es opcional y único: un F101
-// "suelto" (loteId=null, estado=DISPONIBLE) puede vincularse después a
-// cualquier lote que todavía no tenga uno.
-model Formulario101 {
-  id        String              @id @default(uuid())
-  codigo    String              @unique
-  fecha     DateTime
-  estado    EstadoFormulario101 @default(VINCULADO)
-  loteId    String?             @unique
-  usuarioId Int
-  createdAt DateTime            @default(now())
-
-  lote      LoteDespacho?           @relation(fields: [loteId], references: [id])
-  usuario   User                    @relation(fields: [usuarioId], references: [id])
-  anulacion AnulacionFormulario101?
-}
-
-// Igual patrón que AnulacionLote: anular el F101 también anula (en la
-// misma transacción) el lote al que estuviera vinculado, y deja
-// registrado si ya se entregó al Municipio la Petición de Anulación del
-// Conocimiento asociado.
-model AnulacionFormulario101 {
-  id              String   @id @default(uuid())
-  formulario101Id String   @unique
-  usuarioId       Int
-  motivo          String
-  peticionEnviada Boolean  @default(false)
-  createdAt       DateTime @default(now())
-
-  formulario101 Formulario101 @relation(fields: [formulario101Id], references: [id])
-  usuario       User          @relation(fields: [usuarioId], references: [id])
-}
-
-model PesajeIngenio {
-  id            String   @id @default(uuid())
-  loteId        String   @unique
-  tonelajeBruto Decimal  @db.Decimal(10, 3)
-  tonelajeTara  Decimal  @db.Decimal(10, 3)
-  tonelajeNeto  Decimal  @db.Decimal(10, 3)
-  fechaPesaje   DateTime @default(now())
-  observaciones String?
-  usuarioId     Int
-  createdAt     DateTime @default(now())
-
-  lote    LoteDespacho @relation(fields: [loteId], references: [id])
-  usuario User         @relation(fields: [usuarioId], references: [id])
-}
-
-model AnulacionLote {
-  id        String   @id @default(uuid())
-  loteId    String   @unique
-  usuarioId Int
-  motivo    String
-  createdAt DateTime @default(now())
-
-  lote    LoteDespacho @relation(fields: [loteId], references: [id])
-  usuario User         @relation(fields: [usuarioId], references: [id])
-}
-
-// Registra el cambio de vehículo/chofer a mitad de camino cuando el
-// original sufre una falla mecánica: el lote sigue siendo el MISMO
-// (mismo Conocimiento, mismo Formulario 101 — es la misma carga), solo
-// cambia qué vehículo/chofer la completa. El vehículo original queda en
-// CON_FALLA_MECANICA, el nuevo pasa a EN_TRANSITO.
-model TransbordoLote {
-  id                 String   @id @default(uuid())
-  loteId             String
-  vehiculoOriginalId Int
-  vehiculoNuevoId    Int
-  choferNuevoId      Int?
-  motivo             String
-  usuarioId          Int
-  createdAt          DateTime @default(now())
-
-  lote             LoteDespacho @relation(fields: [loteId], references: [id])
-  vehiculoOriginal Vehiculo     @relation("TransbordoVehiculoOriginal", fields: [vehiculoOriginalId], references: [id])
-  vehiculoNuevo    Vehiculo     @relation("TransbordoVehiculoNuevo", fields: [vehiculoNuevoId], references: [id])
-  choferNuevo      Chofer?      @relation(fields: [choferNuevoId], references: [id])
-  usuario          User         @relation(fields: [usuarioId], references: [id])
-
-  @@index([loteId])
-}
-
-model CorrelativoContador {
-  id           String   @id @default(uuid())
-  clave        String   @unique
-  ultimoNumero Int      @default(0)
-  updatedAt    DateTime @updatedAt
 }
 
 enum EstadoLoteDespacho {
@@ -1046,76 +1273,6 @@ enum EstadoFormulario101 {
   ANULADO
 }
 
-////////////////////////////////
-// LOGÍSTICA — Fase 4: Liquidaciones
-// Mismo patrón de anulación lógica; anular una liquidación CERRADA
-// revierte los lotes incluidos de vuelta a ACOPIADO para que puedan
-// re-liquidarse correctamente.
-////////////////////////////////
-
-model LiquidacionPeriodo {
-  id               String                 @id @default(uuid())
-  remitenteId      Int
-  tipoPeriodo      TipoPeriodoLiquidacion
-  fechaInicio      DateTime
-  fechaFin         DateTime
-  estado           EstadoLiquidacion      @default(BORRADOR)
-  totalBruto       Decimal                @default(0) @db.Decimal(14, 2)
-  totalAbonos      Decimal                @default(0) @db.Decimal(14, 2)
-  totalDeducciones Decimal                @default(0) @db.Decimal(14, 2)
-  totalNeto        Decimal                @default(0) @db.Decimal(14, 2)
-  usuarioId        Int
-  createdAt        DateTime               @default(now())
-
-  remitente     Remitente                 @relation(fields: [remitenteId], references: [id])
-  usuario       User                      @relation(fields: [usuarioId], references: [id])
-  detalleLotes  LiquidacionDetalleLote[]
-  itemsConcepto LiquidacionItemConcepto[]
-  anulacion     AnulacionLiquidacion?
-
-  @@index([remitenteId])
-  @@index([estado])
-}
-
-model LiquidacionDetalleLote {
-  id             String  @id @default(uuid())
-  liquidacionId  String
-  loteId         String
-  tonelajeNeto   Decimal @db.Decimal(10, 3)
-  precioAplicado Decimal @db.Decimal(14, 6)
-  subtotal       Decimal @db.Decimal(14, 2)
-
-  liquidacion LiquidacionPeriodo @relation(fields: [liquidacionId], references: [id])
-  lote        LoteDespacho       @relation(fields: [loteId], references: [id])
-
-  @@index([liquidacionId])
-  @@index([loteId])
-}
-
-model LiquidacionItemConcepto {
-  id            String  @id @default(uuid())
-  liquidacionId String
-  conceptoId    Int
-  descripcion   String?
-  monto         Decimal @db.Decimal(14, 2)
-
-  liquidacion LiquidacionPeriodo  @relation(fields: [liquidacionId], references: [id])
-  concepto    ConceptoLiquidacion @relation(fields: [conceptoId], references: [id])
-
-  @@index([liquidacionId])
-}
-
-model AnulacionLiquidacion {
-  id            String   @id @default(uuid())
-  liquidacionId String   @unique
-  usuarioId     Int
-  motivo        String
-  createdAt     DateTime @default(now())
-
-  liquidacion LiquidacionPeriodo @relation(fields: [liquidacionId], references: [id])
-  usuario     User               @relation(fields: [usuarioId], references: [id])
-}
-
 enum TipoPeriodoLiquidacion {
   SEMANAL
   MENSUAL
@@ -1125,108 +1282,6 @@ enum EstadoLiquidacion {
   BORRADOR
   CERRADO
   ANULADO
-}
-
-////////////////////////////////
-// LOGÍSTICA — Fase 5: cierre mensual del Cuadro Municipal
-// Mismo patrón minimalista que CierreMes (sin @relation en usuarioId):
-// solo bloquea la re-generación del cuadro de un municipio+mes ya cerrado.
-////////////////////////////////
-
-model CierreLogisticaMensual {
-  id          Int      @id @default(autoincrement())
-  municipioId Int
-  anio        Int
-  mes         Int
-  usuarioId   Int
-  createdAt   DateTime @default(now())
-
-  @@unique([municipioId, anio, mes])
-}
-
-////////////////////////////////
-// CAJA CHICA / RENDICIÓN DE CUENTAS DE CAMPAMENTO
-// Fase 1: catálogos propios, separados de CentroCosto/FuncionGasto/
-// CuentaContable de Inventario (se unifican más adelante si hace falta).
-// Núcleo (GastoCaja, RendicionCaja) se agrega en fases posteriores y
-// añade sus relaciones inversas a estos catálogos en ese momento.
-////////////////////////////////
-
-model CajaChica {
-  id                 Int        @id @default(autoincrement())
-  codigo             String     @unique
-  nombre             String
-  monedaBase         MonedaCaja @default(BOB)
-  // Cuánto había en esta caja al momento de empezar a usar el sistema (antes
-  // de eso no hay movimientos registrados aquí). El saldo actual siempre
-  // parte de este número, no de cero.
-  saldoInicial       Decimal    @default(0) @db.Decimal(14, 2)
-  encargadoNombre    String?
-  encargadoUsuarioId Int?
-  activo             Boolean    @default(true)
-
-  encargadoUsuario User?                 @relation(fields: [encargadoUsuarioId], references: [id])
-  gastos           GastoCaja[]
-  movimientosFondo MovimientoFondoCaja[]
-  rendiciones      RendicionCaja[]
-  movimientosBanco MovimientoBancoCaja[]
-  presupuestos     PresupuestoCaja[]
-}
-
-// Nota: el PDF fuente de Centro de Costo no trae columna de tipo D/N
-// (a diferencia de Función de Gasto), por eso este modelo no tiene `tipo`.
-model CentroCostoCaja {
-  id       Int     @id @default(autoincrement())
-  codigo   String  @unique
-  nombre   String
-  parentId Int?
-  activo   Boolean @default(true)
-
-  parent              CentroCostoCaja?         @relation("CentroCostoCajaTree", fields: [parentId], references: [id])
-  children            CentroCostoCaja[]        @relation("CentroCostoCajaTree")
-  gastos              GastoCaja[]
-  partidasPresupuesto PartidaPresupuestoCaja[]
-}
-
-model FuncionGastoCaja {
-  id       Int            @id @default(autoincrement())
-  codigo   String         @unique
-  nombre   String
-  tipo     TipoCosteoCaja
-  parentId Int?
-  activo   Boolean        @default(true)
-
-  parent              FuncionGastoCaja?        @relation("FuncionGastoCajaTree", fields: [parentId], references: [id])
-  children            FuncionGastoCaja[]       @relation("FuncionGastoCajaTree")
-  gastos              GastoCaja[]
-  partidasPresupuesto PartidaPresupuestoCaja[]
-}
-
-model CuentaContableCaja {
-  id                   Int             @id @default(autoincrement())
-  codigo               String          @unique
-  nombre               String
-  clase                ClaseCuentaCaja
-  nivel                Int
-  monedaCodigo         String
-  requiereCentroCosto  Boolean         @default(false)
-  requiereFuncionGasto Boolean         @default(false)
-  activo               Boolean         @default(true)
-
-  conceptosRetencion  ConceptoRetencionCaja[]
-  gastos              GastoCaja[]
-  partidasPresupuesto PartidaPresupuestoCaja[]
-}
-
-model ConceptoRetencionCaja {
-  id                   Int               @id @default(autoincrement())
-  codigo               TipoRetencionCaja @unique
-  nombre               String
-  porcentaje           Decimal           @db.Decimal(5, 2)
-  cuentaContableCajaId Int
-  activo               Boolean           @default(true)
-
-  cuentaContableCaja CuentaContableCaja @relation(fields: [cuentaContableCajaId], references: [id])
 }
 
 enum MonedaCaja {
@@ -1245,103 +1300,15 @@ enum ClaseCuentaCaja {
   MAY
 }
 
-// Solo 3 conceptos reales: RC-IVA para servicios sin factura (cuenta
-// 69.005.000, cuyo propio nombre en el Plan de Cuentas es "RC-IVA
-// Retenciones Servicios"), IUE para compras/alimentación (69.006.000),
-// e IT que aplica a ambos casos (69.007.000). No existe un "IUE Servicios"
-// separado en la práctica contable real de esta empresa.
 enum TipoRetencionCaja {
   RC_IVA
   IUE_COMPRAS
   IT
 }
 
-////////////////////////////////
-// CAJA CHICA — Fase 2: núcleo (registro de gastos y fondos)
-// Mismo patrón de anulación lógica que el resto del sistema.
-////////////////////////////////
-
-// Un gasto normalmente sale de una caja física (origen CAJA), pero algunos
-// pagos se hacen directo desde el banco sin pasar por ninguna caja chica
-// (origen BANCO) — ej. una transferencia directa a un proveedor. Por eso
-// cajaId es opcional y hay un cuentaBancariaCajaId alternativo; el service
-// exige exactamente uno de los dos según `origen`. Los gastos BANCO no
-// entran a ninguna Rendición (esas son siempre por caja).
 enum OrigenGastoCaja {
   CAJA
   BANCO
-}
-
-model GastoCaja {
-  id                       String                   @id @default(uuid())
-  cajaId                   Int?
-  cuentaBancariaCajaId     Int?
-  origen                   OrigenGastoCaja          @default(CAJA)
-  fecha                    DateTime
-  tipoDocumento            TipoDocumentoGasto
-  categoriaRetencion       CategoriaRetencionGasto?
-  categoriaRendicion       CategoriaRendicionGasto  @default(OTROS)
-  proveedorNombre          String
-  proveedorNitCi           String?
-  glosa                    String
-  numeroRespaldo           String?
-  montoTotal               Decimal                  @db.Decimal(14, 2)
-  moneda                   MonedaCaja
-  centroCostoCajaId        Int?
-  funcionGastoCajaId       Int?
-  cuentaContableCajaId     Int?
-  partidaPresupuestoId     Int?
-  montoCreditoFiscalIva    Decimal                  @default(0) @db.Decimal(14, 2)
-  montoRetencionRcIva      Decimal                  @default(0) @db.Decimal(14, 2)
-  montoRetencionIueCompras Decimal                  @default(0) @db.Decimal(14, 2)
-  montoRetencionIt         Decimal                  @default(0) @db.Decimal(14, 2)
-  esNoDeducible            Boolean                  @default(false)
-  estado                   EstadoGastoCaja          @default(REGISTRADO)
-  usuarioId                Int
-  createdAt                DateTime                 @default(now())
-
-  caja               CajaChica?              @relation(fields: [cajaId], references: [id])
-  cuentaBancariaCaja CuentaBancariaCaja?     @relation(fields: [cuentaBancariaCajaId], references: [id])
-  centroCostoCaja    CentroCostoCaja?        @relation(fields: [centroCostoCajaId], references: [id])
-  funcionGastoCaja   FuncionGastoCaja?       @relation(fields: [funcionGastoCajaId], references: [id])
-  cuentaContableCaja CuentaContableCaja?     @relation(fields: [cuentaContableCajaId], references: [id])
-  partidaPresupuesto PartidaPresupuestoCaja? @relation(fields: [partidaPresupuestoId], references: [id])
-  usuario            User                    @relation(fields: [usuarioId], references: [id])
-  anulacion          AnulacionGastoCaja?
-  rendicionDetalle   RendicionDetalleGasto[]
-
-  @@index([cajaId])
-  @@index([cuentaBancariaCajaId])
-  @@index([estado])
-  @@index([fecha])
-}
-
-model AnulacionGastoCaja {
-  id        String   @id @default(uuid())
-  gastoId   String   @unique
-  usuarioId Int
-  motivo    String
-  createdAt DateTime @default(now())
-
-  gasto   GastoCaja @relation(fields: [gastoId], references: [id])
-  usuario User      @relation(fields: [usuarioId], references: [id])
-}
-
-model MovimientoFondoCaja {
-  id         String                  @id @default(uuid())
-  cajaId     Int
-  tipo       TipoMovimientoFondoCaja
-  monto      Decimal                 @db.Decimal(14, 2)
-  moneda     MonedaCaja
-  fecha      DateTime
-  referencia String?
-  usuarioId  Int
-  createdAt  DateTime                @default(now())
-
-  caja    CajaChica @relation(fields: [cajaId], references: [id])
-  usuario User      @relation(fields: [usuarioId], references: [id])
-
-  @@index([cajaId])
 }
 
 enum TipoDocumentoGasto {
@@ -1355,10 +1322,6 @@ enum CategoriaRetencionGasto {
   COMPRA
 }
 
-// Categorías de agrupación del reporte mensual de rendición (formato "Caja
-// Lipeña" real de la empresa) — no son lo mismo que FuncionGastoCaja ni
-// CentroCostoCaja: son la clasificación informal que usa el reporte impreso
-// para armar subtotales (Materiales y Suministros, Transportes, etc.).
 enum CategoriaRendicionGasto {
   MATERIALES_SUMINISTROS
   TRANSPORTES
@@ -1385,189 +1348,10 @@ enum TipoMovimientoFondoCaja {
   REPOSICION
 }
 
-////////////////////////////////
-// CAJA CHICA — Fase 3: Rendiciones
-// Estructura calcada de los reportes reales de Caja Lipeña (Fondos
-// recibidos, Total gastos en el mes, Saldo deudor/acreedor) en vez de
-// un libro mayor de partida doble completo — ver plan de la Fase 3.
-// Mismo patrón de anulación con reversión que LiquidacionPeriodo en
-// el módulo de Logística.
-////////////////////////////////
-
-model RendicionCaja {
-  id                 String              @id @default(uuid())
-  cajaId             Int
-  periodoDesde       DateTime
-  periodoHasta       DateTime
-  // No es @unique a nivel de tabla: el folio "P-N/AAAA" se calcula solo a
-  // partir del mes del período (ver generarFolioRendicionCaja), así que una
-  // rendición ANULADA de ese mismo mes deja el mismo folio "atrapado" para
-  // siempre si esto fuera único global. La regla real ("un folio activo por
-  // caja y mes") se valida en el service, ignorando las anuladas.
-  numero             String
-  tipoCambio         Decimal             @db.Decimal(10, 4)
-  estado             EstadoRendicionCaja @default(BORRADOR)
-  totalFondos        Decimal             @default(0) @db.Decimal(14, 2)
-  totalGastos        Decimal             @default(0) @db.Decimal(14, 2)
-  totalRetenciones   Decimal             @default(0) @db.Decimal(14, 2)
-  totalCreditoFiscal Decimal             @default(0) @db.Decimal(14, 2)
-  saldoAnterior      Decimal             @default(0) @db.Decimal(14, 2)
-  saldoNuevo         Decimal             @default(0) @db.Decimal(14, 2)
-  usuarioId          Int
-  createdAt          DateTime            @default(now())
-
-  caja          CajaChica               @relation(fields: [cajaId], references: [id])
-  usuario       User                    @relation(fields: [usuarioId], references: [id])
-  detalleGastos RendicionDetalleGasto[]
-  anulacion     AnulacionRendicionCaja?
-
-  @@index([cajaId])
-  @@index([estado])
-}
-
-model RendicionDetalleGasto {
-  id            String  @id @default(uuid())
-  rendicionId   String
-  gastoId       String
-  montoIncluido Decimal @db.Decimal(14, 2)
-
-  rendicion RendicionCaja @relation(fields: [rendicionId], references: [id])
-  gasto     GastoCaja     @relation(fields: [gastoId], references: [id])
-
-  // gastoId NO es único global: al anular una rendición, el gasto vuelve a
-  // REGISTRADO y puede quedar incluido en una rendición distinta más
-  // adelante — cada intento deja su propia fila aquí. Lo único que no puede
-  // repetirse es el mismo gasto dos veces DENTRO de la misma rendición.
-  @@unique([rendicionId, gastoId])
-  @@index([rendicionId])
-  @@index([gastoId])
-}
-
-model AnulacionRendicionCaja {
-  id          String   @id @default(uuid())
-  rendicionId String   @unique
-  usuarioId   Int
-  motivo      String
-  createdAt   DateTime @default(now())
-
-  rendicion RendicionCaja @relation(fields: [rendicionId], references: [id])
-  usuario   User          @relation(fields: [usuarioId], references: [id])
-}
-
 enum EstadoRendicionCaja {
   BORRADOR
   CERRADO
   ANULADO
-}
-
-////////////////////////////////
-// CAJA CHICA — Fase 4: Banco y Presupuesto por partida
-// El presupuesto mensual llega primero a una cuenta bancaria (ahí entran
-// depósitos de presupuesto, sueldos, etc.); de ahí se transfiere a la caja
-// chica por cheque (con su número) o transferencia. Cada gasto puede
-// imputarse a una partida de presupuesto específica (ej. "Internet: 6000
-// Bs este mes") para saber cuánto queda a favor — igual a la "Planilla de
-// Control de Pagos" real.
-////////////////////////////////
-
-model CuentaBancariaCaja {
-  id           Int        @id @default(autoincrement())
-  banco        String
-  numeroCuenta String?
-  nombreCuenta String
-  monedaBase   MonedaCaja @default(BOB)
-  // Cuánto había en esta cuenta bancaria al empezar a usar el sistema. El
-  // saldo actual = saldoInicial + ingresos registrados - salidas hacia cajas.
-  saldoInicial Decimal    @default(0) @db.Decimal(14, 2)
-  activo       Boolean    @default(true)
-
-  movimientos MovimientoBancoCaja[]
-  gastos      GastoCaja[]
-}
-
-// Un "presupuesto" (remesa) agrupa varias partidas de detalle bajo un mismo
-// nombre — ej. "Remesa Presupuesto Octubre" (Internet, combustible, ...),
-// "Remesa para pago de salarios" (sueldo de fulano, de mengano, ...),
-// "Remesa para pago de varios" — todas del mismo mes y caja, pero
-// independientes entre sí. Cada una se asigna a un banco UNA sola vez
-// (asignadoMovimientoBancoId queda fijo apenas se aprueba, así el botón de
-// "aprobar y asignar" no se puede volver a presionar para la misma remesa).
-model PresupuestoCaja {
-  id        Int      @id @default(autoincrement())
-  cajaId    Int
-  anio      Int
-  mes       Int
-  nombre    String
-  activo    Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  asignadoMovimientoBancoId String?   @unique
-  asignadoEn                DateTime?
-
-  caja                    CajaChica                @relation(fields: [cajaId], references: [id])
-  asignadoMovimientoBanco MovimientoBancoCaja?     @relation(fields: [asignadoMovimientoBancoId], references: [id])
-  partidas                PartidaPresupuestoCaja[]
-
-  @@index([cajaId, anio, mes])
-}
-
-// Los campos de clasificación (centro de costo/función de gasto/cuenta
-// contable/categoría de rendición) son opcionales: quedan como plantilla
-// de la partida para que, al registrar el gasto real que la ejecuta, el
-// formulario se autocomplete casi entero — solo falta poner el origen
-// (caja/banco) y el proveedor/beneficiario real de ese gasto puntual.
-model PartidaPresupuestoCaja {
-  id                   Int                      @id @default(autoincrement())
-  presupuestoId        Int
-  descripcion          String
-  montoPresupuestado   Decimal                  @db.Decimal(14, 2)
-  centroCostoCajaId    Int?
-  funcionGastoCajaId   Int?
-  cuentaContableCajaId Int?
-  categoriaRendicion   CategoriaRendicionGasto?
-  activo               Boolean                  @default(true)
-  createdAt            DateTime                 @default(now())
-
-  presupuesto        PresupuestoCaja     @relation(fields: [presupuestoId], references: [id])
-  centroCostoCaja    CentroCostoCaja?    @relation(fields: [centroCostoCajaId], references: [id])
-  funcionGastoCaja   FuncionGastoCaja?   @relation(fields: [funcionGastoCajaId], references: [id])
-  cuentaContableCaja CuentaContableCaja? @relation(fields: [cuentaContableCajaId], references: [id])
-  gastos             GastoCaja[]
-
-  @@index([presupuestoId])
-}
-
-// El presupuesto vive a nivel de remesa (PresupuestoCaja), no a nivel de
-// cada transferencia bancaria: mover dinero del banco hacia una caja fondea
-// la caja en general, no una partida puntual. Por eso este movimiento NO se
-// vincula a una partida — solo el GastoCaja (el gasto real) se imputa a una
-// partida específica, y una remesa completa se vincula a UN movimiento
-// cuando se aprueba y asigna al banco (ver PresupuestoCaja arriba).
-model MovimientoBancoCaja {
-  id                String              @id @default(uuid())
-  cuentaBancariaId  Int
-  // INGRESO = dinero que llega a la cuenta bancaria (presupuesto, sueldos,
-  // etc. — sin caja destino). SALIDA_A_CAJA = dinero que sale del banco
-  // hacia una caja chica (con caja destino obligatoria).
-  tipo              TipoMovimientoBanco @default(SALIDA_A_CAJA)
-  cajaId            Int?
-  fecha             DateTime
-  formaPago         FormaPagoBanco
-  numeroCheque      String?
-  monto             Decimal             @db.Decimal(14, 2)
-  moneda            MonedaCaja
-  depositanteNombre String?
-  descripcion       String
-  usuarioId         Int
-  createdAt         DateTime            @default(now())
-
-  cuentaBancaria        CuentaBancariaCaja @relation(fields: [cuentaBancariaId], references: [id])
-  caja                  CajaChica?         @relation(fields: [cajaId], references: [id])
-  usuario               User               @relation(fields: [usuarioId], references: [id])
-  presupuestosAsignados PresupuestoCaja[]
-
-  @@index([cajaId])
-  @@index([cuentaBancariaId])
 }
 
 enum TipoMovimientoBanco {

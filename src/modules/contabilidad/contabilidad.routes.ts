@@ -107,9 +107,7 @@ router.delete(
 
 router.get("/cuentas", contabilidadController.getCuentasContables);
 router.get("/cuentas-contables", contabilidadController.getCuentasContables);
-router.get("/cuentas/:id", validateParams(idSchema), contabilidadController.getCuentaContableById);
-router.get("/cuentas", contabilidadController.getCuentasContables);
-router.get("/cuentas-contables", contabilidadController.getCuentasContables);
+router.get("/cuentas/:id/movimientos", validateParams(idSchema), contabilidadController.getCuentaMovimientos);
 router.get("/cuentas/:id", validateParams(idSchema), contabilidadController.getCuentaContableById);
 router.get(
   "/cuentas-contables/:id",

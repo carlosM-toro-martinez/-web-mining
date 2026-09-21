@@ -405,12 +405,14 @@ export const comprasService = {
             new Prisma.Decimal(cantidadRecibidaAhora),
             precioSinIvaAct,
           );
-          const nuevoSaldoFinal  = new Prisma.Decimal(saldoActual?.saldoFinal ?? stockDespues);
+          const nuevoSaldoFinal  = new Prisma.Decimal(saldoActual?.saldoFinal ?? 0).add(cantidadRecibidaAhora);
           await (prisma.saldoMensual.upsert as any)({
             where: { productoId_anio_mes: { productoId: item.productoId, anio: anioActual, mes: mesActual } },
             update: {
               ingresoQty:     nuevoIngresoQty,
+              saldoFinal:     nuevoSaldoFinal,
               precioUnit:     precioSinIvaAct,
+              totalBs:        nuevoSaldoFinal.mul(precioSinIvaAct),
               ingresosBs:     newIngresosBs,
               precioUnitProm: newPrecioUnitProm,
               totalBsProm:    nuevoSaldoFinal.mul(newPrecioUnitProm),
@@ -684,6 +686,45 @@ export const comprasService = {
           where: { productoId: item.productoId },
           data: { cantidad: { decrement: recibido } },
         });
+
+        // Revertir SaldoMensual del mes actual
+        const ahoraAnul    = new Date();
+        const anioAnul     = ahoraAnul.getUTCFullYear();
+        const mesAnul      = ahoraAnul.getUTCMonth() + 1;
+        const saldoAnul    = await prisma.saldoMensual.findUnique({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: anioAnul, mes: mesAnul } },
+        });
+        if (saldoAnul) {
+          const factorIvaAnul  = !compra.tieneIva ? '1' : compra.esGasEspecial ? '0.909' : '0.87';
+          const precioSinIvaAnul = new Prisma.Decimal(item.precioUnit).mul(factorIvaAnul);
+          const nuevoIngresoAnul = Prisma.Decimal.max(
+            new Prisma.Decimal(saldoAnul.ingresoQty).sub(recibido),
+            new Prisma.Decimal(0),
+          );
+          const nuevoFinalAnul = Prisma.Decimal.max(
+            new Prisma.Decimal(saldoAnul.saldoFinal).sub(recibido),
+            new Prisma.Decimal(0),
+          );
+          const precioSaldoAnul = new Prisma.Decimal(saldoAnul.precioUnit);
+          const newIngresosBsAnul = Prisma.Decimal.max(
+            new Prisma.Decimal((saldoAnul as any).ingresosBs ?? 0).sub(precioSinIvaAnul.mul(recibido)),
+            new Prisma.Decimal(0),
+          );
+          const newPrecioPromAnul = nuevoIngresoAnul.gt(0)
+            ? newIngresosBsAnul.div(nuevoIngresoAnul)
+            : new Prisma.Decimal(0);
+          await (prisma.saldoMensual.update as any)({
+            where: { id: saldoAnul.id },
+            data: {
+              ingresoQty:     nuevoIngresoAnul,
+              saldoFinal:     nuevoFinalAnul,
+              totalBs:        nuevoFinalAnul.mul(precioSaldoAnul),
+              ingresosBs:     newIngresosBsAnul,
+              precioUnitProm: newPrecioPromAnul,
+              totalBsProm:    nuevoFinalAnul.mul(newPrecioPromAnul),
+            },
+          });
+        }
       }
 
       contraAsientos++;

@@ -353,6 +353,28 @@ export const contabilidadService = {
     });
   },
 
+  async getCuentaMovimientos(id: number) {
+    return prisma.movimiento.findMany({
+      where: { cuentaId: id },
+      select: {
+        id: true,
+        tipo: true,
+        cantidad: true,
+        precioUnit: true,
+        salidaBs: true,
+        entradaBs: true,
+        referencia: true,
+        referenciaId: true,
+        createdAt: true,
+        periodoAnio: true,
+        periodoMes: true,
+        esRetroactivo: true,
+        producto: { select: { id: true, codigo: true, nombre: true } },
+      },
+      orderBy: [{ createdAt: "desc" }],
+    });
+  },
+
   async getCuentaContableById(id: number) {
     return prisma.cuentaContable.findUnique({
       where: { id },
