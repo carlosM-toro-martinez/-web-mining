@@ -5,7 +5,7 @@ export const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   role: z
-    .enum(["admin", "user", "ADMIN", "USER", "ALMACENERO", "SUPERINTENDENTE", "TRABAJADOR", "VISITANTE", "GEOLOGOADMIN", "GEOLOGO", "ADMINISTRADOR"])
+    .enum(["admin", "user", "ADMIN", "USER", "ALMACENERO", "SUPERINTENDENTE", "TRABAJADOR", "VISITANTE", "GEOLOGOADMIN", "GEOLOGO", "ADMINISTRADOR", "CONTADOR"])
     .default("TRABAJADOR")
     .transform((val) => {
       switch (val.toUpperCase()) {
@@ -23,6 +23,8 @@ export const registerSchema = z.object({
           return "GEOLOGO";
         case "ADMINISTRADOR":
           return "ADMINISTRADOR";
+        case "CONTADOR":
+          return "CONTADOR";
         case "TRABAJADOR":
         case "USER":
         default:
@@ -58,7 +60,7 @@ export const updateUserSchema = z.object({
   nombre: z.string().min(1).optional(),
   email: z.string().email().optional(),
   role: z
-    .enum(["admin", "user", "ADMIN", "USER", "ALMACENERO", "SUPERINTENDENTE", "TRABAJADOR", "VISITANTE", "GEOLOGOADMIN", "GEOLOGO", "ADMINISTRADOR"])
+    .enum(["admin", "user", "ADMIN", "USER", "ALMACENERO", "SUPERINTENDENTE", "TRABAJADOR", "VISITANTE", "GEOLOGOADMIN", "GEOLOGO", "ADMINISTRADOR", "CONTADOR"])
     .optional()
     .transform((val) => {
       if (!val) return undefined;
@@ -77,6 +79,8 @@ export const updateUserSchema = z.object({
           return "GEOLOGO";
         case "ADMINISTRADOR":
           return "ADMINISTRADOR";
+        case "CONTADOR":
+          return "CONTADOR";
         case "TRABAJADOR":
         case "USER":
         default:

@@ -1139,6 +1139,7 @@ enum Role {
   MEDIOAMBIENTE
   SEGURIDAD
   ASISTENTE_ADMINISTRATIVO
+  CONTADOR
 }
 
 enum TipoMovimiento {
