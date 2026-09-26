@@ -23,7 +23,7 @@ export const logisticaReportesService = {
         estadoLote: { not: "ANULADO" },
       },
       include: {
-        remitente: true,
+        transportista: true,
         vehiculo: true,
         tipoMineral: true,
         destinoIngenio: true,

@@ -24,8 +24,8 @@ import ingenioRoutes from "../modules/ingenio/ingenio.routes.js";
 import conceptoLiquidacionRoutes from "../modules/conceptoLiquidacion/conceptoLiquidacion.routes.js";
 import alicuotaRegaliaRoutes from "../modules/alicuotaRegalia/alicuotaRegalia.routes.js";
 import tarifaLiquidacionRoutes from "../modules/tarifaLiquidacion/tarifaLiquidacion.routes.js";
-// Logística — Fase 2: remitente y flota
-import remitenteRoutes from "../modules/remitente/remitente.routes.js";
+// Logística — Fase 2: transportista y flota
+import transportistaRoutes from "../modules/transportista/transportista.routes.js";
 import vehiculoRoutes from "../modules/vehiculo/vehiculo.routes.js";
 import choferRoutes from "../modules/chofer/chofer.routes.js";
 // Logística — Fase 3: núcleo de lotes de despacho
@@ -35,6 +35,8 @@ import formulario101Routes from "../modules/formulario101/formulario101.routes.j
 import liquidacionRoutes from "../modules/liquidacion/liquidacion.routes.js";
 // Logística — Fase 5: reportes y cierre mensual
 import logisticaReportesRoutes from "../modules/logisticaReportes/logisticaReportes.routes.js";
+// Logística — utilidad de desarrollo: reset total del módulo
+import logisticaResetRoutes from "../modules/logisticaReset/logisticaReset.routes.js";
 // Caja Chica / Rendición de Cuentas de Campamento — Fase 1: catálogos
 import cajaChicaRoutes from "../modules/cajaChica/cajaChica.routes.js";
 import centroCostoCajaRoutes from "../modules/centroCostoCaja/centroCostoCaja.routes.js";
@@ -90,7 +92,7 @@ router.use("/alicuotas-regalia", alicuotaRegaliaRoutes);
 router.use("/tarifas-liquidacion", tarifaLiquidacionRoutes);
 
 // Logística, Acopio y Liquidación Minera — Fase 2
-router.use("/remitentes", remitenteRoutes);
+router.use("/transportistas", transportistaRoutes);
 router.use("/vehiculos", vehiculoRoutes);
 router.use("/choferes", choferRoutes);
 
@@ -103,6 +105,7 @@ router.use("/liquidaciones", liquidacionRoutes);
 
 // Logística, Acopio y Liquidación Minera — Fase 5
 router.use("/logistica-reportes", logisticaReportesRoutes);
+router.use("/logistica-reset", logisticaResetRoutes);
 
 // Caja Chica / Rendición de Cuentas de Campamento — Fase 1
 router.use("/cajas-chicas", cajaChicaRoutes);

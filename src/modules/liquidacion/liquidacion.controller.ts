@@ -1,10 +1,23 @@
 import type { Response } from "express";
 import { liquidacionService } from "./liquidacion.service.js";
-import { liquidacionQuerySchema } from "./liquidacion.schema.js";
+import { liquidacionQuerySchema, previewLiquidacionQuerySchema } from "./liquidacion.schema.js";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
 export const liquidacionController = {
+  async preview(req: AuthRequest, res: Response) {
+    try {
+      // Express 5: req.query es de solo lectura, la coerción de zod de
+      // validateQuery() no persiste ahí — se vuelve a parsear aquí.
+      const query = previewLiquidacionQuerySchema.parse(req.query);
+      const data = await liquidacionService.preview(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getAll(req: AuthRequest, res: Response) {
     try {
       // Express 5: req.query es un getter de solo lectura, validateQuery()

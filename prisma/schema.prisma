@@ -101,7 +101,7 @@ model CuentaContable {
   sector         Sector?      @relation(fields: [sectorId], references: [id])
   movimientos    Movimiento[]
   productos      Producto[]
-  remitentes     Remitente[]
+  transportistas Transportista[]
 }
 
 model CategoriaInventario {
@@ -563,7 +563,6 @@ model MunicipioOrigen {
   activo        Boolean           @default(true)
   alicuotas     AlicuotaRegalia[]
   lotesDespacho LoteDespacho[]
-  remitentes    Remitente[]
 }
 
 model TipoMineral {
@@ -598,15 +597,18 @@ model AlicuotaRegalia {
 }
 
 model TarifaLiquidacion {
-  id                Int                  @id @default(autoincrement())
-  tipoEntidad       TipoEntidadRemitente
+  id                Int                     @id @default(autoincrement())
+  tipoEntidad       TipoEntidadTransportista
+  transportistaId   Int?
   tipoMineralId     Int?
-  precioPorTonelada Decimal              @db.Decimal(14, 6)
+  precioPorTonelada Decimal                 @db.Decimal(14, 6)
   vigenteDesde      DateTime
   vigenteHasta      DateTime?
-  tipoMineral       TipoMineral?         @relation(fields: [tipoMineralId], references: [id])
+  transportista     Transportista?          @relation(fields: [transportistaId], references: [id])
+  tipoMineral       TipoMineral?            @relation(fields: [tipoMineralId], references: [id])
 
   @@index([tipoEntidad, tipoMineralId])
+  @@index([transportistaId])
 }
 
 model ConceptoLiquidacion {
@@ -617,21 +619,21 @@ model ConceptoLiquidacion {
   items  LiquidacionItemConcepto[]
 }
 
-model Remitente {
-  id                 Int                  @id @default(autoincrement())
-  tipoEntidad        TipoEntidadRemitente
+model Transportista {
+  id                 Int                     @id @default(autoincrement())
+  tipoEntidad        TipoEntidadTransportista
   nombreORazonSocial String
   nitOCi             String
-  municipioId        Int?
+  banco              String?
+  numeroCuenta       String?
   cuentaContableId   Int?
-  activo             Boolean              @default(true)
+  activo             Boolean                 @default(true)
   liquidaciones      LiquidacionPeriodo[]
   lotesDespacho      LoteDespacho[]
-  cuentaContable     CuentaContable?      @relation(fields: [cuentaContableId], references: [id])
-  municipio          MunicipioOrigen?     @relation(fields: [municipioId], references: [id])
+  tarifas            TarifaLiquidacion[]
+  cuentaContable     CuentaContable?         @relation(fields: [cuentaContableId], references: [id])
   vehiculos          Vehiculo[]
 
-  @@index([municipioId])
   @@index([cuentaContableId])
 }
 
@@ -647,7 +649,7 @@ model Vehiculo {
   lotesDespacho       LoteDespacho[]
   transbordosNuevo    TransbordoLote[]       @relation("TransbordoVehiculoNuevo")
   transbordosOriginal TransbordoLote[]       @relation("TransbordoVehiculoOriginal")
-  propietario         Remitente?             @relation(fields: [propietarioId], references: [id])
+  propietario         Transportista?         @relation(fields: [propietarioId], references: [id])
 
   @@index([propietarioId])
 }
@@ -678,9 +680,14 @@ model EstadoFlotaHistorico {
 
 model LoteDespacho {
   id                    String                   @id @default(uuid())
-  correlativo           String                   @unique
+  correlativo           String
+  // Correlativo real: "N°/MM" (ej. "53/09"), un único contador compartido
+  // por todos los transportistas/vehículos que se reinicia cada mes — el
+  // mismo texto se repite cada año, así que la unicidad real es
+  // (correlativo, anio), nunca correlativo solo.
+  anio                  Int
   municipioOrigenId     Int
-  remitenteId           Int
+  transportistaId       Int
   vehiculoId            Int
   choferId              Int
   tipoMineralId         Int
@@ -698,15 +705,16 @@ model LoteDespacho {
   chofer                Chofer                   @relation(fields: [choferId], references: [id])
   destinoIngenio        Ingenio                  @relation(fields: [destinoIngenioId], references: [id])
   municipioOrigen       MunicipioOrigen          @relation(fields: [municipioOrigenId], references: [id])
-  remitente             Remitente                @relation(fields: [remitenteId], references: [id])
+  transportista         Transportista            @relation(fields: [transportistaId], references: [id])
   tipoMineral           TipoMineral              @relation(fields: [tipoMineralId], references: [id])
   usuarioRegistro       User                     @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
   vehiculo              Vehiculo                 @relation(fields: [vehiculoId], references: [id])
   pesaje                PesajeIngenio?
   transbordos           TransbordoLote[]
 
+  @@unique([correlativo, anio])
   @@index([municipioOrigenId])
-  @@index([remitenteId])
+  @@index([transportistaId])
   @@index([vehiculoId])
   @@index([estadoLote])
 }
@@ -798,7 +806,12 @@ model CorrelativoContador {
 
 model LiquidacionPeriodo {
   id               String                    @id @default(uuid())
-  remitenteId      Int
+  // Folio del documento impreso ("Nº 81", "Nº 86"): un único contador
+  // global compartido por TODOS los transportistas, asignado recién al
+  // CERRAR (no en el borrador, igual que un talonario real). Null mientras
+  // está en BORRADOR.
+  numero           Int?                      @unique
+  transportistaId  Int
   tipoPeriodo      TipoPeriodoLiquidacion
   fechaInicio      DateTime
   fechaFin         DateTime
@@ -812,10 +825,10 @@ model LiquidacionPeriodo {
   anulacion        AnulacionLiquidacion?
   detalleLotes     LiquidacionDetalleLote[]
   itemsConcepto    LiquidacionItemConcepto[]
-  remitente        Remitente                 @relation(fields: [remitenteId], references: [id])
+  transportista    Transportista             @relation(fields: [transportistaId], references: [id])
   usuario          User                      @relation(fields: [usuarioId], references: [id])
 
-  @@index([remitenteId])
+  @@index([transportistaId])
   @@index([estado])
 }
 
@@ -1235,7 +1248,7 @@ enum EstadoInfraestructura {
   CRITICO
 }
 
-enum TipoEntidadRemitente {
+enum TipoEntidadTransportista {
   EMPRESA
   TRABAJADOR_PARTICULAR
 }

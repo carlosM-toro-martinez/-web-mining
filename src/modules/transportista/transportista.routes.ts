@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { remitenteController } from "./remitente.controller.js";
+import { transportistaController } from "./transportista.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
-import { createRemitenteSchema, updateRemitenteSchema, remitenteQuerySchema } from "./remitente.schema.js";
+import { createTransportistaSchema, updateTransportistaSchema, transportistaQuerySchema } from "./transportista.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 import { z } from "zod";
 
@@ -13,29 +13,29 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get("/", validateQuery(remitenteQuerySchema), remitenteController.getAll);
-router.get("/:id", validateParams(idSchema), remitenteController.getById);
+router.get("/", validateQuery(transportistaQuerySchema), transportistaController.getAll);
+router.get("/:id", validateParams(idSchema), transportistaController.getById);
 
 router.post(
   "/",
   authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
-  validate(createRemitenteSchema),
-  remitenteController.create,
+  validate(createTransportistaSchema),
+  transportistaController.create,
 );
 
 router.put(
   "/:id",
   authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
-  validate(updateRemitenteSchema),
-  remitenteController.update,
+  validate(updateTransportistaSchema),
+  transportistaController.update,
 );
 
 router.delete(
   "/:id",
   authorize("ADMIN", "SUPERINTENDENTE"),
   validateParams(idSchema),
-  remitenteController.remove,
+  transportistaController.remove,
 );
 
 export default router;

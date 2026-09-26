@@ -16,7 +16,7 @@ type LoteDespachoQuery = z.infer<typeof loteDespachoQuerySchema>;
 
 const INCLUDE_DETALLE = {
   municipioOrigen: true,
-  remitente: true,
+  transportista: true,
   vehiculo: true,
   chofer: true,
   tipoMineral: true,
@@ -44,11 +44,21 @@ export const loteDespachoService = {
     const where: any = {};
     if (query.estadoLote) where.estadoLote = query.estadoLote;
     if (query.municipioOrigenId) where.municipioOrigenId = query.municipioOrigenId;
-    if (query.remitenteId) where.remitenteId = query.remitenteId;
+    if (query.transportistaId) where.transportistaId = query.transportistaId;
+    if (query.vehiculoId) where.vehiculoId = query.vehiculoId;
     if (query.fechaInicio || query.fechaFin) {
       where.fechaDespachoReal = {};
       if (query.fechaInicio) where.fechaDespachoReal.gte = query.fechaInicio;
       if (query.fechaFin) where.fechaDespachoReal.lte = query.fechaFin;
+    }
+    if (query.search) {
+      const texto = query.search;
+      where.OR = [
+        { correlativo: { contains: texto, mode: "insensitive" as const } },
+        { transportista: { nombreORazonSocial: { contains: texto, mode: "insensitive" as const } } },
+        { vehiculo: { placa: { contains: texto, mode: "insensitive" as const } } },
+        { formulario101: { codigo: { contains: texto, mode: "insensitive" as const } } },
+      ];
     }
 
     const [lotes, total] = await Promise.all([
@@ -58,7 +68,7 @@ export const loteDespachoService = {
         take: limit,
         include: {
           municipioOrigen: true,
-          remitente: true,
+          transportista: true,
           vehiculo: true,
           tipoMineral: true,
           destinoIngenio: true,
@@ -78,9 +88,9 @@ export const loteDespachoService = {
   },
 
   async create(data: CreateLoteDespachoDTO, userId: number) {
-    const [municipio, remitente, vehiculo, chofer, tipoMineral, ingenio] = await Promise.all([
+    const [municipio, transportista, vehiculo, chofer, tipoMineral, ingenio] = await Promise.all([
       prisma.municipioOrigen.findUnique({ where: { id: data.municipioOrigenId } }),
-      prisma.remitente.findUnique({ where: { id: data.remitenteId } }),
+      prisma.transportista.findUnique({ where: { id: data.transportistaId } }),
       prisma.vehiculo.findUnique({ where: { id: data.vehiculoId } }),
       prisma.chofer.findUnique({ where: { id: data.choferId } }),
       prisma.tipoMineral.findUnique({ where: { id: data.tipoMineralId } }),
@@ -88,7 +98,7 @@ export const loteDespachoService = {
     ]);
 
     if (!municipio) throw new HttpError("Municipio de origen no encontrado", 404);
-    if (!remitente) throw new HttpError("Remitente no encontrado", 404);
+    if (!transportista) throw new HttpError("Transportista no encontrado", 404);
     if (!vehiculo) throw new HttpError("Vehículo no encontrado", 404);
     if (!chofer) throw new HttpError("Chofer no encontrado", 404);
     if (!tipoMineral) throw new HttpError("Tipo de mineral no encontrado", 404);
@@ -102,13 +112,14 @@ export const loteDespachoService = {
     }
 
     const lote = await prisma.$transaction(async (tx) => {
-      const correlativo = await generarCorrelativoLote(tx, data.fechaDespachoReal);
+      const { correlativo, anio } = await generarCorrelativoLote(tx, data.fechaDespachoReal);
 
       const creado = await tx.loteDespacho.create({
         data: {
           correlativo,
+          anio,
           municipioOrigenId: data.municipioOrigenId,
-          remitenteId: data.remitenteId,
+          transportistaId: data.transportistaId,
           vehiculoId: data.vehiculoId,
           choferId: data.choferId,
           tipoMineralId: data.tipoMineralId,
@@ -278,6 +289,15 @@ export const loteDespachoService = {
 
       await tx.anulacionLote.create({
         data: { loteId: id, usuarioId: userId, motivo: data.motivo },
+      });
+
+      // Si este lote ya estaba incluido en una liquidación todavía en
+      // BORRADOR, esa fila queda huérfana: se limpia aquí mismo para que el
+      // total pendiente de cierre no siga contando un viaje anulado (si la
+      // liquidación ya estaba CERRADA, el lote no puede llegar a este punto
+      // porque arriba se bloquea anular un lote LIQUIDADO).
+      await tx.liquidacionDetalleLote.deleteMany({
+        where: { loteId: id, liquidacion: { estado: "BORRADOR" } },
       });
 
       if (lote.formulario101 && lote.formulario101.estado === "VINCULADO") {

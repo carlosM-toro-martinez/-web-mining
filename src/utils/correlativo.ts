@@ -16,19 +16,25 @@ async function reservarSiguienteNumero(tx: Prisma.TransactionClient, clave: stri
   return contador.ultimoNumero;
 }
 
-// Única función a tocar cuando se confirme el formato definitivo del
-// correlativo de lote (hoy el formato exacto aún no está confirmado).
-function formatearCorrelativoLote(numero: number, anio: number): string {
-  return `LT-${anio}-${String(numero).padStart(6, "0")}`;
+// Formato real confirmado por el usuario contra el Conocimiento físico
+// ("53/09" = correlativo 53, emitido en septiembre): un único contador
+// compartido por TODA la mina (todos los transportistas y vehículos juntos),
+// que se reinicia cada mes. Como el mismo "53/09" se repite cada septiembre
+// de cada año, la unicidad en base de datos NO puede depender solo del
+// string — por eso LoteDespacho.anio se guarda aparte y la unicidad real es
+// @@unique([correlativo, anio]) en el schema, nunca correlativo solo.
+function formatearCorrelativoLote(numero: number, mes: number): string {
+  return `${numero}/${String(mes).padStart(2, "0")}`;
 }
 
 export async function generarCorrelativoLote(
   tx: Prisma.TransactionClient,
   fechaDespachoReal: Date,
-): Promise<string> {
+): Promise<{ correlativo: string; anio: number }> {
   const anio = fechaDespachoReal.getUTCFullYear();
-  const numero = await reservarSiguienteNumero(tx, `LOTE_DESPACHO_${anio}`);
-  return formatearCorrelativoLote(numero, anio);
+  const mes = fechaDespachoReal.getUTCMonth() + 1;
+  const numero = await reservarSiguienteNumero(tx, `LOTE_DESPACHO_${anio}_${String(mes).padStart(2, "0")}`);
+  return { correlativo: formatearCorrelativoLote(numero, mes), anio };
 }
 
 // Formato observado en los comprobantes reales de Caja Lipeña ("P-1/2025",
@@ -74,4 +80,12 @@ export async function generarFolioRendicionCaja(
   void tx;
   void cajaCodigo;
   return formatearFolioRendicionCaja(periodoHasta);
+}
+
+// Folio impreso de la Liquidación de Transporte ("Nº 81", "Nº 86" en los
+// documentos reales): un único contador global, compartido por TODOS los
+// transportistas (empresa o particular), que nunca se reinicia — se asigna
+// recién al CERRAR la liquidación, igual que un talonario numerado a mano.
+export async function generarNumeroLiquidacionTransporte(tx: Prisma.TransactionClient): Promise<number> {
+  return reservarSiguienteNumero(tx, "LIQUIDACION_TRANSPORTE");
 }

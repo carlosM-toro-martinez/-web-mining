@@ -18,7 +18,7 @@ export const estadoLoteDespachoSchema = z.enum([
 export const createLoteDespachoSchema = z
   .object({
     municipioOrigenId: z.number().int().positive(),
-    remitenteId: z.number().int().positive(),
+    transportistaId: z.number().int().positive(),
     vehiculoId: z.number().int().positive(),
     choferId: z.number().int().positive(),
     tipoMineralId: z.number().int().positive(),
@@ -39,9 +39,17 @@ export const loteDespachoQuerySchema = z
     limit: z.coerce.number().optional(),
     estadoLote: estadoLoteDespachoSchema.optional(),
     municipioOrigenId: z.coerce.number().int().positive().optional(),
-    remitenteId: z.coerce.number().int().positive().optional(),
+    transportistaId: z.coerce.number().int().positive().optional(),
+    vehiculoId: z.coerce.number().int().positive().optional(),
     fechaInicio: z.coerce.date().optional(),
     fechaFin: z.coerce.date().optional(),
+    // Búsqueda libre por correlativo (lote/Conocimiento), transportista,
+    // placa o código de Formulario 101 — se aplica en el servidor ANTES de
+    // paginar, para que un resultado en cualquier página aparezca sin
+    // importar en qué página de la lista esté (si se filtrara solo la
+    // página ya cargada en el navegador, un match en otra página no
+    // aparecería nunca).
+    search: z.string().trim().min(1).optional(),
   })
   .strict();
 

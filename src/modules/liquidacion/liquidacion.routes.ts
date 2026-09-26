@@ -6,6 +6,7 @@ import {
   anularLiquidacionSchema,
   createLiquidacionSchema,
   liquidacionQuerySchema,
+  previewLiquidacionQuerySchema,
 } from "./liquidacion.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 import { z } from "zod";
@@ -16,6 +17,9 @@ const idConItemSchema = z.object({ id: z.string().uuid(), itemId: z.string().uui
 const router = Router();
 
 router.use(authenticate);
+
+// Registrada ANTES de "/:id" — si no, Express la tomaría como un id.
+router.get("/preview", validateQuery(previewLiquidacionQuerySchema), liquidacionController.preview);
 
 router.get("/", validateQuery(liquidacionQuerySchema), liquidacionController.getAll);
 router.get("/:id", validateParams(idSchema), liquidacionController.getById);

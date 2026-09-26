@@ -53,8 +53,8 @@ export const vehiculoService = {
 
   async create(data: CreateVehiculoDTO, userId: number) {
     if (data.propietarioId) {
-      const remitente = await prisma.remitente.findUnique({ where: { id: data.propietarioId } });
-      if (!remitente) throw new HttpError("Remitente propietario no encontrado", 404);
+      const transportista = await prisma.transportista.findUnique({ where: { id: data.propietarioId } });
+      if (!transportista) throw new HttpError("Transportista propietario no encontrado", 404);
     }
 
     const vehiculo = await prisma.$transaction(async (tx) => {

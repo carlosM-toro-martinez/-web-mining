@@ -12,7 +12,7 @@ import type { formulario101QuerySchema } from "./formulario101.schema.js";
 type Formulario101Query = z.infer<typeof formulario101QuerySchema>;
 
 const INCLUDE_DETALLE = {
-  lote: { include: { remitente: true, vehiculo: true, conocimientoCarga: true } },
+  lote: { include: { transportista: true, vehiculo: true, conocimientoCarga: true } },
   anulacion: true,
 } as const;
 
