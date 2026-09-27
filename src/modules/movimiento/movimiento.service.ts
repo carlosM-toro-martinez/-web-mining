@@ -71,49 +71,58 @@ async function reordenarMovimientosProductoMes(
 
   if (movimientos.length === 0) return { movimientosActualizados: 0, ordenCorregido: false };
 
-  // Orden lógico: ENTRADAS antes que SALIDAS; dentro de cada tipo, el orden original por createdAt+id.
   const entradas = movimientos.filter(m => m.tipo === "ENTRADA");
   const salidas  = movimientos.filter(m => m.tipo === "SALIDA");
   const ordenLogico = [...entradas, ...salidas];
 
-  // Redistribute timestamps: sort all existing timestamps and assign in logical order
-  // so the bin card (ordered by createdAt) shows them correctly.
+  // Build timestamp pool: retroactive movements get a synthetic timestamp at the very
+  // start of the period month so they stay within the period's date range for bin-card
+  // queries. Their original createdAt belongs to a different month and would make them
+  // invisible in the period's bin-card.
+  let retroSynIdx = 0;
   const timestamps = [...movimientos]
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map(m => m.createdAt);
+    .map(m => ({
+      id: m.id,
+      ts: m.esRetroactivo ? new Date(desde.getTime() + retroSynIdx++) : m.createdAt,
+    }))
+    .sort((a, b) => a.ts.getTime() - b.ts.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map(m => m.ts);
 
   const periodCPP = new Prisma.Decimal(saldo.precioUnitProm ?? 0);
   let currentStock = new Prisma.Decimal(saldo.saldoInicial ?? 0);
   let movActualizados = 0;
 
-  for (let i = 0; i < ordenLogico.length; i++) {
-    const mov       = ordenLogico[i]!;
-    const qty       = new Prisma.Decimal(mov.cantidad);
-    const stockAntes = currentStock;
-    const newTs      = timestamps[i]!;
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < ordenLogico.length; i++) {
+      const mov        = ordenLogico[i]!;
+      const qty        = new Prisma.Decimal(mov.cantidad);
+      const stockAntes = currentStock;
 
-    if (mov.tipo === "ENTRADA") {
-      currentStock = currentStock.add(qty);
-    } else {
-      currentStock = currentStock.sub(qty);
+      if (mov.tipo === "ENTRADA") {
+        currentStock = currentStock.add(qty);
+      } else {
+        currentStock = currentStock.sub(qty);
+      }
+
+      const stockDespues = currentStock;
+      const saldoBs = currentStock.isNegative()
+        ? new Prisma.Decimal(0)
+        : currentStock.mul(periodCPP);
+
+      const data: any = { stockAntes, stockDespues, saldoBs, createdAt: timestamps[i]! };
+
+      // Recalculate SALIDA Bs fields using periodCPP for internal consistency
+      // with saldoBs (which also uses periodCPP). ENTRADA keeps original precioUnit/entradaBs.
+      if (mov.tipo === "SALIDA") {
+        data.precioUnit = periodCPP;
+        data.salidaBs   = qty.mul(periodCPP);
+        data.entradaBs  = new Prisma.Decimal(0);
+      }
+
+      await tx.movimiento.update({ where: { id: mov.id }, data });
+      movActualizados++;
     }
-
-    const stockDespues = currentStock;
-    const saldoBs = currentStock.isNegative()
-      ? new Prisma.Decimal(0)
-      : currentStock.mul(periodCPP);
-
-    await prisma.movimiento.update({
-      where: { id: mov.id },
-      data: {
-        stockAntes,
-        stockDespues,
-        saldoBs,
-        createdAt: newTs,
-      },
-    });
-    movActualizados++;
-  }
+  });
 
   return { movimientosActualizados: movActualizados, ordenCorregido: true };
 }
