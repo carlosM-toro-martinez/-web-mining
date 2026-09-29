@@ -49,7 +49,7 @@ export const reportesCajaChicaController = {
   async getEstadoCuenta(req: AuthRequest, res: Response) {
     try {
       const query = estadoCuentaCajaQuerySchema.parse(req.query);
-      const data = await reportesCajaChicaService.getEstadoCuenta(query.cajaId);
+      const data = await reportesCajaChicaService.getEstadoCuenta(query.cajaId, query.fechaInicio, query.fechaFin);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
@@ -60,7 +60,11 @@ export const reportesCajaChicaController = {
   async getEstadoCuentaBancaria(req: AuthRequest, res: Response) {
     try {
       const query = estadoCuentaBancariaQuerySchema.parse(req.query);
-      const data = await reportesCajaChicaService.getEstadoCuentaBancaria(query.cuentaBancariaId);
+      const data = await reportesCajaChicaService.getEstadoCuentaBancaria(
+        query.cuentaBancariaId,
+        query.fechaInicio,
+        query.fechaFin,
+      );
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

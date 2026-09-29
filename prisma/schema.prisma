@@ -1328,6 +1328,10 @@ enum OrigenGastoCaja {
 enum TipoDocumentoGasto {
   FACTURA
   CONTRATO_RETENCION
+  // Con respaldo (un recibo/comprobante), pero sin tratamiento tributario:
+  // no genera crédito fiscal ni retenciones, y SÍ es deducible (a diferencia
+  // de RECIBO_DIRECTO, que es sin respaldo y no deducible).
+  RECIBO
   RECIBO_DIRECTO
 }
 

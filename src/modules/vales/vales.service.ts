@@ -810,24 +810,41 @@ export const valesService = {
           where: { productoId: item.productoId },
           data: { cantidad: { increment: entregado } },
         });
+
+        // Actualizar SaldoMensual del mes actual para mantener salidaQty/saldoFinal en sync
+        const ahoraN = new Date();
+        const anioN  = ahoraN.getUTCFullYear();
+        const mesN   = ahoraN.getUTCMonth() + 1;
+        const saldoN = await prisma.saldoMensual.findUnique({
+          where: { productoId_anio_mes: { productoId: item.productoId, anio: anioN, mes: mesN } },
+        });
+        if (saldoN) {
+          await (prisma.saldoMensual.update as any)({
+            where: { id: saldoN.id },
+            data: {
+              salidaQty:  Prisma.Decimal.max(new Prisma.Decimal(0), new Prisma.Decimal(saldoN.salidaQty).sub(entregado)),
+              saldoFinal: new Prisma.Decimal(saldoN.saldoFinal).add(entregado),
+            },
+          });
+        }
       }
 
       contraAsientos++;
     }
 
-    // Si estaba APROBADO (sin entregar), liberar reservas (solo para no-retroactivos)
-    if (vale.estado === "APROBADO" && !esRetroactivo) {
+    // Liberar reservas de porciones no entregadas (APROBADO = nada entregado, PARCIAL = algo entregado)
+    if ((vale.estado === "APROBADO" || vale.estado === "PARCIAL") && !esRetroactivo) {
       for (const item of vale.items) {
         const stock = item.producto.stock;
         if (!stock) continue;
+        const entregadoItem = new Prisma.Decimal(item.cantidadEntregada ?? 0);
+        const sinEntregar   = new Prisma.Decimal(item.cantidadSolicitada).sub(entregadoItem);
+        if (sinEntregar.lte(0)) continue;
         await prisma.stock.update({
           where: { productoId: item.productoId },
           data: {
             cantidadReservada: {
-              decrement: Prisma.Decimal.min(
-                new Prisma.Decimal(item.cantidadSolicitada),
-                stock.cantidadReservada,
-              ),
+              decrement: Prisma.Decimal.min(sinEntregar, stock.cantidadReservada),
             },
           },
         });

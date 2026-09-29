@@ -148,7 +148,13 @@ export const reportesCajaChicaService = {
   // recibidos y gastos, sin anulados) con saldo corriente — la consulta
   // que faltaba para ver "cuánto hay en cada caja ahora mismo" sin tener
   // que crear una rendición.
-  async getEstadoCuenta(cajaId: number) {
+  //
+  // fechaInicio/fechaFin son opcionales: si se pasa fechaInicio, todo lo
+  // anterior a esa fecha se acumula en "saldoInicial" (el saldo YA incluye
+  // esos movimientos, no aparecen listados) — así el saldo de la primera
+  // fila que se muestra siempre es el correcto, no arranca en 0 ni en el
+  // saldo global de toda la vida de la caja.
+  async getEstadoCuenta(cajaId: number, fechaInicio?: Date, fechaFin?: Date) {
     const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
 
@@ -157,19 +163,28 @@ export const reportesCajaChicaService = {
       orderBy: { periodoHasta: "desc" },
     });
 
-    const saldoInicial = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
+    const saldoBase = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const cortaDesde = ultimaCerrada ? ultimaCerrada.periodoHasta : undefined;
 
     const [fondos, movimientosBanco, gastos] = await Promise.all([
       prisma.movimientoFondoCaja.findMany({
-        where: { cajaId, ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}) },
+        where: {
+          cajaId,
+          ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
+          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
+        },
         orderBy: { fecha: "asc" },
       }),
       // Solo las SALIDAS del banco hacia esta caja cuentan como ingreso de
       // la caja — los INGRESO (dinero que llega al banco) todavía no están
       // en la caja física.
       prisma.movimientoBancoCaja.findMany({
-        where: { cajaId, tipo: "SALIDA_A_CAJA", ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}) },
+        where: {
+          cajaId,
+          tipo: "SALIDA_A_CAJA",
+          ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
+          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
+        },
         include: { cuentaBancaria: true },
         orderBy: { fecha: "asc" },
       }),
@@ -178,6 +193,7 @@ export const reportesCajaChicaService = {
           cajaId,
           estado: { not: "ANULADO" },
           ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
+          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
         },
         orderBy: { fecha: "asc" },
       }),
@@ -219,19 +235,26 @@ export const reportesCajaChicaService = {
       })),
     ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
 
-    let saldo = saldoInicial;
-    const detalle = movimientos.map((m) => {
+    const antesDelRango = fechaInicio ? movimientos.filter((m) => m.fecha < fechaInicio) : [];
+    const dentroDelRango = fechaInicio ? movimientos.filter((m) => m.fecha >= fechaInicio) : movimientos;
+
+    let saldo = saldoBase;
+    for (const m of antesDelRango) saldo = saldo + m.ingreso - m.egreso;
+    const saldoInicial = saldo;
+
+    const detalle = dentroDelRango.map((m) => {
       saldo = saldo + m.ingreso - m.egreso;
       return { ...m, saldo };
     });
 
-    const totalIngresos = movimientos.reduce((acc, m) => acc + m.ingreso, 0);
-    const totalEgresos = movimientos.reduce((acc, m) => acc + m.egreso, 0);
+    const totalIngresos = dentroDelRango.reduce((acc, m) => acc + m.ingreso, 0);
+    const totalEgresos = dentroDelRango.reduce((acc, m) => acc + m.egreso, 0);
 
     return {
       caja,
       saldoInicial,
       fechaCorte: cortaDesde ?? null,
+      fechaInicioPeriodo: fechaInicio ?? null,
       totalIngresos,
       totalEgresos,
       saldoActual: saldo,
@@ -245,20 +268,24 @@ export const reportesCajaChicaService = {
   // sin fecha de corte. Movimientos: INGRESO (dinero que llega al banco) y
   // SALIDA_A_CAJA (dinero que sale hacia una caja) de MovimientoBancoCaja,
   // más los gastos pagados directo desde esta cuenta (origen BANCO).
-  async getEstadoCuentaBancaria(cuentaBancariaId: number) {
+  async getEstadoCuentaBancaria(cuentaBancariaId: number, fechaInicio?: Date, fechaFin?: Date) {
     const cuenta = await prisma.cuentaBancariaCaja.findUnique({ where: { id: cuentaBancariaId } });
     if (!cuenta) throw new HttpError("Cuenta bancaria no encontrada", 404);
 
-    const saldoInicial = Number(cuenta.saldoInicial);
+    const saldoBase = Number(cuenta.saldoInicial);
 
     const [movimientosBanco, gastosDirectos] = await Promise.all([
       prisma.movimientoBancoCaja.findMany({
-        where: { cuentaBancariaId },
+        where: { cuentaBancariaId, ...(fechaFin ? { fecha: { lte: fechaFin } } : {}) },
         include: { caja: true },
         orderBy: { fecha: "asc" },
       }),
       prisma.gastoCaja.findMany({
-        where: { cuentaBancariaCajaId: cuentaBancariaId, estado: { not: "ANULADO" } },
+        where: {
+          cuentaBancariaCajaId: cuentaBancariaId,
+          estado: { not: "ANULADO" },
+          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
+        },
         orderBy: { fecha: "asc" },
       }),
     ]);
@@ -294,18 +321,25 @@ export const reportesCajaChicaService = {
       })),
     ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
 
-    let saldo = saldoInicial;
-    const detalle = movimientos.map((m) => {
+    const antesDelRango = fechaInicio ? movimientos.filter((m) => m.fecha < fechaInicio) : [];
+    const dentroDelRango = fechaInicio ? movimientos.filter((m) => m.fecha >= fechaInicio) : movimientos;
+
+    let saldo = saldoBase;
+    for (const m of antesDelRango) saldo = saldo + m.ingreso - m.egreso;
+    const saldoInicial = saldo;
+
+    const detalle = dentroDelRango.map((m) => {
       saldo = saldo + m.ingreso - m.egreso;
       return { ...m, saldo };
     });
 
-    const totalIngresos = movimientos.reduce((acc, m) => acc + m.ingreso, 0);
-    const totalEgresos = movimientos.reduce((acc, m) => acc + m.egreso, 0);
+    const totalIngresos = dentroDelRango.reduce((acc, m) => acc + m.ingreso, 0);
+    const totalEgresos = dentroDelRango.reduce((acc, m) => acc + m.egreso, 0);
 
     return {
       cuenta,
       saldoInicial,
+      fechaInicioPeriodo: fechaInicio ?? null,
       totalIngresos,
       totalEgresos,
       saldoActual: saldo,
@@ -531,7 +565,10 @@ export const reportesCajaChicaService = {
           }
         }
       } else if (cuenta) {
-        // RECIBO_DIRECTO: 100% a Gastos No Deducibles.
+        // RECIBO / RECIBO_DIRECTO: sin créditos ni retenciones, 100% a la
+        // cuenta contable resuelta (para RECIBO_DIRECTO suele ser Gastos No
+        // Deducibles, pero eso lo decide la cuenta asignada al gasto, no
+        // esta rama).
         lineas.push({
           codigo: cuenta.codigo,
           cuentaNombre: cuenta.nombre,

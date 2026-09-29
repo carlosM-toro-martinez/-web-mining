@@ -57,7 +57,10 @@ async function obtenerPorcentaje(codigo: "RC_IVA" | "IUE_COMPRAS" | "IT") {
 // CONTRATO_RETENCION
 //   + SERVICIO        -> retiene RC-IVA (cuenta "RC-IVA Retenciones Servicios") + IT.
 //   + COMPRA          -> retiene IUE Compras + IT.
-// RECIBO_DIRECTO      -> 100% a Gastos No Deducibles, sin créditos ni retenciones.
+// RECIBO              -> con respaldo pero sin tratamiento tributario: sin
+//                        créditos ni retenciones, y SÍ deducible.
+// RECIBO_DIRECTO      -> sin respaldo: 100% a Gastos No Deducibles, sin
+//                        créditos ni retenciones.
 type DatosImpuesto = {
   tipoDocumento: CreateGastoCajaDTO["tipoDocumento"];
   categoriaRetencion?: CreateGastoCajaDTO["categoriaRetencion"] | null;
@@ -85,9 +88,11 @@ async function calcularImpuestos(data: DatosImpuesto) {
       const tasaIueCompras = await obtenerPorcentaje("IUE_COMPRAS");
       montoRetencionIueCompras = Math.round(data.montoTotal * tasaIueCompras * 100) / 100;
     }
-  } else {
+  } else if (data.tipoDocumento === "RECIBO_DIRECTO") {
     esNoDeducible = true;
   }
+  // RECIBO: con respaldo, sin créditos ni retenciones, deducible — todos los
+  // montos quedan en 0 y esNoDeducible en false (los valores por defecto).
 
   return { montoCreditoFiscalIva, montoRetencionRcIva, montoRetencionIueCompras, montoRetencionIt, esNoDeducible };
 }

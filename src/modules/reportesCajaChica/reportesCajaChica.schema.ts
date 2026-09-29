@@ -11,11 +11,15 @@ export const reporteCajaChicaQuerySchema = z
 export const estadoCuentaCajaQuerySchema = z
   .object({
     cajaId: z.coerce.number().int().positive(),
+    fechaInicio: z.coerce.date().optional(),
+    fechaFin: z.coerce.date().optional(),
   })
   .strict();
 
 export const estadoCuentaBancariaQuerySchema = z
   .object({
     cuentaBancariaId: z.coerce.number().int().positive(),
+    fechaInicio: z.coerce.date().optional(),
+    fechaFin: z.coerce.date().optional(),
   })
   .strict();

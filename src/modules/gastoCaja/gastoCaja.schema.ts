@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const tipoDocumentoGastoSchema = z.enum(["FACTURA", "CONTRATO_RETENCION", "RECIBO_DIRECTO"]);
+export const tipoDocumentoGastoSchema = z.enum(["FACTURA", "CONTRATO_RETENCION", "RECIBO", "RECIBO_DIRECTO"]);
 export const categoriaRetencionGastoSchema = z.enum(["SERVICIO", "COMPRA"]);
 export const monedaCajaSchema = z.enum(["BOB", "USD"]);
 export const estadoGastoCajaSchema = z.enum(["REGISTRADO", "RENDIDO", "ANULADO"]);
