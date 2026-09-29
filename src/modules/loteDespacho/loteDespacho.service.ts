@@ -127,7 +127,12 @@ export const loteDespachoService = {
           nivel: data.nivel ?? null,
           fechaDespachoReal: data.fechaDespachoReal,
           fechaDocumentalFiscal: data.fechaDocumentalFiscal ?? data.fechaDespachoReal,
-          estadoLote: "REGISTRADO",
+          // El vehículo ya se marca EN_TRANSITO abajo en el mismo paso — el
+          // lote arranca en el mismo estado, no en REGISTRADO. Antes quedaba
+          // "REGISTRADO" y había que hacer un clic extra y redundante para
+          // "Marcar en tránsito" un lote que el tablero ya mostraba en
+          // tránsito desde el momento de crearlo.
+          estadoLote: "EN_TRANSITO",
           usuarioRegistroId: userId,
           conocimientoCarga: {
             create: {
@@ -241,11 +246,14 @@ export const loteDespachoService = {
         data: { estadoLote: "ACOPIADO" },
       });
 
-      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: "DISPONIBLE" } });
+      // No pasa a DISPONIBLE directo: entregó y se pesó, pero todavía tiene
+      // que volver físicamente al punto de origen. Queda "En retorno" hasta
+      // que alguien confirme a mano que ya llegó (ver cambiarEstadoVehiculo).
+      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: "EN_RETORNO" } });
       await tx.estadoFlotaHistorico.create({
         data: {
           vehiculoId: lote.vehiculoId,
-          estado: "DISPONIBLE",
+          estado: "EN_RETORNO",
           motivo: `Pesaje concluido del lote ${lote.correlativo}`,
           origenCambio: "MANUAL",
           usuarioId: userId,

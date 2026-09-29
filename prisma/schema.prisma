@@ -1262,6 +1262,10 @@ enum EstadoVehiculo {
   DISPONIBLE
   EN_TRANSITO
   EN_BALANZA
+  // Ya entregó y se pesó la carga, pero todavía viene de vuelta físicamente
+  // hacia el punto de origen — no se marca DISPONIBLE solo, hay que
+  // confirmarlo a mano cuando de verdad llega.
+  EN_RETORNO
   CON_FALLA_MECANICA
   EN_MANTENIMIENTO
 }

@@ -4,6 +4,7 @@ export const estadoVehiculoSchema = z.enum([
   "DISPONIBLE",
   "EN_TRANSITO",
   "EN_BALANZA",
+  "EN_RETORNO",
   "CON_FALLA_MECANICA",
   "EN_MANTENIMIENTO",
 ]);

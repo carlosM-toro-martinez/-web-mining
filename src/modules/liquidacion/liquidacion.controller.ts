@@ -102,4 +102,14 @@ export const liquidacionController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async eliminarBorrador(req: AuthRequest, res: Response) {
+    try {
+      await liquidacionService.eliminarBorrador(req.params.id as string, req.user!.id);
+      res.status(204).json({ success: true });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

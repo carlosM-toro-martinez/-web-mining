@@ -63,4 +63,13 @@ router.post(
   liquidacionController.anular,
 );
 
+// Eliminar (no anular) solo aplica a un BORRADOR — mismos roles que
+// crearla, porque todavía no tuvo ningún efecto real que auditar.
+router.delete(
+  "/:id",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  validateParams(idSchema),
+  liquidacionController.eliminarBorrador,
+);
+
 export default router;

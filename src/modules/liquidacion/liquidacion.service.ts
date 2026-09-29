@@ -80,6 +80,14 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
       transportistaId,
       estadoLote: "ACOPIADO",
       fechaDespachoReal: { gte: fechaInicio, lte: fechaFin },
+      // Sin esto, dos liquidaciones con rangos que se pisan (o el mismo
+      // rango creado dos veces) podían capturar el MISMO lote en ambas —
+      // el lote sigue ACOPIADO mientras la primera liquidación esté en
+      // BORRADOR, así que "estaba libre" para la segunda también. Si
+      // ambas se llegaban a cerrar, ese viaje se pagaba dos veces. Un
+      // lote ya incluido en cualquier liquidación que no esté anulada
+      // (BORRADOR o CERRADO) queda fuera de esta lista.
+      detallesLiquidacion: { none: { liquidacion: { estado: { not: "ANULADO" } } } },
     },
     include: { pesaje: true, vehiculo: true, tipoMineral: true },
     orderBy: { fechaDespachoReal: "asc" },
@@ -281,14 +289,22 @@ export const liquidacionService = {
       // huérfana aquí — se descarta del total y se limpia, para no cobrar
       // por un viaje que ya no existe. anular() en loteDespacho.service.ts
       // ya limpia esto en el momento en que se anula; esto es solo por si
-      // quedó una fila de antes de ese fix.
-      const detalleValidos = liquidacion.detalleLotes.filter((d) => d.lote.estadoLote !== "ANULADO");
+      // quedó una fila de antes de ese fix. Lo mismo con LIQUIDADO: puede
+      // pasar si esta liquidación quedó con rango solapado a otra ya
+      // creada ANTES del filtro que ahora bloquea eso en construirElegibles
+      // — sin este descarte, cerrar esta también pagaría el mismo viaje
+      // dos veces.
+      const esDescartable = (estado: string) => estado === "ANULADO" || estado === "LIQUIDADO";
+      const detalleValidos = liquidacion.detalleLotes.filter((d) => !esDescartable(d.lote.estadoLote));
       const detalleInvalidosIds = liquidacion.detalleLotes
-        .filter((d) => d.lote.estadoLote === "ANULADO")
+        .filter((d) => esDescartable(d.lote.estadoLote))
         .map((d) => d.id);
 
       if (detalleValidos.length === 0) {
-        throw new HttpError("Todos los lotes de esta liquidación fueron anulados; no hay nada que cerrar.", 409);
+        throw new HttpError(
+          "Todos los lotes de esta liquidación ya fueron anulados o pagados en otra liquidación; no hay nada que cerrar.",
+          409,
+        );
       }
 
       const totalBruto = detalleValidos.reduce((acc, d) => acc.add(d.subtotal), new Prisma.Decimal(0));
@@ -360,5 +376,30 @@ export const liquidacionService = {
 
       return tx.liquidacionPeriodo.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
     });
+  },
+
+  // Borrar de verdad (no anular) una liquidación en BORRADOR: todavía no
+  // tiene folio asignado, no marcó ningún lote como LIQUIDADO y no movió
+  // plata real — a diferencia de anular (que deja un registro permanente
+  // con motivo, pensado para una liquidación CERRADA que sí tuvo efecto),
+  // acá no hay nada que auditar, así que se puede eliminar sin dejar rastro.
+  async eliminarBorrador(id: string, userId: number) {
+    const liquidacion = await prisma.liquidacionPeriodo.findUnique({ where: { id } });
+    if (!liquidacion) throw new HttpError("Liquidación no encontrada", 404);
+    if (liquidacion.estado !== "BORRADOR") {
+      throw new HttpError("Solo se puede eliminar una liquidación en BORRADOR (usa anular para una ya cerrada)", 409);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.liquidacionItemConcepto.deleteMany({ where: { liquidacionId: id } });
+      await tx.liquidacionDetalleLote.deleteMany({ where: { liquidacionId: id } });
+      await tx.liquidacionPeriodo.delete({ where: { id } });
+
+      await tx.log.create({
+        data: { usuarioId: userId, accion: "ELIMINAR_BORRADOR_LIQUIDACION", data: { liquidacionId: id } },
+      });
+    });
+
+    logger.info({ userId, liquidacionId: id, action: "ELIMINAR_BORRADOR_LIQUIDACION" }, "Borrador de liquidación eliminado");
   },
 };
