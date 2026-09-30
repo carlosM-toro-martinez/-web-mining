@@ -116,9 +116,10 @@ async function procesarProductoMes(
     ? cppDecimal
     : saldoInicialD.mul(cppDecimal).add(totalCompraSinIva).div(totalQperiodo);
 
-  // ── PASO 2: Aplicar periodCPP a todos los movimientos manteniendo orden de fecha para stock ──
+  // ── PASO 2: Construir updates (cálculo matemático, sin tocar DB aún) ────────────────
   let currentStock    = saldoInicialD;
   let movActualizados = 0;
+  const updates: Prisma.PrismaPromise<unknown>[] = [];
 
   for (const mov of movimientos) {
     const qty = new Prisma.Decimal(mov.cantidad);
@@ -131,14 +132,14 @@ async function procesarProductoMes(
       const precioSinIva = new Prisma.Decimal(precioConIva).mul(factor);
       const newStock     = currentStock.add(qty);
 
-      await prisma.movimiento.update({
+      updates.push(prisma.movimiento.update({
         where: { id: mov.id },
         data: {
           precioUnit: precioSinIva,
           entradaBs:  precioSinIva.mul(qty),
           saldoBs:    newStock.isNegative() ? new Prisma.Decimal(0) : newStock.mul(periodCPP),
         },
-      });
+      }));
 
       currentStock = newStock;
       movActualizados++;
@@ -147,14 +148,14 @@ async function procesarProductoMes(
       // ANULACION_VALE u otro: devuelve unidades al CPP periódico
       const newStock = currentStock.add(qty);
 
-      await prisma.movimiento.update({
+      updates.push(prisma.movimiento.update({
         where: { id: mov.id },
         data: {
           precioUnit: periodCPP,
           entradaBs:  periodCPP.mul(qty),
           saldoBs:    newStock.isNegative() ? new Prisma.Decimal(0) : newStock.mul(periodCPP),
         },
-      });
+      }));
 
       currentStock = newStock;
       movActualizados++;
@@ -165,21 +166,21 @@ async function procesarProductoMes(
         ? new Prisma.Decimal(0)
         : newStock.mul(periodCPP);
 
-      await prisma.movimiento.update({
+      updates.push(prisma.movimiento.update({
         where: { id: mov.id },
         data: {
           precioUnit: periodCPP,
           salidaBs:   periodCPP.mul(qty),
           saldoBs,
         },
-      });
+      }));
 
       currentStock = newStock;
       movActualizados++;
     }
   }
 
-  // ── PASO 3: Actualizar SaldoMensual ─────────────────────────────────────────────────
+  // ── PASO 3: SaldoMensual incluido en la misma transacción ────────────────────────────
   const saldoData: Record<string, unknown> = {
     precioUnitProm: periodCPP,
     totalBsProm:    currentStock.isNegative()
@@ -191,10 +192,15 @@ async function procesarProductoMes(
     saldoData.precioUnit = lastPrecioSinIva;
   }
 
-  await prisma.saldoMensual.update({
+  updates.push(prisma.saldoMensual.update({
     where: { productoId_anio_mes: { productoId, anio, mes } },
     data: saldoData,
-  });
+  }));
+
+  // Ejecuta todos los updates atómicamente: si uno falla, Postgres revierte todo el producto
+  if (updates.length > 0) {
+    await prisma.$transaction(updates);
+  }
 
   return { movs: movActualizados, saldoActualizado: true, cppFinal: periodCPP.toFixed(6) };
 }
