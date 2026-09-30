@@ -89,3 +89,17 @@ export async function generarFolioRendicionCaja(
 export async function generarNumeroLiquidacionTransporte(tx: Prisma.TransactionClient): Promise<number> {
   return reservarSiguienteNumero(tx, "LIQUIDACION_TRANSPORTE");
 }
+
+// Folio del Comprobante de Egresos ("Nº 000188" en el documento físico real):
+// un contador global propio por módulo, que nunca se reinicia — a
+// diferencia del folio de la liquidación o del correlativo del lote, este
+// se asigna recién la primera vez que alguien genera el comprobante (no al
+// registrar el gasto ni al cerrar la liquidación), y queda fijo para
+// siempre: volver a generarlo después muestra el mismo número.
+export async function generarNumeroComprobanteEgresoGasto(tx: Prisma.TransactionClient): Promise<number> {
+  return reservarSiguienteNumero(tx, "COMPROBANTE_EGRESO_GASTO");
+}
+
+export async function generarNumeroComprobanteEgresoLiquidacion(tx: Prisma.TransactionClient): Promise<number> {
+  return reservarSiguienteNumero(tx, "COMPROBANTE_EGRESO_LIQUIDACION");
+}

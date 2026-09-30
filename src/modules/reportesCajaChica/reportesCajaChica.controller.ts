@@ -24,6 +24,17 @@ export const reportesCajaChicaController = {
     }
   },
 
+  async getImpuestos(req: AuthRequest, res: Response) {
+    try {
+      const query = reporteCajaChicaQuerySchema.parse(req.query);
+      const data = await reportesCajaChicaService.getImpuestos(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getNoDeducibles(req: AuthRequest, res: Response) {
     try {
       const query = reporteCajaChicaQuerySchema.parse(req.query);
@@ -88,6 +99,16 @@ export const reportesCajaChicaController = {
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getComprobanteEgresoGasto(req: AuthRequest, res: Response) {
+    try {
+      const data = await reportesCajaChicaService.getComprobanteEgresoGasto(req.params.gastoId as string, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },

@@ -63,12 +63,16 @@ export const cuentaBancariaCajaService = {
     const where: any = {};
     if (query.soloActivas) where.activo = true;
 
-    const cuentas = await prisma.cuentaBancariaCaja.findMany({ where, orderBy: { banco: "asc" } });
+    const cuentas = await prisma.cuentaBancariaCaja.findMany({
+      where,
+      include: { cuentaContableCaja: true },
+      orderBy: { banco: "asc" },
+    });
     return conSaldo(cuentas);
   },
 
   async getById(id: number) {
-    const cuenta = await prisma.cuentaBancariaCaja.findUnique({ where: { id } });
+    const cuenta = await prisma.cuentaBancariaCaja.findUnique({ where: { id }, include: { cuentaContableCaja: true } });
     if (!cuenta) return null;
     const [conDatos] = await conSaldo([cuenta]);
     return conDatos;
@@ -83,6 +87,7 @@ export const cuentaBancariaCajaService = {
         monedaBase: data.monedaBase ?? "BOB",
         saldoInicial: data.saldoInicial ?? 0,
         activo: data.activo ?? true,
+        cuentaContableCajaId: data.cuentaContableCajaId ?? null,
       },
     });
 

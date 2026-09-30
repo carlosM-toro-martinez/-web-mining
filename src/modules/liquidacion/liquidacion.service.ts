@@ -2,10 +2,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import { generarNumeroLiquidacionTransporte } from "../../utils/correlativo.js";
+import {
+  generarNumeroComprobanteEgresoLiquidacion,
+  generarNumeroLiquidacionTransporte,
+} from "../../utils/correlativo.js";
 import type {
   AgregarItemConceptoDTO,
   AnularLiquidacionDTO,
+  ComprobanteEgresoLiquidacionDTO,
   CreateLiquidacionDTO,
   PreviewLiquidacionQuery,
 } from "./liquidacion.types.js";
@@ -401,5 +405,66 @@ export const liquidacionService = {
     });
 
     logger.info({ userId, liquidacionId: id, action: "ELIMINAR_BORRADOR_LIQUIDACION" }, "Borrador de liquidación eliminado");
+  },
+
+  // Comprobante de Egresos del pago a un transportista: solo tiene sentido
+  // para una liquidación ya CERRADA (recién ahí se pagó de verdad). A
+  // diferencia de Caja Chica, Logística no tiene catálogo de cuentas
+  // contables — las dos cuentas del asiento (a qué se debita el gasto de
+  // transporte, de qué banco/caja sale la plata) se piden a mano cada vez
+  // que se genera, sin persistirlas. El folio sí se persiste, la primera
+  // vez que se pide.
+  async getComprobanteEgreso(id: string, cuentas: ComprobanteEgresoLiquidacionDTO, userId: number) {
+    return prisma.$transaction(async (tx) => {
+      const liquidacion = await tx.liquidacionPeriodo.findUnique({ where: { id }, include: { transportista: true } });
+      if (!liquidacion) throw new HttpError("Liquidación no encontrada", 404);
+      if (liquidacion.estado !== "CERRADO") {
+        throw new HttpError("Solo se puede generar el comprobante de una liquidación CERRADA", 409);
+      }
+
+      let numeroComprobante = liquidacion.numeroComprobante;
+      if (!numeroComprobante) {
+        numeroComprobante = await generarNumeroComprobanteEgresoLiquidacion(tx);
+        await tx.liquidacionPeriodo.update({ where: { id }, data: { numeroComprobante } });
+        await tx.log.create({
+          data: {
+            usuarioId: userId,
+            accion: "ASIGNAR_NUMERO_COMPROBANTE_EGRESO_LIQUIDACION",
+            data: { liquidacionId: id, numeroComprobante },
+          },
+        });
+      }
+
+      const monto = Number(liquidacion.totalNeto);
+      const detalle = `Liquidación de transporte Nº ${liquidacion.numero ?? "S/N"} — ${liquidacion.transportista.nombreORazonSocial.toUpperCase()}`;
+
+      const lineas = [
+        {
+          codigo: cuentas.cuentaDebeCodigo,
+          cuentaNombre: cuentas.cuentaDebeNombre,
+          detalle,
+          debeBs: monto,
+          haberBs: 0,
+        },
+        {
+          codigo: cuentas.cuentaHaberCodigo,
+          cuentaNombre: cuentas.cuentaHaberNombre,
+          detalle,
+          debeBs: 0,
+          haberBs: monto,
+        },
+      ];
+
+      return {
+        numero: numeroComprobante,
+        liquidacionNumero: liquidacion.numero,
+        transportista: liquidacion.transportista,
+        fechaInicio: liquidacion.fechaInicio,
+        fechaFin: liquidacion.fechaFin,
+        montoTotal: monto,
+        lineas,
+        totales: { debeBs: monto, haberBs: monto },
+      };
+    });
   },
 };

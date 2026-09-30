@@ -1,6 +1,14 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { HttpError } from "../../errors/http.error.js";
+import { generarNumeroComprobanteEgresoGasto } from "../../utils/correlativo.js";
 import type { ReporteCajaChicaQuery } from "./reportesCajaChica.types.js";
+
+// Bolivia tiene un tipo de cambio oficial fijo por ley (no flotante) desde
+// hace décadas — se usa como respaldo cuando un gasto todavía no pertenece
+// a ninguna rendición cerrada (que es la que normalmente trae su propio
+// tipoCambio) y hay que generar su Comprobante de Egresos igual.
+const TIPO_CAMBIO_BOB_USD_DEFAULT = 6.96;
 
 // Orden y etiquetas exactas del reporte mensual impreso ("Caja Lipeña").
 const CATEGORIA_ORDEN = [
@@ -40,6 +48,159 @@ function buildWhere(query: ReporteCajaChicaQuery) {
   return where;
 }
 
+// --- Motor de asiento contable, compartido por el Comprobante Diario de
+// una rendición (muchos gastos) y el Comprobante de Egresos de un gasto
+// puntual (uno solo) — misma regla de partida doble en los dos lugares,
+// escrita una sola vez.
+export type LineaComprobante = {
+  codigo: string;
+  cuentaNombre: string;
+  detalle: string;
+  debeBs: number;
+  haberBs: number;
+  debeUsd: number;
+  haberUsd: number;
+  centroCodigo?: string;
+  centroNombre?: string;
+  funcionCodigo?: string;
+  funcionNombre?: string;
+};
+
+type GastoParaComprobante = {
+  numeroRespaldo: string | null;
+  proveedorNombre: string;
+  glosa: string;
+  montoTotal: Prisma.Decimal;
+  tipoDocumento: string;
+  montoCreditoFiscalIva: Prisma.Decimal;
+  montoRetencionRcIva: Prisma.Decimal;
+  montoRetencionIueCompras: Prisma.Decimal;
+  montoRetencionIt: Prisma.Decimal;
+  cuentaContableCaja: {
+    codigo: string;
+    nombre: string;
+    requiereCentroCosto: boolean;
+    requiereFuncionGasto: boolean;
+  } | null;
+  centroCostoCaja: { codigo: string; nombre: string } | null;
+  funcionGastoCaja: { codigo: string; nombre: string } | null;
+};
+
+async function obtenerCuentasMotorTributario() {
+  const [cuentaCreditoFiscal, conceptosRetencion] = await Promise.all([
+    prisma.cuentaContableCaja.findUnique({ where: { codigo: "69.001.000" } }),
+    prisma.conceptoRetencionCaja.findMany({ include: { cuentaContableCaja: true } }),
+  ]);
+  const cuentaPorRetencion: Record<string, { codigo: string; nombre: string } | undefined> = {
+    RC_IVA: conceptosRetencion.find((c) => c.codigo === "RC_IVA")?.cuentaContableCaja,
+    IUE_COMPRAS: conceptosRetencion.find((c) => c.codigo === "IUE_COMPRAS")?.cuentaContableCaja,
+    IT: conceptosRetencion.find((c) => c.codigo === "IT")?.cuentaContableCaja,
+  };
+  return { cuentaCreditoFiscal, cuentaPorRetencion };
+}
+
+function construirLineasGasto(
+  gasto: GastoParaComprobante,
+  cuentaCreditoFiscal: { codigo: string; nombre: string } | null,
+  cuentaPorRetencion: Record<string, { codigo: string; nombre: string } | undefined>,
+  tipoCambio: number,
+): LineaComprobante[] {
+  const lineas: LineaComprobante[] = [];
+  const detalle = `F.${gasto.numeroRespaldo ?? "S/N"} ${gasto.proveedorNombre.toUpperCase()} ${gasto.glosa.toUpperCase()}`.trim();
+  const monto = Number(gasto.montoTotal);
+  const cuenta = gasto.cuentaContableCaja;
+  const subLinea =
+    cuenta && (cuenta.requiereCentroCosto || cuenta.requiereFuncionGasto) && gasto.centroCostoCaja && gasto.funcionGastoCaja
+      ? {
+          centroCodigo: gasto.centroCostoCaja.codigo,
+          centroNombre: gasto.centroCostoCaja.nombre,
+          funcionCodigo: gasto.funcionGastoCaja.codigo,
+          funcionNombre: gasto.funcionGastoCaja.nombre,
+        }
+      : {};
+
+  if (gasto.tipoDocumento === "FACTURA") {
+    const creditoFiscal = Number(gasto.montoCreditoFiscalIva);
+    if (creditoFiscal > 0 && cuentaCreditoFiscal) {
+      lineas.push({
+        codigo: cuentaCreditoFiscal.codigo,
+        cuentaNombre: cuentaCreditoFiscal.nombre,
+        detalle,
+        debeBs: creditoFiscal,
+        haberBs: 0,
+        debeUsd: creditoFiscal / tipoCambio,
+        haberUsd: 0,
+      });
+    }
+    if (cuenta) {
+      lineas.push({
+        codigo: cuenta.codigo,
+        cuentaNombre: cuenta.nombre,
+        detalle,
+        debeBs: monto - creditoFiscal,
+        haberBs: 0,
+        debeUsd: (monto - creditoFiscal) / tipoCambio,
+        haberUsd: 0,
+        ...subLinea,
+      });
+    }
+  } else if (gasto.tipoDocumento === "CONTRATO_RETENCION") {
+    const retRcIva = Number(gasto.montoRetencionRcIva);
+    const retIueCompras = Number(gasto.montoRetencionIueCompras);
+    const retIt = Number(gasto.montoRetencionIt);
+    const totalRetenciones = retRcIva + retIueCompras + retIt;
+
+    if (cuenta) {
+      lineas.push({
+        codigo: cuenta.codigo,
+        cuentaNombre: cuenta.nombre,
+        detalle,
+        debeBs: monto - totalRetenciones,
+        haberBs: 0,
+        debeUsd: (monto - totalRetenciones) / tipoCambio,
+        haberUsd: 0,
+        ...subLinea,
+      });
+    }
+
+    const retenciones: Array<[number, string]> = [
+      [retRcIva, "RC_IVA"],
+      [retIueCompras, "IUE_COMPRAS"],
+      [retIt, "IT"],
+    ];
+    for (const [montoRetencion, codigoConcepto] of retenciones) {
+      const cuentaRetencion = cuentaPorRetencion[codigoConcepto];
+      if (montoRetencion > 0 && cuentaRetencion) {
+        lineas.push({
+          codigo: cuentaRetencion.codigo,
+          cuentaNombre: cuentaRetencion.nombre,
+          detalle,
+          debeBs: 0,
+          haberBs: montoRetencion,
+          debeUsd: 0,
+          haberUsd: montoRetencion / tipoCambio,
+        });
+      }
+    }
+  } else if (cuenta) {
+    // RECIBO / RECIBO_DIRECTO: sin créditos ni retenciones, 100% a la
+    // cuenta contable resuelta (para RECIBO_DIRECTO suele ser Gastos No
+    // Deducibles, pero eso lo decide la cuenta asignada al gasto, no
+    // esta rama).
+    lineas.push({
+      codigo: cuenta.codigo,
+      cuentaNombre: cuenta.nombre,
+      detalle,
+      debeBs: monto,
+      haberBs: 0,
+      debeUsd: monto / tipoCambio,
+      haberUsd: 0,
+    });
+  }
+
+  return lineas;
+}
+
 export const reportesCajaChicaService = {
   // Planilla de retenciones (RC-IVA / IUE Compras / IT) para declarar en el SIAT.
   async getRetenciones(query: ReporteCajaChicaQuery) {
@@ -61,6 +222,66 @@ export const reportesCajaChicaService = {
     );
 
     return { gastos, totales };
+  },
+
+  // Todos los gastos con tratamiento tributario (FACTURA, CONTRATO_RETENCION,
+  // RECIBO, RECIBO_DIRECTO), con el desglose de impuesto que corresponde a
+  // cada uno — a diferencia de getRetenciones() (solo CONTRATO_RETENCION,
+  // pensado para declarar en el SIAT), este es el que responde "cuánto hay
+  // que ir sacando de impuestos" mirando TODO lo registrado en el período:
+  // crédito fiscal IVA a favor (FACTURA) + retenciones a pagar al SIN
+  // (CONTRATO_RETENCION), agrupado por tipo de documento.
+  async getImpuestos(query: ReporteCajaChicaQuery) {
+    const where = buildWhere(query);
+
+    const gastos = await prisma.gastoCaja.findMany({
+      where,
+      include: { caja: true },
+      orderBy: [{ tipoDocumento: "asc" }, { fecha: "asc" }],
+    });
+
+    const porTipoDocumento = new Map<
+      string,
+      { tipoDocumento: string; cantidad: number; montoTotal: number; creditoFiscalIva: number; rcIva: number; iueCompras: number; it: number }
+    >();
+
+    for (const gasto of gastos) {
+      const acumulado = porTipoDocumento.get(gasto.tipoDocumento) ?? {
+        tipoDocumento: gasto.tipoDocumento,
+        cantidad: 0,
+        montoTotal: 0,
+        creditoFiscalIva: 0,
+        rcIva: 0,
+        iueCompras: 0,
+        it: 0,
+      };
+      acumulado.cantidad += 1;
+      acumulado.montoTotal += Number(gasto.montoTotal);
+      acumulado.creditoFiscalIva += Number(gasto.montoCreditoFiscalIva);
+      acumulado.rcIva += Number(gasto.montoRetencionRcIva);
+      acumulado.iueCompras += Number(gasto.montoRetencionIueCompras);
+      acumulado.it += Number(gasto.montoRetencionIt);
+      porTipoDocumento.set(gasto.tipoDocumento, acumulado);
+    }
+
+    const totales = gastos.reduce(
+      (acc, g) => ({
+        creditoFiscalIva: acc.creditoFiscalIva + Number(g.montoCreditoFiscalIva),
+        rcIva: acc.rcIva + Number(g.montoRetencionRcIva),
+        iueCompras: acc.iueCompras + Number(g.montoRetencionIueCompras),
+        it: acc.it + Number(g.montoRetencionIt),
+      }),
+      { creditoFiscalIva: 0, rcIva: 0, iueCompras: 0, it: 0 },
+    );
+
+    return {
+      gastos,
+      porTipoDocumento: Array.from(porTipoDocumento.values()),
+      totales: {
+        ...totales,
+        totalRetenciones: totales.rcIva + totales.iueCompras + totales.it,
+      },
+    };
   },
 
   // Gastos sin respaldo suficiente, para control y auditoría interna.
@@ -456,130 +677,17 @@ export const reportesCajaChicaService = {
     });
     if (!rendicion) throw new HttpError("Rendición no encontrada", 404);
 
-    const [cuentaCreditoFiscal, conceptosRetencion] = await Promise.all([
-      prisma.cuentaContableCaja.findUnique({ where: { codigo: "69.001.000" } }),
-      prisma.conceptoRetencionCaja.findMany({ include: { cuentaContableCaja: true } }),
-    ]);
-    const cuentaPorRetencion: Record<string, { codigo: string; nombre: string } | undefined> = {
-      RC_IVA: conceptosRetencion.find((c) => c.codigo === "RC_IVA")?.cuentaContableCaja,
-      IUE_COMPRAS: conceptosRetencion.find((c) => c.codigo === "IUE_COMPRAS")?.cuentaContableCaja,
-      IT: conceptosRetencion.find((c) => c.codigo === "IT")?.cuentaContableCaja,
-    };
-
+    const { cuentaCreditoFiscal, cuentaPorRetencion } = await obtenerCuentasMotorTributario();
     const tipoCambio = Number(rendicion.tipoCambio);
-    type LineaComprobante = {
-      codigo: string;
-      cuentaNombre: string;
-      detalle: string;
-      debeBs: number;
-      haberBs: number;
-      debeUsd: number;
-      haberUsd: number;
-      centroCodigo?: string;
-      centroNombre?: string;
-      funcionCodigo?: string;
-      funcionNombre?: string;
-    };
-    const lineas: LineaComprobante[] = [];
 
     const gastos = rendicion.detalleGastos
       .map((d) => d.gasto)
       .filter((g) => g.estado !== "ANULADO")
       .sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
 
-    for (const gasto of gastos) {
-      const detalle = `F.${gasto.numeroRespaldo ?? "S/N"} ${gasto.proveedorNombre.toUpperCase()} ${gasto.glosa.toUpperCase()}`.trim();
-      const monto = Number(gasto.montoTotal);
-      const cuenta = gasto.cuentaContableCaja;
-      const subLinea =
-        cuenta && (cuenta.requiereCentroCosto || cuenta.requiereFuncionGasto) && gasto.centroCostoCaja && gasto.funcionGastoCaja
-          ? {
-              centroCodigo: gasto.centroCostoCaja.codigo,
-              centroNombre: gasto.centroCostoCaja.nombre,
-              funcionCodigo: gasto.funcionGastoCaja.codigo,
-              funcionNombre: gasto.funcionGastoCaja.nombre,
-            }
-          : {};
-
-      if (gasto.tipoDocumento === "FACTURA") {
-        const creditoFiscal = Number(gasto.montoCreditoFiscalIva);
-        if (creditoFiscal > 0 && cuentaCreditoFiscal) {
-          lineas.push({
-            codigo: cuentaCreditoFiscal.codigo,
-            cuentaNombre: cuentaCreditoFiscal.nombre,
-            detalle,
-            debeBs: creditoFiscal,
-            haberBs: 0,
-            debeUsd: creditoFiscal / tipoCambio,
-            haberUsd: 0,
-          });
-        }
-        if (cuenta) {
-          lineas.push({
-            codigo: cuenta.codigo,
-            cuentaNombre: cuenta.nombre,
-            detalle,
-            debeBs: monto - creditoFiscal,
-            haberBs: 0,
-            debeUsd: (monto - creditoFiscal) / tipoCambio,
-            haberUsd: 0,
-            ...subLinea,
-          });
-        }
-      } else if (gasto.tipoDocumento === "CONTRATO_RETENCION") {
-        const retRcIva = Number(gasto.montoRetencionRcIva);
-        const retIueCompras = Number(gasto.montoRetencionIueCompras);
-        const retIt = Number(gasto.montoRetencionIt);
-        const totalRetenciones = retRcIva + retIueCompras + retIt;
-
-        if (cuenta) {
-          lineas.push({
-            codigo: cuenta.codigo,
-            cuentaNombre: cuenta.nombre,
-            detalle,
-            debeBs: monto - totalRetenciones,
-            haberBs: 0,
-            debeUsd: (monto - totalRetenciones) / tipoCambio,
-            haberUsd: 0,
-            ...subLinea,
-          });
-        }
-
-        const retenciones: Array<[number, string]> = [
-          [retRcIva, "RC_IVA"],
-          [retIueCompras, "IUE_COMPRAS"],
-          [retIt, "IT"],
-        ];
-        for (const [montoRetencion, codigoConcepto] of retenciones) {
-          const cuentaRetencion = cuentaPorRetencion[codigoConcepto];
-          if (montoRetencion > 0 && cuentaRetencion) {
-            lineas.push({
-              codigo: cuentaRetencion.codigo,
-              cuentaNombre: cuentaRetencion.nombre,
-              detalle,
-              debeBs: 0,
-              haberBs: montoRetencion,
-              debeUsd: 0,
-              haberUsd: montoRetencion / tipoCambio,
-            });
-          }
-        }
-      } else if (cuenta) {
-        // RECIBO / RECIBO_DIRECTO: sin créditos ni retenciones, 100% a la
-        // cuenta contable resuelta (para RECIBO_DIRECTO suele ser Gastos No
-        // Deducibles, pero eso lo decide la cuenta asignada al gasto, no
-        // esta rama).
-        lineas.push({
-          codigo: cuenta.codigo,
-          cuentaNombre: cuenta.nombre,
-          detalle,
-          debeBs: monto,
-          haberBs: 0,
-          debeUsd: monto / tipoCambio,
-          haberUsd: 0,
-        });
-      }
-    }
+    const lineas = gastos.flatMap((gasto) =>
+      construirLineasGasto(gasto, cuentaCreditoFiscal, cuentaPorRetencion, tipoCambio),
+    );
 
     const totales = lineas.reduce(
       (acc, l) => ({
@@ -600,5 +708,92 @@ export const reportesCajaChicaService = {
       lineas,
       totales,
     };
+  },
+
+  // Comprobante de Egresos de UN gasto puntual pagado desde banco (el
+  // documento físico real "Bancos - Moneda Nacional"): mismas líneas que ya
+  // arma construirLineasGasto(), más la línea final que le faltaba al
+  // Comprobante Diario — el HABER a la cuenta contable del banco de donde
+  // salió la plata, balanceando el total. El folio se asigna recién la
+  // primera vez que se pide este comprobante, y queda fijo desde entonces.
+  async getComprobanteEgresoGasto(gastoId: string, userId: number) {
+    return prisma.$transaction(async (tx) => {
+      const gasto = await tx.gastoCaja.findUnique({
+        where: { id: gastoId },
+        include: {
+          centroCostoCaja: true,
+          funcionGastoCaja: true,
+          cuentaContableCaja: true,
+          cuentaBancariaCaja: { include: { cuentaContableCaja: true } },
+          rendicionDetalle: { include: { rendicion: true } },
+        },
+      });
+      if (!gasto) throw new HttpError("Gasto no encontrado", 404);
+      if (gasto.origen !== "BANCO") {
+        throw new HttpError("El Comprobante de Egresos solo aplica a gastos pagados desde una cuenta bancaria", 400);
+      }
+      if (gasto.estado === "ANULADO") {
+        throw new HttpError("No se puede generar el comprobante de un gasto anulado", 409);
+      }
+      if (!gasto.cuentaBancariaCaja) {
+        throw new HttpError("Este gasto no tiene una cuenta bancaria asociada", 409);
+      }
+
+      let numeroComprobante = gasto.numeroComprobante;
+      if (!numeroComprobante) {
+        numeroComprobante = await generarNumeroComprobanteEgresoGasto(tx);
+        await tx.gastoCaja.update({ where: { id: gastoId }, data: { numeroComprobante } });
+        await tx.log.create({
+          data: {
+            usuarioId: userId,
+            accion: "ASIGNAR_NUMERO_COMPROBANTE_EGRESO",
+            data: { gastoId, numeroComprobante },
+          },
+        });
+      }
+
+      const { cuentaCreditoFiscal, cuentaPorRetencion } = await obtenerCuentasMotorTributario();
+      const tipoCambio = gasto.rendicionDetalle[0]?.rendicion
+        ? Number(gasto.rendicionDetalle[0].rendicion.tipoCambio)
+        : TIPO_CAMBIO_BOB_USD_DEFAULT;
+
+      const lineas = construirLineasGasto(gasto, cuentaCreditoFiscal, cuentaPorRetencion, tipoCambio);
+
+      const monto = Number(gasto.montoTotal);
+      const cuentaBanco = gasto.cuentaBancariaCaja.cuentaContableCaja;
+      lineas.push({
+        codigo: cuentaBanco?.codigo ?? "",
+        cuentaNombre: cuentaBanco?.nombre ?? `${gasto.cuentaBancariaCaja.banco} - ${gasto.cuentaBancariaCaja.nombreCuenta}`,
+        detalle: `F.${gasto.numeroRespaldo ?? "S/N"} ${gasto.proveedorNombre.toUpperCase()} ${gasto.glosa.toUpperCase()}`.trim(),
+        debeBs: 0,
+        haberBs: monto,
+        debeUsd: 0,
+        haberUsd: monto / tipoCambio,
+      });
+
+      const totales = lineas.reduce(
+        (acc, l) => ({
+          debeBs: acc.debeBs + l.debeBs,
+          haberBs: acc.haberBs + l.haberBs,
+          debeUsd: acc.debeUsd + l.debeUsd,
+          haberUsd: acc.haberUsd + l.haberUsd,
+        }),
+        { debeBs: 0, haberBs: 0, debeUsd: 0, haberUsd: 0 },
+      );
+
+      return {
+        numero: numeroComprobante,
+        fecha: gasto.fecha,
+        proveedorNombre: gasto.proveedorNombre,
+        glosa: gasto.glosa,
+        numeroRespaldo: gasto.numeroRespaldo,
+        montoTotal: monto,
+        moneda: gasto.moneda,
+        cuentaBancaria: { banco: gasto.cuentaBancariaCaja.banco, nombreCuenta: gasto.cuentaBancariaCaja.nombreCuenta },
+        tipoCambio,
+        lineas,
+        totales,
+      };
+    });
   },
 };

@@ -4,6 +4,7 @@ import { validate, validateQuery, validateParams } from "../../middleware/valida
 import {
   agregarItemConceptoSchema,
   anularLiquidacionSchema,
+  comprobanteEgresoLiquidacionSchema,
   createLiquidacionSchema,
   liquidacionQuerySchema,
   previewLiquidacionQuerySchema,
@@ -70,6 +71,14 @@ router.delete(
   authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   liquidacionController.eliminarBorrador,
+);
+
+router.post(
+  "/:id/comprobante-egreso",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  validateParams(idSchema),
+  validate(comprobanteEgresoLiquidacionSchema),
+  liquidacionController.getComprobanteEgreso,
 );
 
 export default router;

@@ -58,7 +58,18 @@ export const createGastoCajaSchema = z
   .refine((data) => data.origen !== "BANCO" || Boolean(data.cuentaBancariaCajaId), {
     message: "Debes elegir la cuenta bancaria cuando el gasto sale directo del banco",
     path: ["cuentaBancariaCajaId"],
-  });
+  })
+  // FACTURA y RECIBO son, por definición, "con respaldo" (el propio nombre
+  // de RECIBO en el enum lo aclara: "con respaldo, un recibo/comprobante").
+  // Sin el número no hay forma de conciliar después contra el papel físico.
+  .refine(
+    (data) =>
+      !["FACTURA", "RECIBO"].includes(data.tipoDocumento) || Boolean(data.numeroRespaldo?.trim()),
+    {
+      message: "El número de factura/recibo es obligatorio para este tipo de documento",
+      path: ["numeroRespaldo"],
+    },
+  );
 
 // Edición posterior: todo opcional (solo se cambia lo que se envía), sin los
 // refine de creación — si el tipoDocumento pasa a CONTRATO_RETENCION sin

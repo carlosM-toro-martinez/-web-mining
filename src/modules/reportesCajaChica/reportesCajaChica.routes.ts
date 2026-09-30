@@ -14,6 +14,7 @@ router.use(authenticate);
 router.use(authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"));
 
 router.get("/retenciones", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getRetenciones);
+router.get("/impuestos", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getImpuestos);
 router.get("/no-deducibles", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getNoDeducibles);
 router.get("/desglose", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getDesglose);
 router.get(
@@ -28,5 +29,6 @@ router.get(
 );
 router.get("/rendicion/:rendicionId", reportesCajaChicaController.getReporteRendicion);
 router.get("/rendicion/:rendicionId/comprobante-diario", reportesCajaChicaController.getComprobanteDiario);
+router.get("/gasto/:gastoId/comprobante-egreso", reportesCajaChicaController.getComprobanteEgresoGasto);
 
 export default router;

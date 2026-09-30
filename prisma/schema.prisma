@@ -811,6 +811,10 @@ model LiquidacionPeriodo {
   // CERRAR (no en el borrador, igual que un talonario real). Null mientras
   // está en BORRADOR.
   numero           Int?                      @unique
+  // Folio del Comprobante de Egresos del pago al transportista — contador
+  // global propio, distinto de "numero" (el de la liquidación en sí),
+  // asignado recién la primera vez que se genera el comprobante.
+  numeroComprobante Int?                     @unique
   transportistaId  Int
   tipoPeriodo      TipoPeriodoLiquidacion
   fechaInicio      DateTime
@@ -934,6 +938,7 @@ model CuentaContableCaja {
   conceptosRetencion   ConceptoRetencionCaja[]
   gastos               GastoCaja[]
   partidasPresupuesto  PartidaPresupuestoCaja[]
+  cuentasBancarias     CuentaBancariaCaja[]
 }
 
 model ConceptoRetencionCaja {
@@ -973,6 +978,11 @@ model GastoCaja {
   partidaPresupuestoId     Int?
   cuentaBancariaCajaId     Int?
   origen                   OrigenGastoCaja          @default(CAJA)
+  // Folio del Comprobante de Egresos ("Nº 000188"): un contador global
+  // propio, asignado recién la primera vez que se genera el comprobante
+  // (nunca al registrar el gasto) — solo tiene sentido para origen BANCO,
+  // pero el campo queda disponible para cualquier gasto igual.
+  numeroComprobante        Int?                     @unique
   anulacion                AnulacionGastoCaja?
   caja                     CajaChica?               @relation(fields: [cajaId], references: [id])
   centroCostoCaja          CentroCostoCaja?         @relation(fields: [centroCostoCajaId], references: [id])
@@ -1071,6 +1081,11 @@ model CuentaBancariaCaja {
   monedaBase   MonedaCaja            @default(BOB)
   activo       Boolean               @default(true)
   saldoInicial Decimal               @default(0) @db.Decimal(14, 2)
+  // Cuenta contable propia de este banco (ej. "11.002.000"): la que se
+  // acredita (HABER) en el Comprobante de Egresos de cada gasto pagado
+  // desde esta cuenta — sin esto, esa línea no tenía con qué código salir.
+  cuentaContableCajaId Int?
+  cuentaContableCaja   CuentaContableCaja?   @relation(fields: [cuentaContableCajaId], references: [id])
   gastos       GastoCaja[]
   movimientos  MovimientoBancoCaja[]
 }

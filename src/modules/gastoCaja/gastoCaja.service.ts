@@ -126,6 +126,7 @@ export const gastoCajaService = {
           funcionGastoCaja: true,
           cuentaContableCaja: true,
           partidaPresupuesto: true,
+          anulacion: true,
         },
         orderBy: { fecha: "desc" },
       }),
@@ -261,9 +262,13 @@ export const gastoCajaService = {
       categoriaRetencion:
         data.categoriaRetencion !== undefined ? data.categoriaRetencion : existente.categoriaRetencion,
       montoTotal: data.montoTotal ?? Number(existente.montoTotal),
+      numeroRespaldo: data.numeroRespaldo !== undefined ? data.numeroRespaldo : existente.numeroRespaldo,
     };
     if (merged.tipoDocumento === "CONTRATO_RETENCION" && !merged.categoriaRetencion) {
       throw new HttpError("categoriaRetencion es obligatoria cuando el tipo de documento es CONTRATO_RETENCION", 400);
+    }
+    if (["FACTURA", "RECIBO"].includes(merged.tipoDocumento) && !merged.numeroRespaldo?.trim()) {
+      throw new HttpError("El número de factura/recibo es obligatorio para este tipo de documento", 400);
     }
 
     const [centroCosto, funcionGasto, cuentaManual, partidaPresupuesto] = await Promise.all([
