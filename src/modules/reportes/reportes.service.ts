@@ -215,7 +215,12 @@ export const reportesService = {
     where.estado = query.estado ? query.estado : { not: "ANULADO" };
     if (query.solicitanteId) where.solicitanteId = query.solicitanteId;
     const dateRange = buildDateRange(query);
-    if (dateRange) where.createdAt = dateRange;
+    if (dateRange) {
+      where.OR = [
+        { fechaOperacion: dateRange },
+        { fechaOperacion: null, createdAt: dateRange },
+      ];
+    }
 
     const include = {
       solicitante: { select: { id: true, nombre: true, email: true } },

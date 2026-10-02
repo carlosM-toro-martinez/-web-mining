@@ -173,30 +173,38 @@ export const valesService = {
     const skip  = (page - 1) * limit;
 
     // ADMIN y SUPERINTENDENTE ven todos los vales; el resto solo los propios
-    const where: any = ROLES_SUPERVISORES.includes(userRole)
-      ? {}
+    const roleFilter: any = ROLES_SUPERVISORES.includes(userRole)
+      ? null
       : { OR: [{ solicitanteId: userId }, { superintendenteId: userId }, { almaceneroId: userId }] };
 
-    if (query.estado)       where.estado       = query.estado;
-    if (query.solicitanteId) where.solicitanteId = Number(query.solicitanteId);
-
     // Filtro por período (mes exacto tiene precedencia sobre rango libre)
+    let dateFilter: any = null;
     if (query.anio && query.mes) {
       const start = new Date(Date.UTC(query.anio, query.mes - 1, 1));
       const end   = new Date(Date.UTC(query.anio, query.mes, 1));
-      where.OR = [
+      dateFilter = { OR: [
         { fechaOperacion: { gte: start, lt: end } },
         { fechaOperacion: null, createdAt: { gte: start, lt: end } },
-      ];
+      ]};
     } else if (query.fechaInicio || query.fechaFin) {
       const range: any = {};
       if (query.fechaInicio) range.gte = new Date(Date.UTC(query.fechaInicio.getUTCFullYear(), query.fechaInicio.getUTCMonth(), query.fechaInicio.getUTCDate()));
       if (query.fechaFin)    range.lte = new Date(Date.UTC(query.fechaFin.getUTCFullYear(),    query.fechaFin.getUTCMonth(),    query.fechaFin.getUTCDate(),    23, 59, 59, 999));
-      where.OR = [
+      dateFilter = { OR: [
         { fechaOperacion: range },
         { fechaOperacion: null, createdAt: range },
-      ];
+      ]};
     }
+
+    // Combina role + fecha con AND para que ambas restricciones apliquen
+    const andClauses: any[] = [];
+    if (roleFilter) andClauses.push(roleFilter);
+    if (dateFilter) andClauses.push(dateFilter);
+
+    const where: any = {};
+    if (andClauses.length > 0) where.AND = andClauses;
+    if (query.estado)        where.estado        = query.estado;
+    if (query.solicitanteId) where.solicitanteId = Number(query.solicitanteId);
 
     if (query.sinPaginar) {
       const vales = await prisma.vale.findMany({ where, include: valeIncludeCompleto, orderBy: { createdAt: "desc" } });

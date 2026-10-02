@@ -16,13 +16,13 @@ router.get("/bin-card-valorado", reportesController.getBinCardValorado);
 router.get("/stock", reportesController.getStockActual);
 
 // Resumen de vales (filtrable por estado, solicitante, fecha)
-router.get("/vales", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), reportesController.getValesResumen);
+router.get("/vales", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO", "CONTADOR"), reportesController.getValesResumen);
 
 // Resumen de compras (filtrable por estado, proveedor, fecha)
-router.get("/compras", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasResumen);
+router.get("/compras", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getComprasResumen);
 
 // Detalle completo de compras con proveedor, items valorados y totales
-router.get("/compras-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasDetalle);
+router.get("/compras-detalle", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getComprasDetalle);
 
 // Saldos iniciales por mes: muestra totalBsInicial corregido o saldoInicial×precioUnit como fallback
 router.get("/saldos-iniciales", reportesController.getSaldosIniciales);
@@ -40,27 +40,27 @@ router.get("/entradas-almacen", reportesController.getEntradasAlmacen);
 router.get("/salidas-almacen", reportesController.getSalidasAlmacen);
 
 // Compras detalladas por proveedor y factura con totalSinIVA (total − 13% IVA)
-router.get("/compras-proveedor", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasProveedor);
+router.get("/compras-proveedor", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getComprasProveedor);
 
 // Detalle de materiales: salidas agrupadas por sub-cuenta × sub-centro contable
-router.get("/detalle-materiales", authorize("ADMIN", "ALMACENERO"), reportesController.getDetalleMateriales);
+router.get("/detalle-materiales", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getDetalleMateriales);
 
 // Diario almacenes: libro diario contable DEBE (inventario) / HABER (cuentas de gasto)
-router.get("/diario-almacenes", authorize("ADMIN", "ALMACENERO"), reportesController.getDiarioAlmacenes);
+router.get("/diario-almacenes", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getDiarioAlmacenes);
 
 // Cuadro inventarios y suministros: compras por proveedor/mes con grupo de producto
-router.get("/cuadro-suministros", authorize("ADMIN", "ALMACENERO"), reportesController.getCuadroSuministros);
+router.get("/cuadro-suministros", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getCuadroSuministros);
 
 // Anulaciones de entradas (compras anuladas) por período
-router.get("/anulaciones-entradas", authorize("ADMIN", "ALMACENERO"), reportesController.getAnulacionesEntradas);
+router.get("/anulaciones-entradas", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getAnulacionesEntradas);
 
 // Anulaciones de salidas (vales anulados) por período
-router.get("/anulaciones-salidas", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), reportesController.getAnulacionesSalidas);
+router.get("/anulaciones-salidas", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE", "CONTADOR"), reportesController.getAnulacionesSalidas);
 
 // Salidas individuales auditables con filtros opcionales de cuenta contable
-router.get("/salidas-detalle", authorize("ADMIN", "ALMACENERO"), reportesController.getSalidasDetalle);
+router.get("/salidas-detalle", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getSalidasDetalle);
 
 // Compras de productos que ya tenían saldo inicial, agrupadas por grupo de producto
-router.get("/compras-con-saldo-inicial", authorize("ADMIN", "ALMACENERO"), reportesController.getComprasConSaldoInicial);
+router.get("/compras-con-saldo-inicial", authorize("ADMIN", "ALMACENERO", "CONTADOR"), reportesController.getComprasConSaldoInicial);
 
 export default router;
