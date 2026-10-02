@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const tipoCombustibleViajeSchema = z.enum(["CON_COMBUSTIBLE", "SIN_COMBUSTIBLE"]);
+
 export const estadoLoteDespachoSchema = z.enum([
   "REGISTRADO",
   "EN_TRANSITO",
@@ -24,12 +26,38 @@ export const createLoteDespachoSchema = z
     tipoMineralId: z.number().int().positive(),
     destinoIngenioId: z.number().int().positive(),
     nivel: z.string().trim().optional(),
+    // Si la empresa puso el combustible de ESTE viaje o no — decide la
+    // tarifa que se le aplica al liquidar (ver buscarTarifaAplicable).
+    incluyeCombustible: tipoCombustibleViajeSchema.default("SIN_COMBUSTIBLE"),
+    // Cuánto se le asigna al vehículo para este viaje — solo tiene sentido
+    // si incluyeCombustible es CON_COMBUSTIBLE (ver refine abajo). Cuánto se
+    // le entrega REALMENTE se registra después, por separado, con
+    // registrarCombustibleEntregadoSchema (no siempre coincide con lo
+    // asignado).
+    combustibleAsignadoLitros: z.number().nonnegative().optional(),
     fechaDespachoReal: z.coerce.date(),
     fechaDocumentalFiscal: z.coerce.date().optional(),
     conocimientoFecha: z.coerce.date().optional(),
     detalleCarga: z.string().trim().min(1).optional(),
     descripcion: z.string().trim().optional(),
     observaciones: z.string().trim().optional(),
+  })
+  .strict()
+  .refine(
+    (data) => data.incluyeCombustible !== "CON_COMBUSTIBLE" || Boolean(data.combustibleAsignadoLitros),
+    {
+      message: "Indica cuántos litros de combustible se le asignan a este viaje",
+      path: ["combustibleAsignadoLitros"],
+    },
+  )
+  .refine((data) => data.incluyeCombustible !== "SIN_COMBUSTIBLE" || !data.combustibleAsignadoLitros, {
+    message: "Un viaje sin combustible de la empresa no debe llevar litros asignados",
+    path: ["combustibleAsignadoLitros"],
+  });
+
+export const registrarCombustibleEntregadoSchema = z
+  .object({
+    combustibleEntregadoLitros: z.number().nonnegative(),
   })
   .strict();
 

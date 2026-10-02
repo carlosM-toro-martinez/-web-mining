@@ -14,6 +14,7 @@ export const tarifaLiquidacionService = {
     if (query.tipoEntidad) where.tipoEntidad = query.tipoEntidad;
     if (query.transportistaId) where.transportistaId = query.transportistaId;
     if (query.tipoMineralId) where.tipoMineralId = query.tipoMineralId;
+    if (query.incluyeCombustible) where.incluyeCombustible = query.incluyeCombustible;
     if (query.soloVigentes) where.vigenteHasta = null;
 
     return prisma.tarifaLiquidacion.findMany({
@@ -29,10 +30,11 @@ export const tarifaLiquidacionService = {
 
   // Igual que las alícuotas: nunca se edita, crear una nueva cierra la
   // vigencia anterior para la misma combinación tipoEntidad + transportistaId
-  // + tipoMineralId (null en cualquiera de los dos últimos significa
-  // "aplica a todos" en esa dimensión). Se cierra solo la vigencia con la
-  // MISMA especificidad, para no pisar una tarifa genérica al crear una
-  // negociada con un transportista puntual (o viceversa).
+  // + tipoMineralId + incluyeCombustible (null en cualquiera de los tres
+  // últimos significa "aplica a todos" en esa dimensión). Se cierra solo la
+  // vigencia con la MISMA especificidad, para no pisar una tarifa genérica al
+  // crear una negociada con un transportista puntual (o viceversa), ni una
+  // que no distingue combustible al crear una que sí distingue.
   async create(data: CreateTarifaLiquidacionDTO, userId: number) {
     if (data.tipoMineralId) {
       const tipoMineral = await prisma.tipoMineral.findUnique({ where: { id: data.tipoMineralId } });
@@ -50,13 +52,19 @@ export const tarifaLiquidacionService = {
           tipoEntidad: data.tipoEntidad,
           transportistaId: data.transportistaId ?? null,
           tipoMineralId: data.tipoMineralId ?? null,
+          incluyeCombustible: data.incluyeCombustible ?? null,
           vigenteHasta: null,
         },
         data: { vigenteHasta: data.vigenteDesde },
       });
 
       return tx.tarifaLiquidacion.create({
-        data: { ...data, transportistaId: data.transportistaId ?? null, tipoMineralId: data.tipoMineralId ?? null },
+        data: {
+          ...data,
+          transportistaId: data.transportistaId ?? null,
+          tipoMineralId: data.tipoMineralId ?? null,
+          incluyeCombustible: data.incluyeCombustible ?? null,
+        },
         include: { tipoMineral: true },
       });
     });

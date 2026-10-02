@@ -6,6 +6,7 @@ import {
   avanzarEstadoLoteSchema,
   createLoteDespachoSchema,
   loteDespachoQuerySchema,
+  registrarCombustibleEntregadoSchema,
   registrarPesajeSchema,
   transbordarLoteSchema,
 } from "./loteDespacho.schema.js";
@@ -42,6 +43,14 @@ router.post(
   validateParams(idSchema),
   validate(registrarPesajeSchema),
   loteDespachoController.registrarPesaje,
+);
+
+router.post(
+  "/:id/combustible-entregado",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  validateParams(idSchema),
+  validate(registrarCombustibleEntregadoSchema),
+  loteDespachoController.registrarCombustibleEntregado,
 );
 
 router.post(

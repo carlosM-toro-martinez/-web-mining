@@ -62,6 +62,20 @@ export const loteDespachoController = {
     }
   },
 
+  async registrarCombustibleEntregado(req: AuthRequest, res: Response) {
+    try {
+      const lote = await loteDespachoService.registrarCombustibleEntregado(
+        req.params.id as string,
+        req.body,
+        req.user!.id,
+      );
+      res.status(201).json({ success: true, data: lote });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async anular(req: AuthRequest, res: Response) {
     try {
       const lote = await loteDespachoService.anular(req.params.id as string, req.body, req.user!.id);

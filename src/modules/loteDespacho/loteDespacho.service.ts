@@ -6,6 +6,7 @@ import type {
   AnularLoteDTO,
   AvanzarEstadoLoteDTO,
   CreateLoteDespachoDTO,
+  RegistrarCombustibleEntregadoDTO,
   RegistrarPesajeDTO,
   TransbordarLoteDTO,
 } from "./loteDespacho.types.js";
@@ -125,6 +126,9 @@ export const loteDespachoService = {
           tipoMineralId: data.tipoMineralId,
           destinoIngenioId: data.destinoIngenioId,
           nivel: data.nivel ?? null,
+          incluyeCombustible: data.incluyeCombustible,
+          combustibleAsignadoLitros:
+            data.incluyeCombustible === "CON_COMBUSTIBLE" ? data.combustibleAsignadoLitros ?? null : null,
           fechaDespachoReal: data.fechaDespachoReal,
           fechaDocumentalFiscal: data.fechaDocumentalFiscal ?? data.fechaDespachoReal,
           // El vehículo ya se marca EN_TRANSITO abajo en el mismo paso — el
@@ -275,6 +279,39 @@ export const loteDespachoService = {
 
       return actualizado;
     });
+  },
+
+  // Cuánto combustible se le entregó REALMENTE al vehículo, aparte de lo
+  // que se le asignó al crear el lote (combustibleAsignadoLitros) — no
+  // siempre coincide (puede quedar un sobrante), así que se registra por
+  // separado y una sola vez, apenas se sepa la cifra real. Se puede
+  // registrar en cualquier momento mientras el lote no esté anulado — a
+  // diferencia del pesaje, no depende de en qué estado esté el lote.
+  async registrarCombustibleEntregado(id: string, data: RegistrarCombustibleEntregadoDTO, userId: number) {
+    const lote = await prisma.loteDespacho.findUnique({ where: { id } });
+    if (!lote) throw new HttpError("Lote no encontrado", 404);
+    if (lote.estadoLote === "ANULADO") throw new HttpError("El lote está anulado", 409);
+    if (lote.incluyeCombustible !== "CON_COMBUSTIBLE") {
+      throw new HttpError("Este lote no lleva combustible de la empresa asignado", 409);
+    }
+    if (lote.combustibleEntregadoLitros !== null) {
+      throw new HttpError("Este lote ya tiene registrado el combustible entregado", 409);
+    }
+
+    const actualizado = await prisma.loteDespacho.update({
+      where: { id },
+      data: { combustibleEntregadoLitros: data.combustibleEntregadoLitros },
+    });
+
+    await prisma.log.create({
+      data: {
+        usuarioId: userId,
+        accion: "REGISTRAR_COMBUSTIBLE_ENTREGADO_LOTE",
+        data: { loteId: id, combustibleEntregadoLitros: data.combustibleEntregadoLitros },
+      },
+    });
+
+    return actualizado;
   },
 
   // Anular el lote NO anula su Formulario 101 (el papel del Municipio

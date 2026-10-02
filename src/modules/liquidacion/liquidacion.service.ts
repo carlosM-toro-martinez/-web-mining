@@ -27,37 +27,65 @@ const INCLUDE_DETALLE = {
   anulacion: true,
 } as const;
 
-// Prioridad de tarifa (de más a menos específica): (1) tarifa negociada con
-// ESTE transportista puntual (contrato propio) + este mineral; (2) tarifa de
-// este transportista para cualquier mineral; (3) tarifa genérica del tipo de
-// entidad (Empresa/Particular) + este mineral; (4) genérica de ese tipo para
-// cualquier mineral. La primera que exista y esté vigente en la fecha gana.
+// Prioridad de tarifa (de más a menos específica), en 2 niveles:
+//
+//   Nivel A — transportista + mineral (el de siempre, sin cambios):
+//     (1) negociada con ESTE transportista puntual + este mineral;
+//     (2) de este transportista para cualquier mineral;
+//     (3) genérica del tipo de entidad (Empresa/Particular) + este mineral;
+//     (4) genérica de ese tipo para cualquier mineral.
+//
+//   Nivel B — combustible (desempate MÁS fino, dentro de cada combo de
+//   arriba): primero se busca una tarifa que distinga explícitamente el
+//   estado de combustible de ESTE viaje (CON_COMBUSTIBLE/SIN_COMBUSTIBLE);
+//   si no existe, cae a la tarifa de ese mismo combo que no distingue
+//   combustible (incluyeCombustible = null) — así TODA tarifa ya registrada
+//   antes de este campo (que quedó en null) sigue aplicando exactamente
+//   igual que siempre, y un transportista solo necesita una fila nueva si de
+//   verdad quiere cobrar distinto según si la empresa puso el combustible.
+//
+// La primera que exista y esté vigente en la fecha gana.
 async function buscarTarifaAplicable(
   tipoEntidad: string,
   transportistaId: number,
   tipoMineralId: number,
+  incluyeCombustible: string,
   fecha: Date,
 ) {
-  const vigente = (tipoMineralIdFiltro: number | null, transportistaIdFiltro: number | null) =>
+  const vigente = (
+    tipoMineralIdFiltro: number | null,
+    transportistaIdFiltro: number | null,
+    incluyeCombustibleFiltro: string | null,
+  ) =>
     prisma.tarifaLiquidacion.findFirst({
       where: {
         tipoEntidad: tipoEntidad as any,
         tipoMineralId: tipoMineralIdFiltro,
         transportistaId: transportistaIdFiltro,
+        incluyeCombustible: incluyeCombustibleFiltro as any,
         vigenteDesde: { lte: fecha },
         OR: [{ vigenteHasta: null }, { vigenteHasta: { gt: fecha } }],
       },
       orderBy: { vigenteDesde: "desc" },
     });
 
-  const [especificaTransportista, genericaTransportista, especificaTipo, genericaTipo] = await Promise.all([
-    vigente(tipoMineralId, transportistaId),
-    vigente(null, transportistaId),
-    vigente(tipoMineralId, null),
-    vigente(null, null),
-  ]);
+  const combos: Array<[number | null, number | null]> = [
+    [tipoMineralId, transportistaId],
+    [null, transportistaId],
+    [tipoMineralId, null],
+    [null, null],
+  ];
 
-  return especificaTransportista ?? genericaTransportista ?? especificaTipo ?? genericaTipo ?? null;
+  for (const [mineralFiltro, transportistaFiltro] of combos) {
+    const [conCombustibleEspecifico, sinDistincion] = await Promise.all([
+      vigente(mineralFiltro, transportistaFiltro, incluyeCombustible),
+      vigente(mineralFiltro, transportistaFiltro, null),
+    ]);
+    const tarifa = conCombustibleEspecifico ?? sinDistincion;
+    if (tarifa) return tarifa;
+  }
+
+  return null;
 }
 
 interface LoteElegible {
@@ -66,6 +94,7 @@ interface LoteElegible {
   fechaDespachoReal: Date;
   vehiculoPlaca: string;
   tipoMineral: string;
+  incluyeCombustible: string;
   tonelajeNeto: number;
   precioAplicado: number;
   subtotal: number;
@@ -106,6 +135,7 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
       transportista.tipoEntidad,
       transportista.id,
       lote.tipoMineralId,
+      lote.incluyeCombustible,
       lote.fechaDespachoReal,
     );
     if (!tarifa) {
@@ -123,6 +153,7 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
       fechaDespachoReal: lote.fechaDespachoReal,
       vehiculoPlaca: lote.vehiculo.placa,
       tipoMineral: lote.tipoMineral.nombre,
+      incluyeCombustible: lote.incluyeCombustible,
       tonelajeNeto,
       precioAplicado,
       subtotal: Math.round(tonelajeNeto * precioAplicado * 100) / 100,

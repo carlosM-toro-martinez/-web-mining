@@ -561,6 +561,7 @@ model MunicipioOrigen {
   codigo        String            @unique
   nombre        String
   activo        Boolean           @default(true)
+  esSemilla     Boolean           @default(false)
   alicuotas     AlicuotaRegalia[]
   lotesDespacho LoteDespacho[]
 }
@@ -570,6 +571,7 @@ model TipoMineral {
   codigo        String              @unique
   nombre        String
   activo        Boolean             @default(true)
+  esSemilla     Boolean             @default(false)
   alicuotas     AlicuotaRegalia[]
   lotesDespacho LoteDespacho[]
   tarifas       TarifaLiquidacion[]
@@ -580,6 +582,7 @@ model Ingenio {
   codigo        String         @unique
   nombre        String
   activo        Boolean        @default(true)
+  esSemilla     Boolean        @default(false)
   lotesDespacho LoteDespacho[]
 }
 
@@ -601,9 +604,15 @@ model TarifaLiquidacion {
   tipoEntidad       TipoEntidadTransportista
   transportistaId   Int?
   tipoMineralId     Int?
+  // null = aplica sin importar si el viaje llevó combustible de la empresa o
+  // no (el comportamiento de siempre); CON_COMBUSTIBLE/SIN_COMBUSTIBLE = solo
+  // para viajes marcados con ese estado puntual (ver buscarTarifaAplicable en
+  // liquidacion.service.ts, que agrega esto como el desempate más específico).
+  incluyeCombustible TipoCombustibleViaje?
   precioPorTonelada Decimal                 @db.Decimal(14, 6)
   vigenteDesde      DateTime
   vigenteHasta      DateTime?
+  esSemilla         Boolean                 @default(false)
   transportista     Transportista?          @relation(fields: [transportistaId], references: [id])
   tipoMineral       TipoMineral?            @relation(fields: [tipoMineralId], references: [id])
 
@@ -628,6 +637,10 @@ model Transportista {
   numeroCuenta       String?
   cuentaContableId   Int?
   activo             Boolean                 @default(true)
+  // true = viene de seedLogistica.ts (la flota real transcrita de la Nota de
+  // Remisión de Volquetas); logisticaReset.service.ts la deja afuera del
+  // "eliminar todo" para no perder la flota real al reiniciar datos de prueba.
+  esSemilla          Boolean                 @default(false)
   liquidaciones      LiquidacionPeriodo[]
   lotesDespacho      LoteDespacho[]
   tarifas            TarifaLiquidacion[]
@@ -645,6 +658,7 @@ model Vehiculo {
   propietarioId       Int?
   estadoActual        EstadoVehiculo         @default(DISPONIBLE)
   activo              Boolean                @default(true)
+  esSemilla           Boolean                @default(false)
   historialEstados    EstadoFlotaHistorico[]
   lotesDespacho       LoteDespacho[]
   transbordosNuevo    TransbordoLote[]       @relation("TransbordoVehiculoNuevo")
@@ -660,6 +674,7 @@ model Chofer {
   ci                String           @unique
   licencia          String?
   activo            Boolean          @default(true)
+  esSemilla         Boolean          @default(false)
   lotesDespacho     LoteDespacho[]
   transbordosNuevos TransbordoLote[]
 }
@@ -693,6 +708,17 @@ model LoteDespacho {
   tipoMineralId         Int
   destinoIngenioId      Int
   nivel                 String?
+  // Decidido viaje por viaje (el mismo transportista puede alternar): si la
+  // empresa puso el combustible de este viaje o no — buscarTarifaAplicable en
+  // liquidacion.service.ts lo usa para elegir, entre las tarifas vigentes del
+  // transportista, la que corresponde a este caso puntual.
+  incluyeCombustible    TipoCombustibleViaje     @default(SIN_COMBUSTIBLE)
+  // Solo tienen sentido cuando incluyeCombustible = CON_COMBUSTIBLE: cuánto
+  // se le asignó al vehículo para este viaje (al crear el lote) y cuánto se
+  // le entregó realmente después (no siempre coincide — puede quedar
+  // sobrante, que se calcula en el frontend como asignado - entregado).
+  combustibleAsignadoLitros  Decimal?            @db.Decimal(10, 2)
+  combustibleEntregadoLitros Decimal?            @db.Decimal(10, 2)
   fechaDespachoReal     DateTime
   fechaDocumentalFiscal DateTime
   estadoLote            EstadoLoteDespacho       @default(REGISTRADO)
@@ -1266,6 +1292,11 @@ enum EstadoInfraestructura {
 enum TipoEntidadTransportista {
   EMPRESA
   TRABAJADOR_PARTICULAR
+}
+
+enum TipoCombustibleViaje {
+  CON_COMBUSTIBLE
+  SIN_COMBUSTIBLE
 }
 
 enum TipoConceptoLiquidacion {
