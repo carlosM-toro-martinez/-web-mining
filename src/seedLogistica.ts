@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { prisma } from "./config/prisma.js";
 
 // Semilla idempotente de los datos REALES de Logística: la flota de
@@ -259,7 +260,14 @@ async function seedTarifas() {
   );
 }
 
-async function seedLogistica() {
+// Exportada (no solo ejecutada como script) para que server.ts la llame al
+// arrancar — así corre sola en cualquier ambiente donde se levante el
+// servidor (prod incluida), sin depender de que alguien la corra a mano o
+// de un paso aparte en el pipeline de deploy. Es idempotente: no vuelve a
+// insertar nada si ya existe, así que es seguro llamarla en cada arranque.
+// NO desconecta prisma aquí — ese cliente lo sigue usando el resto del
+// servidor después de sembrar.
+export async function seedLogistica() {
   try {
     await seedTransportistasYFlota();
     await seedCatalogos();
@@ -267,9 +275,13 @@ async function seedLogistica() {
     console.log("Semilla de Logística completada.");
   } catch (error) {
     console.error("Error al sembrar datos de Logística:", error);
-  } finally {
-    await prisma.$disconnect();
   }
 }
 
-seedLogistica();
+// Solo cuando se ejecuta directamente como script ("npx tsx
+// src/seedLogistica.ts", para probar a mano) desconecta prisma al terminar;
+// al importarla desde server.ts esto no corre.
+const esEjecucionDirecta = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (esEjecucionDirecta) {
+  seedLogistica().finally(() => prisma.$disconnect());
+}
