@@ -99,7 +99,3 @@ export async function generarNumeroLiquidacionTransporte(tx: Prisma.TransactionC
 export async function generarNumeroComprobanteEgresoGasto(tx: Prisma.TransactionClient): Promise<number> {
   return reservarSiguienteNumero(tx, "COMPROBANTE_EGRESO_GASTO");
 }
-
-export async function generarNumeroComprobanteEgresoLiquidacion(tx: Prisma.TransactionClient): Promise<number> {
-  return reservarSiguienteNumero(tx, "COMPROBANTE_EGRESO_LIQUIDACION");
-}

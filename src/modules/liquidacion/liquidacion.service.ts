@@ -2,14 +2,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import {
-  generarNumeroComprobanteEgresoLiquidacion,
-  generarNumeroLiquidacionTransporte,
-} from "../../utils/correlativo.js";
+import { generarNumeroLiquidacionTransporte } from "../../utils/correlativo.js";
 import type {
   AgregarItemConceptoDTO,
   AnularLiquidacionDTO,
-  ComprobanteEgresoLiquidacionDTO,
   CreateLiquidacionDTO,
   PreviewLiquidacionQuery,
 } from "./liquidacion.types.js";
@@ -21,7 +17,11 @@ type LiquidacionQuery = z.infer<typeof liquidacionQuerySchema>;
 const INCLUDE_DETALLE = {
   transportista: true,
   detalleLotes: {
-    include: { lote: { include: { vehiculo: true, tipoMineral: true, municipioOrigen: true, destinoIngenio: true } } },
+    include: {
+      lote: {
+        include: { vehiculo: true, tipoMineral: true, municipioOrigen: true, destinoIngenio: true, chofer: true },
+      },
+    },
   },
   itemsConcepto: { include: { concepto: true } },
   anulacion: true,
@@ -92,12 +92,64 @@ interface LoteElegible {
   loteId: string;
   correlativo: string;
   fechaDespachoReal: Date;
+  vehiculoId: number;
   vehiculoPlaca: string;
+  choferNombre: string;
   tipoMineral: string;
   incluyeCombustible: string;
   tonelajeNeto: number;
   precioAplicado: number;
   subtotal: number;
+}
+
+interface GrupoLiquidacion {
+  vehiculoId: number;
+  vehiculoPlaca: string;
+  precioAplicado: number;
+  loteIds: string[];
+  tonelajeNetoSumado: number;
+  tonelajeNetoRedondeado: number;
+  subtotal: number;
+}
+
+// Método real confirmado contra los documentos físicos del usuario: NO se
+// redondea cada viaje por separado y después se suman los redondeos — se
+// agrupa por volqueta (y por el precio que le corresponda, por si el mismo
+// vehículo tuvo tarifas distintas en el rango), se suma el tonelaje CRUDO
+// de 3 decimales de todo el grupo, se redondea esa suma UNA sola vez a 2
+// decimales, y recién ahí se multiplica por el precio/ton. Verificado
+// bit a bit contra dos filas reales del documento (159.53×264.48=42192.4944
+// → 42192.49; 144.08×264.48=38106.2784→38106.28). Esto puede diferir del
+// viejo método (redondear cada viaje y sumar) por varios bolivianos cuando
+// un mismo vehículo tiene muchos viajes en el período.
+function agruparPorVehiculoYPrecio(elegibles: LoteElegible[]): GrupoLiquidacion[] {
+  const grupos = new Map<string, GrupoLiquidacion>();
+
+  for (const e of elegibles) {
+    const clave = `${e.vehiculoId}_${e.precioAplicado}`;
+    const grupo = grupos.get(clave);
+    if (grupo) {
+      grupo.tonelajeNetoSumado += e.tonelajeNeto;
+      grupo.loteIds.push(e.loteId);
+    } else {
+      grupos.set(clave, {
+        vehiculoId: e.vehiculoId,
+        vehiculoPlaca: e.vehiculoPlaca,
+        precioAplicado: e.precioAplicado,
+        loteIds: [e.loteId],
+        tonelajeNetoSumado: e.tonelajeNeto,
+        tonelajeNetoRedondeado: 0,
+        subtotal: 0,
+      });
+    }
+  }
+
+  for (const grupo of grupos.values()) {
+    grupo.tonelajeNetoRedondeado = Math.round(grupo.tonelajeNetoSumado * 100) / 100;
+    grupo.subtotal = Math.round(grupo.tonelajeNetoRedondeado * grupo.precioAplicado * 100) / 100;
+  }
+
+  return Array.from(grupos.values());
 }
 
 // Lógica compartida entre preview() (solo lectura) y create() (persiste):
@@ -122,7 +174,7 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
       // (BORRADOR o CERRADO) queda fuera de esta lista.
       detallesLiquidacion: { none: { liquidacion: { estado: { not: "ANULADO" } } } },
     },
-    include: { pesaje: true, vehiculo: true, tipoMineral: true },
+    include: { pesaje: true, vehiculo: true, tipoMineral: true, chofer: true },
     orderBy: { fechaDespachoReal: "asc" },
   });
 
@@ -151,33 +203,40 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
       loteId: lote.id,
       correlativo: lote.correlativo,
       fechaDespachoReal: lote.fechaDespachoReal,
+      vehiculoId: lote.vehiculoId,
       vehiculoPlaca: lote.vehiculo.placa,
+      choferNombre: lote.chofer.nombre,
       tipoMineral: lote.tipoMineral.nombre,
       incluyeCombustible: lote.incluyeCombustible,
       tonelajeNeto,
       precioAplicado,
+      // Subtotal informativo por viaje (se muestra en el detalle), pero el
+      // total real de la liquidación NO es la suma de estos — ver
+      // agruparPorVehiculoYPrecio().
       subtotal: Math.round(tonelajeNeto * precioAplicado * 100) / 100,
     });
   }
 
-  return { transportista, elegibles };
+  const grupos = agruparPorVehiculoYPrecio(elegibles);
+  return { transportista, elegibles, grupos };
 }
 
 export const liquidacionService = {
   // Vista previa sin persistir: qué lotes y cuánto se le pagaría a este
   // transportista en este rango, para decidir ANTES de crear/cerrar nada.
   async preview(query: PreviewLiquidacionQuery) {
-    const { transportista, elegibles } = await construirElegibles(
+    const { transportista, elegibles, grupos } = await construirElegibles(
       query.transportistaId,
       query.fechaInicio,
       query.fechaFin,
     );
 
-    const totalBruto = Math.round(elegibles.reduce((acc, e) => acc + e.subtotal, 0) * 100) / 100;
+    const totalBruto = Math.round(grupos.reduce((acc, g) => acc + g.subtotal, 0) * 100) / 100;
 
     return {
       transportista,
       lotes: elegibles,
+      grupos,
       totalLotes: elegibles.length,
       totalBruto,
     };
@@ -342,7 +401,28 @@ export const liquidacionService = {
         );
       }
 
-      const totalBruto = detalleValidos.reduce((acc, d) => acc.add(d.subtotal), new Prisma.Decimal(0));
+      // Mismo método que preview(): agrupar por vehículo+precio, sumar el
+      // tonelaje crudo del grupo, redondear una sola vez y recién ahí
+      // multiplicar por el precio — nunca sumar los subtotales por-viaje
+      // ya redondeados (ver agruparPorVehiculoYPrecio()).
+      const gruposCierre = agruparPorVehiculoYPrecio(
+        detalleValidos.map((d) => ({
+          loteId: d.loteId,
+          correlativo: d.lote.correlativo,
+          fechaDespachoReal: d.lote.fechaDespachoReal,
+          vehiculoId: d.lote.vehiculoId,
+          vehiculoPlaca: "",
+          choferNombre: "",
+          tipoMineral: "",
+          incluyeCombustible: d.lote.incluyeCombustible,
+          tonelajeNeto: Number(d.tonelajeNeto),
+          precioAplicado: Number(d.precioAplicado),
+          subtotal: Number(d.subtotal),
+        })),
+      );
+      const totalBruto = new Prisma.Decimal(
+        gruposCierre.reduce((acc, g) => acc + g.subtotal, 0).toFixed(2),
+      );
       const totalAbonos = liquidacion.itemsConcepto
         .filter((i) => i.concepto.tipo === "ABONO")
         .reduce((acc, i) => acc.add(i.monto), new Prisma.Decimal(0));
@@ -438,64 +518,4 @@ export const liquidacionService = {
     logger.info({ userId, liquidacionId: id, action: "ELIMINAR_BORRADOR_LIQUIDACION" }, "Borrador de liquidación eliminado");
   },
 
-  // Comprobante de Egresos del pago a un transportista: solo tiene sentido
-  // para una liquidación ya CERRADA (recién ahí se pagó de verdad). A
-  // diferencia de Caja Chica, Logística no tiene catálogo de cuentas
-  // contables — las dos cuentas del asiento (a qué se debita el gasto de
-  // transporte, de qué banco/caja sale la plata) se piden a mano cada vez
-  // que se genera, sin persistirlas. El folio sí se persiste, la primera
-  // vez que se pide.
-  async getComprobanteEgreso(id: string, cuentas: ComprobanteEgresoLiquidacionDTO, userId: number) {
-    return prisma.$transaction(async (tx) => {
-      const liquidacion = await tx.liquidacionPeriodo.findUnique({ where: { id }, include: { transportista: true } });
-      if (!liquidacion) throw new HttpError("Liquidación no encontrada", 404);
-      if (liquidacion.estado !== "CERRADO") {
-        throw new HttpError("Solo se puede generar el comprobante de una liquidación CERRADA", 409);
-      }
-
-      let numeroComprobante = liquidacion.numeroComprobante;
-      if (!numeroComprobante) {
-        numeroComprobante = await generarNumeroComprobanteEgresoLiquidacion(tx);
-        await tx.liquidacionPeriodo.update({ where: { id }, data: { numeroComprobante } });
-        await tx.log.create({
-          data: {
-            usuarioId: userId,
-            accion: "ASIGNAR_NUMERO_COMPROBANTE_EGRESO_LIQUIDACION",
-            data: { liquidacionId: id, numeroComprobante },
-          },
-        });
-      }
-
-      const monto = Number(liquidacion.totalNeto);
-      const detalle = `Liquidación de transporte Nº ${liquidacion.numero ?? "S/N"} — ${liquidacion.transportista.nombreORazonSocial.toUpperCase()}`;
-
-      const lineas = [
-        {
-          codigo: cuentas.cuentaDebeCodigo,
-          cuentaNombre: cuentas.cuentaDebeNombre,
-          detalle,
-          debeBs: monto,
-          haberBs: 0,
-        },
-        {
-          codigo: cuentas.cuentaHaberCodigo,
-          cuentaNombre: cuentas.cuentaHaberNombre,
-          detalle,
-          debeBs: 0,
-          haberBs: monto,
-        },
-      ];
-
-      return {
-        numero: numeroComprobante,
-        liquidacionNumero: liquidacion.numero,
-        transportista: liquidacion.transportista,
-        fechaInicio: liquidacion.fechaInicio,
-        fechaFin: liquidacion.fechaFin,
-        montoTotal: monto,
-        lineas,
-        totales: { debeBs: monto, haberBs: monto },
-      };
-    });
-  },
 };

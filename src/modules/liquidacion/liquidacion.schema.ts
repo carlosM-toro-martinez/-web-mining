@@ -51,17 +51,3 @@ export const anularLiquidacionSchema = z
     motivo: z.string().trim().min(1),
   })
   .strict();
-
-// El Comprobante de Egresos de una liquidación paga a un transportista, no
-// a un gasto de Caja Chica — acá no hay motor tributario ni cuenta
-// contable resuelta de antemano (Logística no maneja ese catálogo), así
-// que las dos cuentas del asiento (DEBE y HABER) se piden a mano cada vez
-// que se genera, en vez de quedar fijas en la liquidación.
-export const comprobanteEgresoLiquidacionSchema = z
-  .object({
-    cuentaDebeCodigo: z.string().trim().min(1, "El código de la cuenta a debitar es obligatorio."),
-    cuentaDebeNombre: z.string().trim().min(1, "El nombre de la cuenta a debitar es obligatorio."),
-    cuentaHaberCodigo: z.string().trim().min(1, "El código de la cuenta a acreditar es obligatorio."),
-    cuentaHaberNombre: z.string().trim().min(1, "El nombre de la cuenta a acreditar es obligatorio."),
-  })
-  .strict();
