@@ -80,7 +80,13 @@ export const loteDespachoService = {
           formulario101: true,
           pesaje: true,
         },
-        orderBy: { createdAt: "desc" },
+        // Más reciente primero por fecha de despacho real; createdAt desc
+        // como desempate entre lotes del mismo día — como el correlativo
+        // (número de conocimiento) es un contador que sube con el tiempo,
+        // dentro de un mismo día el que se creó/importó después también es
+        // el de número más alto, así que esto deja arriba el conocimiento
+        // más reciente sin tener que parsear el string del correlativo.
+        orderBy: [{ fechaDespachoReal: "desc" }, { createdAt: "desc" }],
       }),
       prisma.loteDespacho.count({ where }),
     ]);
@@ -546,11 +552,15 @@ export const loteDespachoService = {
     });
   },
 
-  // Importación masiva de lotes YA COMPLETADOS (pesados, con F101 vinculado)
-  // desde el "Cuadro de envío de Carga Chami" en Excel — a diferencia de
-  // create(), acá el correlativo se preserva EXACTO del Conocimiento físico
-  // (nunca se genera uno nuevo) y no se toca vehiculo.estadoActual (son
-  // viajes históricos ya cerrados, no algo "en curso").
+  // Importación masiva de lotes desde el "Cuadro de envío de Carga Chami" en
+  // Excel — a diferencia de create(), acá el correlativo se preserva EXACTO
+  // del Conocimiento físico (nunca se genera uno nuevo). La mayoría de filas
+  // son viajes YA COMPLETADOS (pesados, con F101 vinculado) y entran
+  // directo como ACOPIADO sin tocar vehiculo.estadoActual (son historia
+  // cerrada, no algo "en curso"). Pero una fila sin peso todavía es un viaje
+  // real EN_TRANSITO (el camión sigue en la ruta) — entra con ese estado, y
+  // ahí sí se marca el vehículo EN_TRANSITO, para no repetir a mano lo que
+  // hubo que corregir la vez pasada con la importación de octubre.
   //
   // Transportista: se busca por nombre exacto contra lo ya registrado; si no
   // existe, la fila queda en error (no se adivina si es Empresa o Trabajador
@@ -739,7 +749,7 @@ export const loteDespachoService = {
               combustibleAsignadoLitros: f.combustibleLitros,
               fechaDespachoReal: fecha,
               fechaDocumentalFiscal: fecha,
-              estadoLote: "ACOPIADO",
+              estadoLote: tonelajeNeto !== null ? "ACOPIADO" : "EN_TRANSITO",
               usuarioRegistroId: userId,
               conocimientoCarga: {
                 create: {
@@ -771,6 +781,12 @@ export const loteDespachoService = {
             });
           }
 
+          // Viaje real en curso (todavía sin pesar) — el vehículo no puede
+          // seguir figurando DISPONIBLE en el tablero de Flota.
+          if (tonelajeNeto === null) {
+            await tx.vehiculo.update({ where: { id: vehiculo.id }, data: { estadoActual: "EN_TRANSITO" } });
+          }
+
           await tx.log.create({
             data: {
               usuarioId: userId,
@@ -780,7 +796,13 @@ export const loteDespachoService = {
           });
         });
 
-        const claveContador = `LOTE_DESPACHO_${anio}_${f.correlativoMes}`;
+        // Mismo formato de clave que generarCorrelativoLote() (mes con 2
+        // dígitos) — si el Conocimiento físico trajera el mes sin el cero
+        // ("53/9" en vez de "53/09"), sin este padStart el contador que
+        // usan los lotes creados a mano quedaría sin actualizar, y el
+        // siguiente lote manual de ese mes podría repetir este mismo
+        // correlativo.
+        const claveContador = `LOTE_DESPACHO_${anio}_${f.correlativoMes.padStart(2, "0")}`;
         contadoresAfectados.set(
           claveContador,
           Math.max(contadoresAfectados.get(claveContador) ?? 0, f.correlativoNumero),
