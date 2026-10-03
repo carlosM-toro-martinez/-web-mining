@@ -2,13 +2,17 @@ import { prisma } from "../../config/prisma.js";
 import { generarCorrelativoLote } from "../../utils/correlativo.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { parseCuadroEnvioExcel } from "./loteDespachoImport.parser.js";
 import type {
   AnularLoteDTO,
   AvanzarEstadoLoteDTO,
   CreateLoteDespachoDTO,
+  FilaImportLoteResultado,
   RegistrarCombustibleEntregadoDTO,
   RegistrarPesajeDTO,
+  ResultadoImportacionLotes,
   TransbordarLoteDTO,
+  UpdateLoteDespachoDTO,
 } from "./loteDespacho.types.js";
 import type { z } from "zod";
 import type { loteDespachoQuerySchema } from "./loteDespacho.schema.js";
@@ -86,6 +90,91 @@ export const loteDespachoService = {
 
   async getById(id: string) {
     return prisma.loteDespacho.findUnique({ where: { id }, include: INCLUDE_DETALLE });
+  },
+
+  // Edición de un lote ya creado — para corregir datos mal cargados (a mano
+  // o por una importación masiva), no para repetir el flujo de creación:
+  // el correlativo y el año nunca cambian acá. No se permite editar un
+  // lote ANULADO ni LIQUIDADO (ese ya quedó "cerrado"). Si vienen
+  // tonelajeBruto/tonelajeTara, solo se aplican cuando el lote YA tiene un
+  // pesaje registrado (recalcula el neto); si no lo tiene, se ignoran acá
+  // — para eso está "Registrar pesaje".
+  async update(id: string, data: UpdateLoteDespachoDTO, userId: number) {
+    const existente = await prisma.loteDespacho.findUnique({ where: { id }, include: { pesaje: true } });
+    if (!existente) throw new HttpError("Lote no encontrado", 404);
+    if (existente.estadoLote === "ANULADO") throw new HttpError("No se puede editar un lote anulado", 409);
+    if (existente.estadoLote === "LIQUIDADO") {
+      throw new HttpError("No se puede editar un lote ya liquidado", 409);
+    }
+
+    const [municipio, transportista, vehiculo, chofer, tipoMineral, ingenio] = await Promise.all([
+      data.municipioOrigenId ? prisma.municipioOrigen.findUnique({ where: { id: data.municipioOrigenId } }) : null,
+      data.transportistaId ? prisma.transportista.findUnique({ where: { id: data.transportistaId } }) : null,
+      data.vehiculoId ? prisma.vehiculo.findUnique({ where: { id: data.vehiculoId } }) : null,
+      data.choferId ? prisma.chofer.findUnique({ where: { id: data.choferId } }) : null,
+      data.tipoMineralId ? prisma.tipoMineral.findUnique({ where: { id: data.tipoMineralId } }) : null,
+      data.destinoIngenioId ? prisma.ingenio.findUnique({ where: { id: data.destinoIngenioId } }) : null,
+    ]);
+    if (data.municipioOrigenId && !municipio) throw new HttpError("Municipio de origen no encontrado", 404);
+    if (data.transportistaId && !transportista) throw new HttpError("Transportista no encontrado", 404);
+    if (data.vehiculoId && !vehiculo) throw new HttpError("Vehículo no encontrado", 404);
+    if (data.choferId && !chofer) throw new HttpError("Chofer no encontrado", 404);
+    if (data.tipoMineralId && !tipoMineral) throw new HttpError("Tipo de mineral no encontrado", 404);
+    if (data.destinoIngenioId && !ingenio) throw new HttpError("Ingenio destino no encontrado", 404);
+
+    const incluyeCombustible = data.incluyeCombustible ?? existente.incluyeCombustible;
+    const combustibleAsignadoLitros =
+      incluyeCombustible === "SIN_COMBUSTIBLE"
+        ? null
+        : data.combustibleAsignadoLitros !== undefined
+          ? data.combustibleAsignadoLitros
+          : existente.combustibleAsignadoLitros;
+
+    const { tonelajeBruto, tonelajeTara, detalleCarga, descripcion, observaciones, ...camposLote } = data;
+
+    const loteData: Record<string, unknown> = {};
+    for (const [clave, valor] of Object.entries(camposLote)) {
+      if (valor !== undefined) loteData[clave] = valor;
+    }
+    loteData.incluyeCombustible = incluyeCombustible;
+    loteData.combustibleAsignadoLitros = combustibleAsignadoLitros;
+
+    const lote = await prisma.$transaction(async (tx) => {
+      const actualizado = await tx.loteDespacho.update({ where: { id }, data: loteData });
+
+      if (detalleCarga !== undefined || descripcion !== undefined || observaciones !== undefined) {
+        await tx.conocimientoCarga.update({
+          where: { loteId: id },
+          data: {
+            ...(detalleCarga !== undefined ? { detalleCarga } : {}),
+            ...(descripcion !== undefined ? { descripcion } : {}),
+            ...(observaciones !== undefined ? { observaciones } : {}),
+          },
+        });
+      }
+
+      if (existente.pesaje && (tonelajeBruto !== undefined || tonelajeTara !== undefined)) {
+        const bruto = tonelajeBruto ?? Number(existente.pesaje.tonelajeBruto);
+        const tara = tonelajeTara ?? Number(existente.pesaje.tonelajeTara);
+        if (bruto <= tara) {
+          throw new HttpError("El tonelaje bruto debe ser mayor al tara", 400);
+        }
+        await tx.pesajeIngenio.update({
+          where: { loteId: id },
+          data: { tonelajeBruto: bruto, tonelajeTara: tara, tonelajeNeto: bruto - tara },
+        });
+      }
+
+      await tx.log.create({
+        data: { usuarioId: userId, accion: "UPDATE_LOTE_DESPACHO", data: { loteId: id, ...data } },
+      });
+
+      return actualizado;
+    });
+
+    logger.info({ userId, loteId: id, action: "UPDATE_LOTE_DESPACHO" }, "Lote de despacho editado");
+
+    return prisma.loteDespacho.findUniqueOrThrow({ where: { id: lote.id }, include: INCLUDE_DETALLE });
   },
 
   async create(data: CreateLoteDespachoDTO, userId: number) {
@@ -455,5 +544,286 @@ export const loteDespachoService = {
 
       return tx.loteDespacho.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
     });
+  },
+
+  // Importación masiva de lotes YA COMPLETADOS (pesados, con F101 vinculado)
+  // desde el "Cuadro de envío de Carga Chami" en Excel — a diferencia de
+  // create(), acá el correlativo se preserva EXACTO del Conocimiento físico
+  // (nunca se genera uno nuevo) y no se toca vehiculo.estadoActual (son
+  // viajes históricos ya cerrados, no algo "en curso").
+  //
+  // Transportista: se busca por nombre exacto contra lo ya registrado; si no
+  // existe, la fila queda en error (no se adivina si es Empresa o Trabajador
+  // Particular, eso afecta directamente la tarifa aplicable). Vehículo y
+  // chofer sí se crean solos si no existen (más bajo el riesgo si se
+  // equivocan, y es lo normal al sumar una volqueta/chofer nuevo al padrón).
+  //
+  // El año de cada fila se corrige automáticamente contra el año que más se
+  // repite en todo el archivo (cubre los típicos errores de tipeo tipo
+  // "2034"/"2035" en vez de "2026"), y queda reportado como advertencia.
+  async importarHistoricoDesdeExcel(buffer: Buffer, userId: number): Promise<ResultadoImportacionLotes> {
+    const filas = parseCuadroEnvioExcel(buffer);
+    if (filas.length === 0) throw new HttpError("El Excel no contiene filas de datos", 400);
+
+    const anios = filas
+      .map((f) => f.fecha?.getUTCFullYear())
+      .filter((a): a is number => typeof a === "number");
+    const conteoAnios = new Map<number, number>();
+    for (const a of anios) conteoAnios.set(a, (conteoAnios.get(a) ?? 0) + 1);
+    let anioReferencia = anios[0] ?? new Date().getUTCFullYear();
+    let maxConteo = 0;
+    for (const [a, c] of conteoAnios) {
+      if (c > maxConteo) {
+        maxConteo = c;
+        anioReferencia = a;
+      }
+    }
+
+    const tipoMineral = await prisma.tipoMineral.findUnique({ where: { codigo: "C-CH" } });
+    const ingenio = await prisma.ingenio.findUnique({ where: { codigo: "CH" } });
+    if (!tipoMineral) {
+      throw new HttpError('No se encontró el tipo de mineral "Carga Chami" (C-CH). Créalo primero en Parámetros.', 409);
+    }
+    if (!ingenio) {
+      throw new HttpError('No se encontró el ingenio "Chilcobija" (CH). Créalo primero en Parámetros.', 409);
+    }
+
+    // Se trae la lista completa UNA vez (no por fila) y se compara en
+    // memoria normalizando espacios/mayúsculas — así "Roger Quispe Miranda "
+    // (con un espacio de más, u otra capitalización) sigue encontrando al
+    // mismo transportista en vez de forzar a crear uno nuevo "para que no
+    // salga error con el nombre" (que es justo lo que pasó: terminó
+    // duplicando a Roger Quispe Miranda).
+    const normalizarNombre = (s: string) => s.trim().toUpperCase().replace(/\s+/g, " ");
+    const transportistas = await prisma.transportista.findMany();
+
+    const resultados: FilaImportLoteResultado[] = [];
+    const contadoresAfectados = new Map<string, number>();
+
+    for (const f of filas) {
+      try {
+        if (!f.fecha) {
+          resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: "Fecha inválida o vacía" });
+          continue;
+        }
+        if (!f.placa) {
+          resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: "Falta la placa" });
+          continue;
+        }
+        if (!f.chofer) {
+          resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: "Falta el chofer" });
+          continue;
+        }
+        if (!f.correlativoNumero || !f.correlativoMes) {
+          resultados.push({
+            fila: f.fila,
+            correlativo: null,
+            accion: "error",
+            mensaje: 'Columna "Conocimiento" inválida (se espera "N/MM")',
+          });
+          continue;
+        }
+        if (!f.propietario) {
+          resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: "Falta el propietario/transportista" });
+          continue;
+        }
+        if (!f.municipioCodigo) {
+          resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: "Falta el código de municipio" });
+          continue;
+        }
+
+        let anio = f.fecha.getUTCFullYear();
+        const mesOriginal = f.fecha.getUTCMonth() + 1;
+        const diaOriginal = f.fecha.getUTCDate();
+
+        let advertenciaAnio = "";
+        if (anio !== anioReferencia) {
+          advertenciaAnio = ` (año corregido de ${anio} a ${anioReferencia})`;
+          anio = anioReferencia;
+        }
+
+        // El Conocimiento ("105/09") es la fuente de verdad del MES
+        // (confirmado con el usuario: el sufijo es a la vez el código de
+        // serie y el mes calendario) — si la columna FECHA trae un mes
+        // distinto (típico al arrastrar/completar fechas en Excel), se
+        // corrige el mes manteniendo el DÍA tal cual estaba escrito, y
+        // queda reportado para poder auditar qué filas se corrigieron.
+        const mesConocimiento = f.correlativoMes ? Number(f.correlativoMes) : null;
+        let advertenciaMes = "";
+        let fechaCorregida = new Date(Date.UTC(anio, mesOriginal - 1, diaOriginal));
+        if (mesConocimiento && mesConocimiento >= 1 && mesConocimiento <= 12 && mesConocimiento !== mesOriginal) {
+          advertenciaMes = ` (ATENCIÓN: la fecha traía mes ${String(mesOriginal).padStart(2, "0")}, se corrigió a ${f.correlativoMes} según el Conocimiento)`;
+          fechaCorregida = new Date(Date.UTC(anio, mesConocimiento - 1, diaOriginal));
+        }
+
+        const correlativo = `${f.correlativoNumero}/${f.correlativoMes}`;
+
+        const existente = await prisma.loteDespacho.findUnique({
+          where: { correlativo_anio: { correlativo, anio } },
+        });
+        if (existente) {
+          resultados.push({
+            fila: f.fila,
+            correlativo,
+            accion: "omitido",
+            mensaje: `Ya existe (estado ${existente.estadoLote})`,
+          });
+          continue;
+        }
+
+        const transportista = transportistas.find(
+          (t) => normalizarNombre(t.nombreORazonSocial) === normalizarNombre(f.propietario),
+        );
+        if (!transportista) {
+          resultados.push({
+            fila: f.fila,
+            correlativo,
+            accion: "error",
+            mensaje: `Transportista "${f.propietario}" no encontrado — créalo primero en Logística/Flota`,
+          });
+          continue;
+        }
+
+        let municipio = await prisma.municipioOrigen.findUnique({ where: { codigo: f.municipioCodigo } });
+        if (!municipio) {
+          municipio = await prisma.municipioOrigen.create({
+            data: { codigo: f.municipioCodigo, nombre: f.municipioNombre || f.municipioCodigo },
+          });
+        }
+
+        let vehiculo = await prisma.vehiculo.findUnique({ where: { placa: f.placa } });
+        const vehiculoCreado = !vehiculo;
+        if (!vehiculo) {
+          vehiculo = await prisma.vehiculo.create({
+            data: { placa: f.placa, tipo: "VOLQUETA", capacidadTon: 7, propietarioId: transportista.id },
+          });
+        }
+
+        let chofer = await prisma.chofer.findFirst({ where: { nombre: f.chofer } });
+        const choferCreado = !chofer;
+        if (!chofer) {
+          const ciPlaceholder = `PENDIENTE-${f.chofer.toUpperCase().replace(/\s+/g, "-")}`;
+          chofer = await prisma.chofer.upsert({
+            where: { ci: ciPlaceholder },
+            create: { nombre: f.chofer, ci: ciPlaceholder },
+            update: {},
+          });
+        }
+
+        // f.pesoKg ya viene en toneladas (la conversión de kilos a
+        // toneladas, cuando corresponde, la hace parsePesoToneladas en el
+        // parser — acá ya no hay que dividir entre 1000 de nuevo).
+        const tonelajeNeto = f.pesoKg;
+
+        let form101Mensaje = "";
+        let form101Existente: { id: string } | null = null;
+        if (f.form101) {
+          form101Existente = await prisma.formulario101.findUnique({ where: { codigo: f.form101 } });
+          if (form101Existente) form101Mensaje = ` (F101 ${f.form101} ya existía, no se vinculó)`;
+        }
+
+        const fecha = fechaCorregida;
+        await prisma.$transaction(async (tx) => {
+          const lote = await tx.loteDespacho.create({
+            data: {
+              correlativo,
+              anio,
+              municipioOrigenId: municipio.id,
+              transportistaId: transportista.id,
+              vehiculoId: vehiculo.id,
+              choferId: chofer.id,
+              tipoMineralId: tipoMineral.id,
+              destinoIngenioId: ingenio.id,
+              nivel: f.nivel || null,
+              incluyeCombustible: f.combustibleLitros ? "CON_COMBUSTIBLE" : "SIN_COMBUSTIBLE",
+              combustibleAsignadoLitros: f.combustibleLitros,
+              fechaDespachoReal: fecha,
+              fechaDocumentalFiscal: fecha,
+              estadoLote: "ACOPIADO",
+              usuarioRegistroId: userId,
+              conocimientoCarga: {
+                create: {
+                  fecha,
+                  detalleCarga: "Carga Chami",
+                  descripcion: "Carga para Ingenio del sector Lipeña",
+                  copiasEmitidas: { ingenio: true, chofer: true, empresa: true },
+                },
+              },
+              ...(tonelajeNeto !== null
+                ? {
+                    pesaje: {
+                      create: {
+                        tonelajeBruto: tonelajeNeto,
+                        tonelajeTara: 0,
+                        tonelajeNeto,
+                        fechaPesaje: fecha,
+                        usuarioId: userId,
+                      },
+                    },
+                  }
+                : {}),
+            },
+          });
+
+          if (f.form101 && !form101Existente) {
+            await tx.formulario101.create({
+              data: { codigo: f.form101, fecha, estado: "VINCULADO", loteId: lote.id, usuarioId: userId },
+            });
+          }
+
+          await tx.log.create({
+            data: {
+              usuarioId: userId,
+              accion: "IMPORT_LOTE_HISTORICO_EXCEL",
+              data: { loteId: lote.id, correlativo, fila: f.fila },
+            },
+          });
+        });
+
+        const claveContador = `LOTE_DESPACHO_${anio}_${f.correlativoMes}`;
+        contadoresAfectados.set(
+          claveContador,
+          Math.max(contadoresAfectados.get(claveContador) ?? 0, f.correlativoNumero),
+        );
+
+        const extras = [
+          vehiculoCreado ? "vehículo nuevo" : null,
+          choferCreado ? "chofer nuevo" : null,
+          tonelajeNeto === null ? "sin peso" : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        resultados.push({
+          fila: f.fila,
+          correlativo,
+          accion: "creado",
+          mensaje: `Creado${extras ? ` (${extras})` : ""}${form101Mensaje}${advertenciaAnio}${advertenciaMes}`,
+        });
+      } catch (error) {
+        resultados.push({ fila: f.fila, correlativo: null, accion: "error", mensaje: (error as Error).message });
+      }
+    }
+
+    for (const [clave, numero] of contadoresAfectados) {
+      const contador = await prisma.correlativoContador.findUnique({ where: { clave } });
+      const nuevoUltimoNumero = Math.max(contador?.ultimoNumero ?? 0, numero);
+      await prisma.correlativoContador.upsert({
+        where: { clave },
+        create: { clave, ultimoNumero: nuevoUltimoNumero },
+        update: { ultimoNumero: nuevoUltimoNumero },
+      });
+    }
+
+    const creadas = resultados.filter((r) => r.accion === "creado").length;
+    const omitidas = resultados.filter((r) => r.accion === "omitido").length;
+    const errores = resultados.filter((r) => r.accion === "error").length;
+
+    logger.info(
+      { userId, creadas, omitidas, errores, action: "IMPORT_LOTE_HISTORICO_EXCEL" },
+      "Importación histórica de lotes desde Excel",
+    );
+
+    return { procesadas: filas.length, creadas, omitidas, errores, resultados };
   },
 };

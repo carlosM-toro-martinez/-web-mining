@@ -71,7 +71,7 @@ const TRANSPORTISTAS: TransportistaSemilla[] = [
     ],
   },
   {
-    nombre: "ROGER QUISPE",
+    nombre: "ROGER QUISPE MIRANDA",
     tipoEntidad: "TRABAJADOR_PARTICULAR",
     vehiculos: [
       { placa: "2824 TEE", conductor: "MIGUEL SANDI" },

@@ -61,6 +61,35 @@ export const registrarCombustibleEntregadoSchema = z
   })
   .strict();
 
+// Edición posterior de un lote ya creado — pensada para corregir datos
+// cargados mal (a mano o por importación: municipio, transportista,
+// vehículo, chofer, fecha, nivel, combustible, el pesaje si ya se
+// registró...), no para repetir el flujo de creación. El correlativo y el
+// año NUNCA se editan acá (son el número del documento físico). Todo
+// opcional: solo se cambia lo que venga en el body.
+export const updateLoteDespachoSchema = z
+  .object({
+    municipioOrigenId: z.number().int().positive().optional(),
+    transportistaId: z.number().int().positive().optional(),
+    vehiculoId: z.number().int().positive().optional(),
+    choferId: z.number().int().positive().optional(),
+    tipoMineralId: z.number().int().positive().optional(),
+    destinoIngenioId: z.number().int().positive().optional(),
+    nivel: z.string().trim().nullable().optional(),
+    incluyeCombustible: tipoCombustibleViajeSchema.optional(),
+    combustibleAsignadoLitros: z.number().nonnegative().nullable().optional(),
+    fechaDespachoReal: z.coerce.date().optional(),
+    fechaDocumentalFiscal: z.coerce.date().optional(),
+    detalleCarga: z.string().trim().min(1).optional(),
+    descripcion: z.string().trim().nullable().optional(),
+    observaciones: z.string().trim().nullable().optional(),
+    // Solo se aplican si el lote YA tiene un pesaje registrado — recalcula
+    // el neto. Si todavía no tiene, usar "Registrar pesaje" en su lugar.
+    tonelajeBruto: z.number().positive().optional(),
+    tonelajeTara: z.number().nonnegative().optional(),
+  })
+  .strict();
+
 export const loteDespachoQuerySchema = z
   .object({
     page: z.coerce.number().optional(),

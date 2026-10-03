@@ -5,6 +5,19 @@ import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
 export const loteDespachoController = {
+  async importarHistorico(req: AuthRequest, res: Response) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: "Se requiere un archivo Excel (.xls o .xlsx)" });
+      }
+      const data = await loteDespachoService.importarHistoricoDesdeExcel(req.file.buffer, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getAll(req: AuthRequest, res: Response) {
     try {
       // Express 5: req.query es un getter de solo lectura, validateQuery()
@@ -28,6 +41,16 @@ export const loteDespachoController = {
       res.json({ success: true, data: lote });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async update(req: AuthRequest, res: Response) {
+    try {
+      const lote = await loteDespachoService.update(req.params.id as string, req.body, req.user!.id);
+      res.json({ success: true, data: lote });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
