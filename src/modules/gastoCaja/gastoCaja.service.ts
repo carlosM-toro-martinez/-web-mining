@@ -278,6 +278,23 @@ export const gastoCajaService = {
       existentesAntes.map((g) => `${g.glosa}|||${Number(g.montoTotal)}|||${g.numeroRespaldo ?? ""}`),
     );
 
+    // Cada gasto ya existente solo puede "reclamar" UNA fila del Excel como
+    // su posible duplicado, nunca varias — sin esto, un solo gasto manual
+    // con un monto redondo (ej. un "MATERIALES" de Bs 1.200) bloqueaba TODAS
+    // las filas reales del Excel que compartieran ese mismo monto (ej. 3
+    // compras distintas de Bs 1.200), no solo la que de verdad lo duplica.
+    // Al consumir el índice apenas se usa (sea "omitido" confiable o
+    // "revisar" ambiguo), el resto de filas con ese monto ya no tienen con
+    // qué chocar y se crean normalmente.
+    const consumidos = new Set<number>();
+    function buscarCoincidencia(filtro: (e: (typeof existentesAntes)[number]) => boolean): number {
+      for (let i = 0; i < existentesAntes.length; i++) {
+        if (consumidos.has(i)) continue;
+        if (filtro(existentesAntes[i]!)) return i;
+      }
+      return -1;
+    }
+
     const totalGastos = parseado.gastos.length;
 
     for (const [indiceGasto, g] of parseado.gastos.entries()) {
@@ -298,7 +315,8 @@ export const gastoCajaService = {
           continue;
         }
 
-        // Dedup en 3 niveles, de más a menos confiable:
+        // Dedup en 3 niveles, de más a menos confiable (ver nota de
+        // "consumidos" arriba: cada existente solo bloquea UNA fila):
         //  1. Monto parecido Y (texto parecido O mismo n° de factura/recibo)
         //     -> es un duplicado real con alta confianza: se omite solo.
         //  2. Monto parecido pero SIN texto ni n° de respaldo en común
@@ -308,18 +326,16 @@ export const gastoCajaService = {
         //     real distinto que solo comparte un monto redondo, ej. varios
         //     viáticos de Bs 40 de personas distintas) — queda como
         //     "revisar" para que el usuario decida y lo agregue a mano desde
-        //     "Nuevo gasto" si corresponde. Antes esto se omitía igual que el
-        //     nivel 1 ("si el monto coincide, nunca se agregue solo"), pero
-        //     eso hacía que UN SOLO gasto manual con un monto redondo
-        //     bloqueara TODOS los gastos reales del Excel con ese mismo
-        //     monto, no solo el duplicado genuino.
-        const coincideConfiable = existentesAntes.find(
+        //     "Nuevo gasto" si corresponde.
+        const idxConfiable = buscarCoincidencia(
           (e) =>
             montosParecidos(Number(e.montoTotal), g.monto!) &&
             (similitudTexto(e.glosa, g.descripcion) >= UMBRAL_SIMILITUD_DUPLICADO ||
               respaldosCoinciden(e.numeroRespaldo ?? "", g.facturaORecibo)),
         );
-        if (coincideConfiable) {
+        if (idxConfiable !== -1) {
+          consumidos.add(idxConfiable);
+          const coincideConfiable = existentesAntes[idxConfiable]!;
           resultados.push({
             fila: g.fila,
             tipo: "gasto",
@@ -329,8 +345,10 @@ export const gastoCajaService = {
           continue;
         }
 
-        const coincideSoloMonto = existentesAntes.find((e) => montosParecidos(Number(e.montoTotal), g.monto!));
-        if (coincideSoloMonto) {
+        const idxSoloMonto = buscarCoincidencia((e) => montosParecidos(Number(e.montoTotal), g.monto!));
+        if (idxSoloMonto !== -1) {
+          consumidos.add(idxSoloMonto);
+          const coincideSoloMonto = existentesAntes[idxSoloMonto]!;
           resultados.push({
             fila: g.fila,
             tipo: "gasto",
