@@ -1433,6 +1433,7 @@ enum EstadoGastoCaja {
 enum TipoMovimientoFondoCaja {
   REMESA_PRESUPUESTO
   REMESA_SUELDOS
+  REMESA_COMPRAS_GENERAL
   REMESA_OTROS
   REPOSICION
 }

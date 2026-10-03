@@ -112,8 +112,25 @@ export const vehiculoService = {
 
   // Cambio de estado del tablero Kanban: siempre queda registrado en el
   // historial, sin restringir transiciones (el tablero es manual/operativo,
-  // el humano decide y puede corregir moviendo la tarjeta a cualquier columna).
+  // el humano decide y puede corregir moviendo la tarjeta a cualquier columna)
+  // — EXCEPTO entrar a EN_TRANSITO/EN_BALANZA: esos dos estados solo los debe
+  // asignar el flujo real de un lote (create()/avanzarEstado() en
+  // loteDespacho.service.ts), nunca un arrastre manual sin lote detrás. Sin
+  // este freno, arrastrar la tarjeta a esas columnas dejaba el vehículo
+  // mostrando "En balanza"/"En tránsito" sin ningún lote real asociado, y ya
+  // no había forma de encontrar el lote para completar/revisar nada — un
+  // callejón sin salida que solo se podía corregir a mano en la base de
+  // datos. Salir DE esos estados hacia cualquier otro sigue permitido (es
+  // justo la forma de corregir un vehículo que ya quedó atascado así).
   async cambiarEstado(id: number, data: CambiarEstadoVehiculoDTO, userId: number) {
+    if (data.estado === "EN_TRANSITO" || data.estado === "EN_BALANZA") {
+      const nombreEstado = data.estado === "EN_TRANSITO" ? "En tránsito" : "En balanza";
+      throw new HttpError(
+        `No se puede mover un vehículo a "${nombreEstado}" directamente desde Flota — ese estado lo asigna automáticamente un lote de despacho real (créalo o avanza su estado desde Logística/Lotes).`,
+        409,
+      );
+    }
+
     return prisma.$transaction(async (tx) => {
       const vehiculo = await tx.vehiculo.findUnique({ where: { id } });
       if (!vehiculo) throw new HttpError("Vehículo no encontrado", 404);

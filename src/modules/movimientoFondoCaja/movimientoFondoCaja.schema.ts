@@ -1,11 +1,12 @@
+import { TipoMovimientoFondoCaja } from "@prisma/client";
 import { z } from "zod";
 
-export const tipoMovimientoFondoCajaSchema = z.enum([
-  "REMESA_PRESUPUESTO",
-  "REMESA_SUELDOS",
-  "REMESA_OTROS",
-  "REPOSICION",
-]);
+// z.nativeEnum en vez de una lista de strings a mano — la misma clase de
+// bug que el registro de usuarios (ver auth.schema.ts): si se agrega un
+// tipo nuevo al enum de Prisma y se olvida tocar esto, el registro
+// manual de un fondo de ese tipo fallaría con 400 aunque el valor ya
+// exista en la base de datos.
+export const tipoMovimientoFondoCajaSchema = z.nativeEnum(TipoMovimientoFondoCaja);
 export const monedaCajaSchema = z.enum(["BOB", "USD"]);
 
 export const createMovimientoFondoCajaSchema = z

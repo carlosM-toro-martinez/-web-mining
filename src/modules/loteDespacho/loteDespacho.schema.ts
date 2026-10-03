@@ -107,6 +107,7 @@ export const loteDespachoQuerySchema = z
     // página ya cargada en el navegador, un match en otra página no
     // aparecería nunca).
     search: z.string().trim().min(1).optional(),
+    conObservaciones: z.coerce.boolean().optional(),
   })
   .strict();
 

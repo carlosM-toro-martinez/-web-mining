@@ -3,9 +3,18 @@ import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBancariaCaja.service.js";
 import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
-import type { AnularGastoCajaDTO, CreateGastoCajaDTO, UpdateGastoCajaDTO } from "./gastoCaja.types.js";
+import { movimientoFondoCajaService } from "../movimientoFondoCaja/movimientoFondoCaja.service.js";
+import { parseCajaChicaExcel, type CategoriaRendicionGastoTexto } from "./gastoCajaImport.parser.js";
+import type {
+  AnularGastoCajaDTO,
+  CreateGastoCajaDTO,
+  FilaImportGastoCajaResultado,
+  ResultadoImportacionGastosCaja,
+  UpdateGastoCajaDTO,
+} from "./gastoCaja.types.js";
 import type { z } from "zod";
 import type { gastoCajaQuerySchema } from "./gastoCaja.schema.js";
+import type { TipoMovimientoFondoCaja } from "@prisma/client";
 
 type GastoCajaQuery = z.infer<typeof gastoCajaQuerySchema>;
 
@@ -97,7 +106,169 @@ async function calcularImpuestos(data: DatosImpuesto) {
   return { montoCreditoFiscalIva, montoRetencionRcIva, montoRetencionIueCompras, montoRetencionIt, esNoDeducible };
 }
 
+// Clasifica el tipo de remesa de "FONDOS RECIBIDOS" por su descripción —
+// las tres variantes reales confirmadas contra el documento físico (Caja
+// Lipeña): "REMESA PARA COMPRAS GENERAL", "REMESA PAGO DE SALARIOS",
+// "REMESA PRESUPUESTO". Cualquier otra cosa cae a REMESA_OTROS.
+function clasificarTipoMovimiento(descripcion: string): TipoMovimientoFondoCaja {
+  const texto = descripcion.toUpperCase();
+  if (texto.includes("SUELDO") || texto.includes("SALARIO")) return "REMESA_SUELDOS";
+  if (texto.includes("COMPRA")) return "REMESA_COMPRAS_GENERAL";
+  if (texto.includes("PRESUPUESTO")) return "REMESA_PRESUPUESTO";
+  if (texto.includes("REPOSICION") || texto.includes("REPOSICIÓN")) return "REPOSICION";
+  return "REMESA_OTROS";
+}
+
+// "F-1660", "F- 475", "F.130/F-143" -> tiene una factura real detrás (separa
+// IVA). Todo lo demás ("DEPOSITO", "CE", "FORMULARIO", "POR FACTURAR",
+// "VARIOS", "R-...") tiene respaldo pero no es una factura con NIT, así que
+// entra como RECIBO (deducible, sin crédito fiscal ni retenciones) — regla
+// confirmada con el usuario contra el documento real.
+function clasificarTipoDocumento(facturaORecibo: string): "FACTURA" | "RECIBO" {
+  return /^F[-.\s]*\d/i.test(facturaORecibo.trim()) ? "FACTURA" : "RECIBO";
+}
+
 export const gastoCajaService = {
+  // Carga masiva del reporte mensual "Caja Lipeña" (fondos recibidos +
+  // detalle de gastos) desde Excel — ver gastoCajaImport.parser.ts para el
+  // formato esperado. Los fondos se cargan SIEMPRE antes que los gastos: el
+  // saldo disponible contra el que create() valida cada gasto depende de
+  // que las remesas de este mismo mes ya estén registradas.
+  async importarDesdeExcel(buffer: Buffer, userId: number): Promise<ResultadoImportacionGastosCaja> {
+    const parseado = parseCajaChicaExcel(buffer);
+
+    // Hoy la empresa solo usa esta caja en la práctica (ver seedCajaChica.ts)
+    // — si en el futuro hay más de una, este import tendría que pedir cuál.
+    const caja = await prisma.cajaChica.findFirst({ where: { nombre: { contains: "Lipeña", mode: "insensitive" } } });
+    if (!caja) {
+      throw new HttpError(
+        'No se encontró la caja "Caja Bolivianos Lipeña". Créala primero en Parámetros de Caja Chica.',
+        409,
+      );
+    }
+
+    const resultados: FilaImportGastoCajaResultado[] = [];
+
+    for (const f of parseado.fondos) {
+      try {
+        if (!f.fecha) {
+          resultados.push({ fila: f.fila, tipo: "fondo", accion: "error", mensaje: "Fecha inválida o vacía" });
+          continue;
+        }
+        if (f.monto === null || f.monto <= 0) {
+          resultados.push({ fila: f.fila, tipo: "fondo", accion: "error", mensaje: "Monto inválido" });
+          continue;
+        }
+
+        if (f.referencia) {
+          const existente = await prisma.movimientoFondoCaja.findFirst({
+            where: { cajaId: caja.id, referencia: f.referencia },
+          });
+          if (existente) {
+            resultados.push({
+              fila: f.fila,
+              tipo: "fondo",
+              accion: "omitido",
+              mensaje: `Ya existe un fondo con referencia ${f.referencia}`,
+            });
+            continue;
+          }
+        }
+
+        const tipo = clasificarTipoMovimiento(f.descripcion);
+        await movimientoFondoCajaService.create(
+          { cajaId: caja.id, tipo, monto: f.monto, moneda: "BOB", fecha: f.fecha, referencia: f.referencia || undefined },
+          userId,
+        );
+        resultados.push({ fila: f.fila, tipo: "fondo", accion: "creado", mensaje: `Fondo creado (${tipo})` });
+      } catch (error) {
+        resultados.push({ fila: f.fila, tipo: "fondo", accion: "error", mensaje: (error as Error).message });
+      }
+    }
+
+    // El documento no trae fecha por fila de gasto, solo un mes/año para
+    // todo el reporte ("MES DE: SEPTIEMBRE DEL 2026") — se usa el día 1 de
+    // ese mes para cada gasto importado; se puede corregir después con
+    // editar/update() si hace falta una fecha más precisa.
+    const fechaGastos = parseado.mes && parseado.anio ? new Date(Date.UTC(parseado.anio, parseado.mes - 1, 1)) : new Date();
+
+    // Firma = glosa + monto + número de respaldo. Se consulta UNA sola vez,
+    // ANTES del bucle, y nunca se actualiza con lo que el bucle va creando
+    // — si se revisara contra la base de datos en cada vuelta, dos gastos
+    // reales distintos con la misma glosa y el mismo monto (ej. 3 hospedajes
+    // de Bs 80 con facturas distintas, o varios viáticos de formulario con
+    // el mismo monto redondo) se habrían marcado como "ya existe" uno al
+    // otro dentro de la MISMA importación, descartando gastos reales. Fuera
+    // de eso (comparado contra lo que ya había ANTES de este import), sigue
+    // protegiendo contra subir el mismo archivo dos veces.
+    const existentesAntes = await prisma.gastoCaja.findMany({
+      where: { cajaId: caja.id, fecha: fechaGastos, estado: { not: "ANULADO" } },
+      select: { glosa: true, montoTotal: true, numeroRespaldo: true },
+    });
+    const firmasExistentes = new Set(
+      existentesAntes.map((g) => `${g.glosa}|||${Number(g.montoTotal)}|||${g.numeroRespaldo ?? ""}`),
+    );
+
+    for (const g of parseado.gastos) {
+      try {
+        if (g.monto === null || g.monto <= 0) {
+          resultados.push({ fila: g.fila, tipo: "gasto", accion: "error", mensaje: "Monto inválido" });
+          continue;
+        }
+        if (!g.descripcion) {
+          resultados.push({ fila: g.fila, tipo: "gasto", accion: "error", mensaje: "Falta la descripción" });
+          continue;
+        }
+
+        const numeroRespaldo = g.facturaORecibo || "S/N";
+        const firma = `${g.descripcion}|||${g.monto}|||${numeroRespaldo}`;
+        if (firmasExistentes.has(firma)) {
+          resultados.push({ fila: g.fila, tipo: "gasto", accion: "omitido", mensaje: "Ya existe un gasto igual (misma glosa, monto, respaldo y mes)" });
+          continue;
+        }
+
+        const tipoDocumento = clasificarTipoDocumento(g.facturaORecibo);
+        await this.create(
+          {
+            origen: "CAJA",
+            cajaId: caja.id,
+            fecha: fechaGastos,
+            tipoDocumento,
+            categoriaRendicion: g.categoriaRendicion as CreateGastoCajaDTO["categoriaRendicion"],
+            proveedorNombre: g.descripcion.slice(0, 255),
+            glosa: g.descripcion,
+            numeroRespaldo,
+            montoTotal: g.monto,
+            moneda: "BOB",
+          },
+          userId,
+        );
+        resultados.push({ fila: g.fila, tipo: "gasto", accion: "creado", mensaje: `Creado (${g.categoriaRendicion})` });
+      } catch (error) {
+        resultados.push({ fila: g.fila, tipo: "gasto", accion: "error", mensaje: (error as Error).message });
+      }
+    }
+
+    const creadas = resultados.filter((r) => r.accion === "creado").length;
+    const omitidas = resultados.filter((r) => r.accion === "omitido").length;
+    const errores = resultados.filter((r) => r.accion === "error").length;
+
+    logger.info(
+      { userId, creadas, omitidas, errores, action: "IMPORT_GASTO_CAJA_EXCEL" },
+      "Importación de Caja Chica desde Excel",
+    );
+
+    return {
+      procesadas: resultados.length,
+      creadas,
+      omitidas,
+      errores,
+      mes: parseado.mes,
+      anio: parseado.anio,
+      resultados,
+    };
+  },
+
   async getAll(query: GastoCajaQuery) {
     const page = Number(query.page ?? 1);
     const limit = Number(query.limit ?? 20);

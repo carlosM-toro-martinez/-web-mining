@@ -5,6 +5,19 @@ import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
 export const gastoCajaController = {
+  async importarDesdeExcel(req: AuthRequest, res: Response) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: "Se requiere un archivo Excel (.xls o .xlsx)" });
+      }
+      const data = await gastoCajaService.importarDesdeExcel(req.file.buffer, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getAll(req: AuthRequest, res: Response) {
     try {
       // NOTA: validateQuery() solo valida con zod (safeParse) pero no puede

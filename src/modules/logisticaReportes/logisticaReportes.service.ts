@@ -18,14 +18,17 @@ export const logisticaReportesService = {
 
     const lotes = await prisma.loteDespacho.findMany({
       where: {
-        municipioOrigenId: query.municipioId,
+        ...(query.municipioId ? { municipioOrigenId: query.municipioId } : {}),
+        ...(query.nivel ? { nivel: query.nivel } : {}),
         fechaDocumentalFiscal: { gte: inicio, lt: fin },
         estadoLote: { not: "ANULADO" },
       },
       include: {
         transportista: true,
         vehiculo: true,
+        chofer: true,
         tipoMineral: true,
+        municipioOrigen: true,
         destinoIngenio: true,
         pesaje: true,
         conocimientoCarga: true,
@@ -34,11 +37,16 @@ export const logisticaReportesService = {
       orderBy: { fechaDocumentalFiscal: "asc" },
     });
 
-    const cierre = await prisma.cierreLogisticaMensual.findUnique({
-      where: {
-        municipioId_anio_mes: { municipioId: query.municipioId, anio: query.anio, mes: query.mes },
-      },
-    });
+    // El cierre mensual es por municipio — en modo "todos los municipios"
+    // no hay un único registro que lo represente, así que se omite (no
+    // bloquea la vista/exportación del consolidado, solo "Cerrar mes").
+    const cierre = query.municipioId
+      ? await prisma.cierreLogisticaMensual.findUnique({
+          where: {
+            municipioId_anio_mes: { municipioId: query.municipioId, anio: query.anio, mes: query.mes },
+          },
+        })
+      : null;
 
     const totalTonelajeNeto = lotes.reduce((acc, l) => acc + Number(l.pesaje?.tonelajeNeto ?? 0), 0);
     const pendientesF101 = lotes.filter((l) => !l.formulario101).length;

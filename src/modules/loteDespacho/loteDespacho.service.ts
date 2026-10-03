@@ -65,6 +65,9 @@ export const loteDespachoService = {
         { formulario101: { codigo: { contains: texto, mode: "insensitive" as const } } },
       ];
     }
+    if (query.conObservaciones) {
+      where.conocimientoCarga = { AND: [{ observaciones: { not: null } }, { observaciones: { not: "" } }] };
+    }
 
     const [lotes, total] = await Promise.all([
       prisma.loteDespacho.findMany({
@@ -79,6 +82,7 @@ export const loteDespachoService = {
           destinoIngenio: true,
           formulario101: true,
           pesaje: true,
+          conocimientoCarga: true,
         },
         // Más reciente primero por fecha de despacho real; createdAt desc
         // como desempate entre lotes del mismo día — como el correlativo
