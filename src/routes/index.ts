@@ -24,6 +24,7 @@ import ingenioRoutes from "../modules/ingenio/ingenio.routes.js";
 import conceptoLiquidacionRoutes from "../modules/conceptoLiquidacion/conceptoLiquidacion.routes.js";
 import alicuotaRegaliaRoutes from "../modules/alicuotaRegalia/alicuotaRegalia.routes.js";
 import tarifaLiquidacionRoutes from "../modules/tarifaLiquidacion/tarifaLiquidacion.routes.js";
+import precioCombustibleRoutes from "../modules/precioCombustible/precioCombustible.routes.js";
 // Logística — Fase 2: transportista y flota
 import transportistaRoutes from "../modules/transportista/transportista.routes.js";
 import vehiculoRoutes from "../modules/vehiculo/vehiculo.routes.js";
@@ -90,6 +91,7 @@ router.use("/ingenios", ingenioRoutes);
 router.use("/conceptos-liquidacion", conceptoLiquidacionRoutes);
 router.use("/alicuotas-regalia", alicuotaRegaliaRoutes);
 router.use("/tarifas-liquidacion", tarifaLiquidacionRoutes);
+router.use("/precios-combustible", precioCombustibleRoutes);
 
 // Logística, Acopio y Liquidación Minera — Fase 2
 router.use("/transportistas", transportistaRoutes);

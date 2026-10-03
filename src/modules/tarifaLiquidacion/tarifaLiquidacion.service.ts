@@ -84,4 +84,23 @@ export const tarifaLiquidacionService = {
 
     return tarifa;
   },
+
+  // A diferencia de alícuotas/tarifas de combustible, acá sí se permite
+  // borrar de verdad (no solo cerrar la vigencia): el precio aplicado a
+  // cada lote ya liquidado queda guardado como una copia en
+  // LiquidacionDetalleLote (precioAplicado/subtotal), no como una
+  // referencia viva a esta fila — borrar una tarifa mal cargada nunca
+  // afecta liquidaciones ya hechas, solo deja de ofrecerse para las futuras.
+  async remove(id: number, userId: number) {
+    const tarifa = await prisma.tarifaLiquidacion.findUnique({ where: { id } });
+    if (!tarifa) throw new HttpError("Tarifa de liquidación no encontrada", 404);
+
+    await prisma.tarifaLiquidacion.delete({ where: { id } });
+
+    await prisma.log.create({
+      data: { usuarioId: userId, accion: "DELETE_TARIFA_LIQUIDACION", data: { tarifaId: id } },
+    });
+
+    logger.info({ userId, tarifaId: id, action: "DELETE_TARIFA_LIQUIDACION" }, "Tarifa de liquidación eliminada");
+  },
 };

@@ -34,6 +34,7 @@ export const logisticaResetService = {
       const transportistas = await tx.transportista.deleteMany({ where: { esSemilla: false } });
       await tx.cierreLogisticaMensual.deleteMany({});
       await tx.conceptoLiquidacion.deleteMany({});
+      await tx.precioCombustible.deleteMany({});
       const municipios = await tx.municipioOrigen.deleteMany({ where: { esSemilla: false } });
       const tiposMineral = await tx.tipoMineral.deleteMany({ where: { esSemilla: false } });
       const ingenios = await tx.ingenio.deleteMany({ where: { esSemilla: false } });

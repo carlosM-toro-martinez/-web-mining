@@ -625,7 +625,28 @@ model ConceptoLiquidacion {
   nombre String
   tipo   TipoConceptoLiquidacion
   activo Boolean                   @default(true)
+  // Marca el (o los) concepto(s) de tipo DEDUCCION cuyo monto se calcula
+  // solo a partir del combustible realmente asignado a los lotes de la
+  // liquidación (litros × PrecioCombustible vigente en cada fecha) — ver
+  // calcularCombustibleSugerido() en liquidacion.service.ts. El usuario
+  // elige libremente el nombre del concepto (ej. "Descuento combustible");
+  // esta bandera es lo único que el sistema usa para reconocerlo.
+  esCombustible Boolean                @default(false)
   items  LiquidacionItemConcepto[]
+}
+
+// Precio por litro de combustible, usado para sugerir automáticamente el
+// monto de un concepto de deducción marcado `esCombustible`. Mismo patrón
+// que TarifaLiquidacion (nunca se edita un registro: crear uno nuevo cierra
+// la vigencia del anterior), porque el precio cambia semana a semana o mes
+// a mes y hay que poder reconstruir cuál regía en la fecha de cada viaje.
+model PrecioCombustible {
+  id             Int       @id @default(autoincrement())
+  precioPorLitro Decimal   @db.Decimal(14, 6)
+  vigenteDesde   DateTime
+  vigenteHasta   DateTime?
+
+  @@index([vigenteDesde])
 }
 
 model Transportista {

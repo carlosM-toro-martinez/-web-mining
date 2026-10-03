@@ -37,7 +37,7 @@ router.put(
 
 router.delete(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   tipoMineralController.remove,
 );

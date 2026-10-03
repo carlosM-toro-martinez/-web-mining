@@ -19,12 +19,18 @@ router.use(authenticate);
 router.get("/", validateQuery(tarifaLiquidacionQuerySchema), tarifaLiquidacionController.getAll);
 router.get("/:id", validateParams(idSchema), tarifaLiquidacionController.getById);
 
-// Parámetro financiero sensible: solo ADMIN/SUPERINTENDENTE definen tarifas.
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validate(createTarifaLiquidacionSchema),
   tarifaLiquidacionController.create,
+);
+
+router.delete(
+  "/:id",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  validateParams(idSchema),
+  tarifaLiquidacionController.remove,
 );
 
 export default router;

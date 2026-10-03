@@ -44,4 +44,15 @@ export const tarifaLiquidacionController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async remove(req: AuthRequest, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      await tarifaLiquidacionService.remove(id, req.user!.id);
+      res.status(204).json({ success: true });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

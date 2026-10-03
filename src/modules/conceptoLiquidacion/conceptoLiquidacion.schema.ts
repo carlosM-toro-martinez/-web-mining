@@ -7,6 +7,10 @@ export const createConceptoLiquidacionSchema = z
     nombre: z.string().min(1),
     tipo: tipoConceptoLiquidacionSchema,
     activo: z.boolean().optional(),
+    // Solo tiene sentido en DEDUCCION — ver calcularCombustibleSugerido() en
+    // liquidacion.service.ts. No se valida aquí con .refine() porque
+    // update() permite mandar solo esCombustible sin repetir el tipo.
+    esCombustible: z.boolean().optional(),
   })
   .strict();
 

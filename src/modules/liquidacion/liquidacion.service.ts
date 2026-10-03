@@ -3,6 +3,7 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { generarNumeroLiquidacionTransporte } from "../../utils/correlativo.js";
+import { buscarPrecioCombustibleVigente } from "../precioCombustible/precioCombustible.service.js";
 import type {
   AgregarItemConceptoDTO,
   AnularLiquidacionDTO,
@@ -86,6 +87,67 @@ async function buscarTarifaAplicable(
   }
 
   return null;
+}
+
+// Si el transportista ya tiene una tarifa CON_COMBUSTIBLE registrada
+// (específica para él, o genérica para su tipoEntidad), su precio/ton ya
+// refleja que la empresa pone el combustible — sugerir ADEMÁS una
+// deducción manual por el combustible real duplicaría el descuento. Por
+// eso el concepto "esCombustible" solo se ofrece cuando NO existe ninguna
+// tarifa así para este transportista.
+async function tieneTarifaConCombustibleRegistrada(transportista: { id: number; tipoEntidad: string }) {
+  const tarifa = await prisma.tarifaLiquidacion.findFirst({
+    where: {
+      incluyeCombustible: "CON_COMBUSTIBLE",
+      OR: [{ transportistaId: transportista.id }, { transportistaId: null, tipoEntidad: transportista.tipoEntidad as any }],
+    },
+  });
+  return Boolean(tarifa);
+}
+
+// Sugerencia de monto para el concepto de deducción marcado `esCombustible`
+// (ver ConceptoLiquidacion.esCombustible en schema.prisma): suma los litros
+// REALMENTE asignados (LoteDespacho.combustibleAsignadoLitros) de los lotes
+// CON_COMBUSTIBLE de esta liquidación, cada uno multiplicado por el precio
+// por litro vigente en SU fecha de despacho (el precio del combustible
+// cambia de semana a semana o de mes a mes, igual que una tarifa). Si falta
+// registrar el precio vigente para alguna fecha, el monto sugerido queda en
+// null (nunca se sugiere un número incompleto) y se reportan esas fechas.
+async function calcularCombustibleSugerido(
+  transportista: { id: number; tipoEntidad: string },
+  detalleLotes: Array<{
+    lote: { incluyeCombustible: string; combustibleAsignadoLitros: Prisma.Decimal | null; fechaDespachoReal: Date };
+  }>,
+) {
+  const bloqueadoPorTarifaConCombustible = await tieneTarifaConCombustibleRegistrada(transportista);
+
+  const viajesConCombustible = detalleLotes.filter(
+    (d) => d.lote.incluyeCombustible === "CON_COMBUSTIBLE" && d.lote.combustibleAsignadoLitros !== null,
+  );
+
+  let litrosTotal = 0;
+  let montoSugerido = 0;
+  let faltaPrecio = false;
+  const fechasSinPrecio = new Set<string>();
+
+  for (const d of viajesConCombustible) {
+    const litros = Number(d.lote.combustibleAsignadoLitros);
+    litrosTotal += litros;
+    const precio = await buscarPrecioCombustibleVigente(d.lote.fechaDespachoReal);
+    if (!precio) {
+      faltaPrecio = true;
+      fechasSinPrecio.add(d.lote.fechaDespachoReal.toISOString().slice(0, 10));
+      continue;
+    }
+    montoSugerido += litros * Number(precio.precioPorLitro);
+  }
+
+  return {
+    litrosTotal: Math.round(litrosTotal * 100) / 100,
+    montoSugerido: faltaPrecio ? null : Math.round(montoSugerido * 100) / 100,
+    fechasSinPrecio: Array.from(fechasSinPrecio),
+    bloqueadoPorTarifaConCombustible,
+  };
 }
 
 interface LoteElegible {
@@ -254,7 +316,11 @@ export const liquidacionService = {
   },
 
   async getById(id: string) {
-    return prisma.liquidacionPeriodo.findUnique({ where: { id }, include: INCLUDE_DETALLE });
+    const liquidacion = await prisma.liquidacionPeriodo.findUnique({ where: { id }, include: INCLUDE_DETALLE });
+    if (!liquidacion) return null;
+
+    const combustibleSugerido = await calcularCombustibleSugerido(liquidacion.transportista, liquidacion.detalleLotes);
+    return { ...liquidacion, combustibleSugerido };
   },
 
   // Arma el detalle a partir de los lotes ACOPIADO del transportista dentro

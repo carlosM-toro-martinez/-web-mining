@@ -34,7 +34,12 @@ export const conceptoLiquidacionService = {
 
   async create(data: CreateConceptoLiquidacionDTO, userId: number) {
     const concepto = await prisma.conceptoLiquidacion.create({
-      data: { nombre: data.nombre, tipo: data.tipo, activo: data.activo ?? true },
+      data: {
+        nombre: data.nombre,
+        tipo: data.tipo,
+        activo: data.activo ?? true,
+        esCombustible: data.esCombustible ?? false,
+      },
     });
 
     await prisma.log.create({
