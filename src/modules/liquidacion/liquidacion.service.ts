@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import { generarNumeroLiquidacionTransporte } from "../../utils/correlativo.js";
+import { generarNumeroLiquidacionTransporte, gestionMineraDe } from "../../utils/correlativo.js";
 import { buscarPrecioCombustibleVigente } from "../precioCombustible/precioCombustible.service.js";
 import type {
   AgregarItemConceptoDTO,
@@ -214,6 +214,14 @@ function agruparPorVehiculoYPrecio(elegibles: LoteElegible[]): GrupoLiquidacion[
   return Array.from(grupos.values());
 }
 
+// Total bruto igual que la planilla Excel real: cada fila guarda peso ×
+// precio SIN redondear (solo se ve con 2 decimales) y el total suma esos
+// valores y redondea una sola vez — 616,79 × 336,41 = 207.494,3239 →
+// 207.494,32, mientras que sumar las filas ya redondeadas daba 207.494,33.
+function totalBrutoDeGrupos(grupos: GrupoLiquidacion[]): number {
+  return Math.round(grupos.reduce((acc, g) => acc + g.tonelajeNetoRedondeado * g.precioAplicado, 0) * 100) / 100;
+}
+
 // Lógica compartida entre preview() (solo lectura) y create() (persiste):
 // arma la lista de lotes ACOPIADO de este transportista en el rango, con
 // la tarifa ya resuelta — así el preview le muestra al usuario EXACTAMENTE
@@ -293,7 +301,7 @@ export const liquidacionService = {
       query.fechaFin,
     );
 
-    const totalBruto = Math.round(grupos.reduce((acc, g) => acc + g.subtotal, 0) * 100) / 100;
+    const totalBruto = totalBrutoDeGrupos(grupos);
 
     return {
       transportista,
@@ -486,9 +494,7 @@ export const liquidacionService = {
           subtotal: Number(d.subtotal),
         })),
       );
-      const totalBruto = new Prisma.Decimal(
-        gruposCierre.reduce((acc, g) => acc + g.subtotal, 0).toFixed(2),
-      );
+      const totalBruto = new Prisma.Decimal(totalBrutoDeGrupos(gruposCierre).toFixed(2));
       const totalAbonos = liquidacion.itemsConcepto
         .filter((i) => i.concepto.tipo === "ABONO")
         .reduce((acc, i) => acc.add(i.monto), new Prisma.Decimal(0));
@@ -496,7 +502,10 @@ export const liquidacionService = {
         .filter((i) => i.concepto.tipo === "DEDUCCION")
         .reduce((acc, i) => acc.add(i.monto), new Prisma.Decimal(0));
       const totalNeto = totalBruto.add(totalAbonos).sub(totalDeducciones);
-      const numero = await generarNumeroLiquidacionTransporte(tx);
+      // La gestión sale de la fecha del documento (fechaFin), que es la que
+      // se imprime como "Fecha, 3 de Octubre del 2026".
+      const gestion = gestionMineraDe(liquidacion.fechaFin);
+      const numero = await generarNumeroLiquidacionTransporte(tx, gestion);
 
       if (detalleInvalidosIds.length > 0) {
         await tx.liquidacionDetalleLote.deleteMany({ where: { id: { in: detalleInvalidosIds } } });
@@ -504,7 +513,7 @@ export const liquidacionService = {
 
       const resultado = await tx.liquidacionPeriodo.updateMany({
         where: { id, estado: "BORRADOR" },
-        data: { estado: "CERRADO", numero, totalBruto, totalAbonos, totalDeducciones, totalNeto },
+        data: { estado: "CERRADO", numero, gestion, totalBruto, totalAbonos, totalDeducciones, totalNeto },
       });
       if (resultado.count === 0) {
         throw new HttpError("La liquidación ya fue cerrada por otra operación", 409);

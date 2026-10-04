@@ -83,10 +83,13 @@ export const updateLoteDespachoSchema = z
     detalleCarga: z.string().trim().min(1).optional(),
     descripcion: z.string().trim().nullable().optional(),
     observaciones: z.string().trim().nullable().optional(),
-    // Solo se aplican si el lote YA tiene un pesaje registrado — recalcula
-    // el neto. Si todavía no tiene, usar "Registrar pesaje" en su lugar.
+    // Solo se aplican si el lote YA tiene un pesaje registrado. Si no se
+    // manda el neto, se recalcula como bruto − tara; si se manda, se guarda
+    // ese (el ticket de balanza a veces difiere en algún decimal).
+    // Si todavía no tiene pesaje, usar "Registrar pesaje" en su lugar.
     tonelajeBruto: z.number().positive().optional(),
     tonelajeTara: z.number().nonnegative().optional(),
+    tonelajeNeto: z.number().positive().optional(),
   })
   .strict();
 
@@ -121,6 +124,10 @@ export const registrarPesajeSchema = z
   .object({
     tonelajeBruto: z.number().positive(),
     tonelajeTara: z.number().nonnegative(),
+    // Opcional: si no viene, se calcula bruto − tara. Si viene, se guarda
+    // tal cual (redondeado a 3 decimales) porque el ticket de balanza a
+    // veces difiere del cálculo en algún decimal.
+    tonelajeNeto: z.number().positive().optional(),
     observaciones: z.string().trim().optional(),
   })
   .strict()

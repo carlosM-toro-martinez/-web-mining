@@ -853,11 +853,14 @@ model CorrelativoContador {
 
 model LiquidacionPeriodo {
   id               String                    @id @default(uuid())
-  // Folio del documento impreso ("Nº 81", "Nº 86"): un único contador
-  // global compartido por TODOS los transportistas, asignado recién al
-  // CERRAR (no en el borrador, igual que un talonario real). Null mientras
-  // está en BORRADOR.
-  numero           Int?                      @unique
+  // Folio del documento impreso ("Nº 01/27"): correlativo compartido por
+  // TODOS los transportistas, que se reinicia cada gestión minera
+  // (octubre–septiembre), asignado recién al CERRAR (igual que un talonario
+  // real). "27" es la gestión, guardada aparte en `gestion` (2027 =
+  // oct-2026..sep-2027). Las liquidaciones viejas ("Nº 81", "Nº 86") quedan
+  // con gestion null. Null mientras está en BORRADOR.
+  numero           Int?
+  gestion          Int?
   // Folio del Comprobante de Egresos del pago al transportista — contador
   // global propio, distinto de "numero" (el de la liquidación en sí),
   // asignado recién la primera vez que se genera el comprobante.
@@ -879,6 +882,7 @@ model LiquidacionPeriodo {
   transportista    Transportista             @relation(fields: [transportistaId], references: [id])
   usuario          User                      @relation(fields: [usuarioId], references: [id])
 
+  @@unique([numero, gestion])
   @@index([transportistaId])
   @@index([estado])
 }

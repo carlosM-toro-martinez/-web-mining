@@ -82,12 +82,21 @@ export async function generarFolioRendicionCaja(
   return formatearFolioRendicionCaja(periodoHasta);
 }
 
-// Folio impreso de la Liquidación de Transporte ("Nº 81", "Nº 86" en los
-// documentos reales): un único contador global, compartido por TODOS los
-// transportistas (empresa o particular), que nunca se reinicia — se asigna
-// recién al CERRAR la liquidación, igual que un talonario numerado a mano.
-export async function generarNumeroLiquidacionTransporte(tx: Prisma.TransactionClient): Promise<number> {
-  return reservarSiguienteNumero(tx, "LIQUIDACION_TRANSPORTE");
+// Gestión minera (octubre–septiembre) identificada por el año en que
+// termina: oct-2026..sep-2027 = 2027 (el "27" de "Nº 01/27").
+export function gestionMineraDe(fecha: Date): number {
+  return fecha.getUTCMonth() + 1 >= 10 ? fecha.getUTCFullYear() + 1 : fecha.getUTCFullYear();
+}
+
+// Folio impreso de la Liquidación de Transporte ("Nº 01/27"): un contador
+// compartido por TODOS los transportistas (empresa o particular) que se
+// reinicia en cada gestión minera — se asigna recién al CERRAR la
+// liquidación, igual que un talonario numerado a mano.
+export async function generarNumeroLiquidacionTransporte(
+  tx: Prisma.TransactionClient,
+  gestion: number,
+): Promise<number> {
+  return reservarSiguienteNumero(tx, `LIQUIDACION_TRANSPORTE_${gestion}`);
 }
 
 // Folio del Comprobante de Egresos ("Nº 000188" en el documento físico real):

@@ -40,6 +40,14 @@ const TRANSICIONES_VALIDAS: Record<string, string[]> = {
   EN_TRANSITO: ["EN_BALANZA"],
 };
 
+// Neto del pesaje con 3 decimales: el que escribió el usuario si lo corrigió
+// a mano (el ticket de balanza a veces difiere en algún decimal), o si no
+// bruto − tara. Se redondea explícitamente porque restar en coma flotante
+// deja restos como 19.719999999999999.
+function netoDelPesaje(bruto: number, tara: number, netoManual?: number): number {
+  return Math.round((netoManual ?? bruto - tara) * 1000) / 1000;
+}
+
 export const loteDespachoService = {
   async getAll(query: LoteDespachoQuery) {
     const page = Number(query.page ?? 1);
@@ -140,7 +148,7 @@ export const loteDespachoService = {
           ? data.combustibleAsignadoLitros
           : existente.combustibleAsignadoLitros;
 
-    const { tonelajeBruto, tonelajeTara, detalleCarga, descripcion, observaciones, ...camposLote } = data;
+    const { tonelajeBruto, tonelajeTara, tonelajeNeto, detalleCarga, descripcion, observaciones, ...camposLote } = data;
 
     const loteData: Record<string, unknown> = {};
     for (const [clave, valor] of Object.entries(camposLote)) {
@@ -163,7 +171,7 @@ export const loteDespachoService = {
         });
       }
 
-      if (existente.pesaje && (tonelajeBruto !== undefined || tonelajeTara !== undefined)) {
+      if (existente.pesaje && (tonelajeBruto !== undefined || tonelajeTara !== undefined || tonelajeNeto !== undefined)) {
         const bruto = tonelajeBruto ?? Number(existente.pesaje.tonelajeBruto);
         const tara = tonelajeTara ?? Number(existente.pesaje.tonelajeTara);
         if (bruto <= tara) {
@@ -171,7 +179,7 @@ export const loteDespachoService = {
         }
         await tx.pesajeIngenio.update({
           where: { loteId: id },
-          data: { tonelajeBruto: bruto, tonelajeTara: tara, tonelajeNeto: bruto - tara },
+          data: { tonelajeBruto: bruto, tonelajeTara: tara, tonelajeNeto: netoDelPesaje(bruto, tara, tonelajeNeto) },
         });
       }
 
@@ -317,8 +325,8 @@ export const loteDespachoService = {
     });
   },
 
-  // El neto siempre se calcula en el service (nunca columna generada en
-  // DB), igual que stockDespues/saldoBs en vales.service.ts. Al pesar, el
+  // El neto se calcula en el service (nunca columna generada en DB) salvo
+  // que el usuario lo corrija a mano (ver netoDelPesaje). Al pesar, el
   // lote pasa directo a ACOPIADO (la ley del mineral ya se confirmó al
   // pesar) y el vehículo vuelve a estar DISPONIBLE.
   async registrarPesaje(id: string, data: RegistrarPesajeDTO, userId: number) {
@@ -331,7 +339,7 @@ export const loteDespachoService = {
         throw new HttpError("El lote debe estar en balanza para registrar el pesaje", 409);
       }
 
-      const tonelajeNeto = data.tonelajeBruto - data.tonelajeTara;
+      const tonelajeNeto = netoDelPesaje(data.tonelajeBruto, data.tonelajeTara, data.tonelajeNeto);
 
       await tx.pesajeIngenio.create({
         data: {
