@@ -39,7 +39,7 @@ export const rendicionCajaService = {
     const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
 
-    const [gastosElegibles, fondos, fondosBanco, ultimaCerrada] = await Promise.all([
+    const [gastosElegibles, fondos, ultimaCerrada] = await Promise.all([
       prisma.gastoCaja.findMany({
         where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
         orderBy: { fecha: "asc" },
@@ -48,17 +48,14 @@ export const rendicionCajaService = {
         where: { cajaId, fecha: { gte: periodoDesde, lte: periodoHasta } },
         _sum: { monto: true },
       }),
-      prisma.movimientoBancoCaja.aggregate({
-        where: { cajaId, tipo: "SALIDA_A_CAJA", fecha: { gte: periodoDesde, lte: periodoHasta } },
-        _sum: { monto: true },
-      }),
       prisma.rendicionCaja.findFirst({
         where: { cajaId, estado: "CERRADO" },
         orderBy: { periodoHasta: "desc" },
       }),
     ]);
 
-    const totalFondos = Number(fondos._sum.monto ?? 0) + Number(fondosBanco._sum.monto ?? 0);
+    // Ver nota en create(): solo las remesas cuentan como fondos de la caja.
+    const totalFondos = Number(fondos._sum.monto ?? 0);
     const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
     const totalRetenciones = gastosElegibles.reduce(
       (acc, g) =>
@@ -101,17 +98,9 @@ export const rendicionCajaService = {
       throw new HttpError("No hay gastos registrados de esta caja en el rango de fechas indicado", 400);
     }
 
-    const [fondos, fondosBanco, ultimaCerrada] = await Promise.all([
+    const [fondos, ultimaCerrada] = await Promise.all([
       prisma.movimientoFondoCaja.aggregate({
         where: { cajaId: data.cajaId, fecha: { gte: data.periodoDesde, lte: data.periodoHasta } },
-        _sum: { monto: true },
-      }),
-      prisma.movimientoBancoCaja.aggregate({
-        where: {
-          cajaId: data.cajaId,
-          tipo: "SALIDA_A_CAJA",
-          fecha: { gte: data.periodoDesde, lte: data.periodoHasta },
-        },
         _sum: { monto: true },
       }),
       prisma.rendicionCaja.findFirst({
@@ -120,7 +109,11 @@ export const rendicionCajaService = {
       }),
     ]);
 
-    const totalFondos = Number(fondos._sum.monto ?? 0) + Number(fondosBanco._sum.monto ?? 0);
+    // Solo las remesas (CH-xxx) son fondos de la caja. Los traspasos del
+    // banco a la caja (SALIDA_A_CAJA) son la misma plata de esas remesas: se
+    // depositan en el banco y de ahí se sacan a la caja, así que sumarlos
+    // contaría el mismo dinero dos veces.
+    const totalFondos = Number(fondos._sum.monto ?? 0);
     const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
     const totalRetenciones = gastosElegibles.reduce(
       (acc, g) =>
@@ -275,6 +268,40 @@ export const rendicionCajaService = {
       });
 
       return tx.rendicionCaja.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
+    });
+  },
+
+  // Solo se borran rendiciones ya ANULADAS: al anular, sus gastos ya
+  // volvieron a REGISTRADO, así que quitar el detalle no toca ningún gasto.
+  // Queda constancia en el log con los datos de la rendición borrada.
+  async eliminar(id: string, userId: number) {
+    return prisma.$transaction(async (tx) => {
+      const rendicion = await tx.rendicionCaja.findUnique({ where: { id }, include: { anulacion: true } });
+      if (!rendicion) throw new HttpError("Rendición no encontrada", 404);
+      if (rendicion.estado !== "ANULADO") {
+        throw new HttpError("Solo se pueden eliminar rendiciones anuladas. Anúlala primero.", 409);
+      }
+
+      await tx.rendicionDetalleGasto.deleteMany({ where: { rendicionId: id } });
+      await tx.anulacionRendicionCaja.deleteMany({ where: { rendicionId: id } });
+      await tx.rendicionCaja.delete({ where: { id } });
+
+      await tx.log.create({
+        data: {
+          usuarioId: userId,
+          accion: "ELIMINAR_RENDICION_CAJA",
+          data: {
+            rendicionId: id,
+            numero: rendicion.numero,
+            cajaId: rendicion.cajaId,
+            periodoDesde: rendicion.periodoDesde.toISOString(),
+            periodoHasta: rendicion.periodoHasta.toISOString(),
+            motivoAnulacion: rendicion.anulacion?.motivo ?? null,
+          },
+        },
+      });
+
+      return { id };
     });
   },
 };

@@ -75,4 +75,14 @@ export const rendicionCajaController = {
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },
+
+  async eliminar(req: AuthRequest, res: Response) {
+    try {
+      const data = await rendicionCajaService.eliminar(req.params.id as string, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
 };

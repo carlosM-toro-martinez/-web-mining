@@ -37,6 +37,61 @@ const CATEGORIA_LABEL: Record<(typeof CATEGORIA_ORDEN)[number], string> = {
   MEDIO_AMBIENTE: "MEDIO AMBIENTE",
 };
 
+// Reporte mensual "CAJA {SECTOR}" (réplica del Excel de la caja), compartido
+// por la rendición ya creada y por la vista previa antes de crearla.
+// En "Fondos Recibidos" solo van las remesas de la caja (CH-xxx), nunca los
+// traspasos del banco: son la misma plata de esas remesas.
+async function armarReporteMensual(params: {
+  caja: Prisma.CajaChicaGetPayload<object>;
+  numero: string;
+  periodoDesde: Date;
+  periodoHasta: Date;
+  tipoCambio: number;
+  gastos: Prisma.GastoCajaGetPayload<object>[];
+  saldoAnterior: number;
+  saldoNuevo?: number;
+}) {
+  const fondosCaja = await prisma.movimientoFondoCaja.findMany({
+    where: { cajaId: params.caja.id, fecha: { gte: params.periodoDesde, lte: params.periodoHasta } },
+    orderBy: { fecha: "asc" },
+  });
+  const fondos = fondosCaja.map((f) => ({
+    id: f.id,
+    tipo: f.tipo as string,
+    monto: f.monto,
+    moneda: f.moneda,
+    fecha: f.fecha,
+    referencia: f.referencia,
+  }));
+
+  // Todas las categorías, aunque estén vacías (el documento real siempre
+  // muestra "ACTIVOS FIJOS" y "MEDIO AMBIENTE" con sub-total 0,00).
+  const grupos = CATEGORIA_ORDEN.map((categoria) => {
+    const gastos = params.gastos
+      .filter((g) => g.categoriaRendicion === categoria)
+      .sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
+    const subtotal = gastos.reduce((acc, g) => acc + Number(g.montoTotal), 0);
+    return { categoria, label: CATEGORIA_LABEL[categoria], gastos, subtotal };
+  });
+
+  const totalFondos = fondos.reduce((acc, f) => acc + Number(f.monto), 0);
+  const totalGastos = grupos.reduce((acc, g) => acc + g.subtotal, 0);
+
+  return {
+    caja: params.caja,
+    numero: params.numero,
+    periodoDesde: params.periodoDesde,
+    periodoHasta: params.periodoHasta,
+    tipoCambio: params.tipoCambio,
+    fondos,
+    totalFondos,
+    grupos,
+    totalGastos,
+    saldoAnterior: params.saldoAnterior,
+    saldoNuevo: params.saldoNuevo ?? params.saldoAnterior + totalFondos - totalGastos,
+  };
+}
+
 function buildWhere(query: ReporteCajaChicaQuery) {
   const where: any = { estado: { not: "ANULADO" } };
   if (query.cajaId) where.cajaId = query.cajaId;
@@ -387,26 +442,17 @@ export const reportesCajaChicaService = {
     const saldoBase = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const cortaDesde = ultimaCerrada ? ultimaCerrada.periodoHasta : undefined;
 
-    const [fondos, movimientosBanco, gastos] = await Promise.all([
+    // Ingresos de la caja = solo sus remesas. Los traspasos banco -> caja
+    // (SALIDA_A_CAJA) no se suman: son la misma plata de las remesas, que se
+    // depositan en el banco y de ahí se sacan a la caja (ver
+    // rendicionCaja.service.ts create()).
+    const [fondos, gastos] = await Promise.all([
       prisma.movimientoFondoCaja.findMany({
         where: {
           cajaId,
           ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
           ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
         },
-        orderBy: { fecha: "asc" },
-      }),
-      // Solo las SALIDAS del banco hacia esta caja cuentan como ingreso de
-      // la caja — los INGRESO (dinero que llega al banco) todavía no están
-      // en la caja física.
-      prisma.movimientoBancoCaja.findMany({
-        where: {
-          cajaId,
-          tipo: "SALIDA_A_CAJA",
-          ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
-          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
-        },
-        include: { cuentaBancaria: true },
         orderBy: { fecha: "asc" },
       }),
       prisma.gastoCaja.findMany({
@@ -436,14 +482,6 @@ export const reportesCajaChicaService = {
         detalle: f.tipo,
         referencia: f.referencia,
         ingreso: Number(f.monto),
-        egreso: 0,
-      })),
-      ...movimientosBanco.map((m) => ({
-        fecha: m.fecha,
-        tipo: "FONDO" as const,
-        detalle: `${m.cuentaBancaria.banco} · ${m.formaPago}`,
-        referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
-        ingreso: Number(m.monto),
         egreso: 0,
       })),
       ...gastos.map((g) => ({
@@ -581,54 +619,45 @@ export const reportesCajaChicaService = {
     });
     if (!rendicion) throw new HttpError("Rendición no encontrada", 404);
 
-    // El reporte mensual replica el documento físico de la caja: en "Fondos
-    // Recibidos" solo van las remesas que entraron a la caja (CH-xxx), nunca
-    // los movimientos del banco del módulo de presupuesto — esos se ven en
-    // los reportes del banco, no en la rendición de la caja.
-    const fondosCaja = await prisma.movimientoFondoCaja.findMany({
-      where: { cajaId: rendicion.cajaId, fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta } },
-      orderBy: { fecha: "asc" },
-    });
-
-    const fondos = fondosCaja.map((f) => ({
-      id: f.id,
-      tipo: f.tipo as string,
-      monto: f.monto,
-      moneda: f.moneda,
-      fecha: f.fecha,
-      referencia: f.referencia,
-    }));
-
-    const gastosDeRendicion = rendicion.detalleGastos
-      .map((d) => d.gasto)
-      .filter((g) => g.estado !== "ANULADO");
-
-    // Todas las categorías, aunque estén vacías (el documento real siempre
-    // muestra "ACTIVOS FIJOS" y "MEDIO AMBIENTE" con sub-total 0,00).
-    const grupos = CATEGORIA_ORDEN.map((categoria) => {
-      const gastos = gastosDeRendicion
-        .filter((g) => g.categoriaRendicion === categoria)
-        .sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
-      const subtotal = gastos.reduce((acc, g) => acc + Number(g.montoTotal), 0);
-      return { categoria, label: CATEGORIA_LABEL[categoria], gastos, subtotal };
-    });
-
-    const totalFondos = fondos.reduce((acc, f) => acc + Number(f.monto), 0);
-    const totalGastos = grupos.reduce((acc, g) => acc + g.subtotal, 0);
-
-    return {
+    return armarReporteMensual({
       caja: rendicion.caja,
       numero: rendicion.numero,
       periodoDesde: rendicion.periodoDesde,
       periodoHasta: rendicion.periodoHasta,
       tipoCambio: Number(rendicion.tipoCambio),
-      fondos,
-      totalFondos,
-      grupos,
-      totalGastos,
+      gastos: rendicion.detalleGastos.map((d) => d.gasto).filter((g) => g.estado !== "ANULADO"),
       saldoAnterior: Number(rendicion.saldoAnterior),
       saldoNuevo: Number(rendicion.saldoNuevo),
-    };
+    });
+  },
+
+  // El mismo reporte mensual, pero ANTES de crear la rendición: toma los
+  // gastos que la rendición incluiría (REGISTRADO dentro del período) y el
+  // saldo anterior desde la última rendición cerrada (o el saldo inicial de
+  // la caja), para revisar montos sin tener que crear y anular rendiciones.
+  async getReportePrevio(cajaId: number, periodoDesde: Date, periodoHasta: Date) {
+    const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
+    if (!caja) throw new HttpError("Caja chica no encontrada", 404);
+
+    const [gastos, ultimaCerrada] = await Promise.all([
+      prisma.gastoCaja.findMany({
+        where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
+      }),
+      prisma.rendicionCaja.findFirst({
+        where: { cajaId, estado: "CERRADO" },
+        orderBy: { periodoHasta: "desc" },
+      }),
+    ]);
+
+    return armarReporteMensual({
+      caja,
+      numero: "VISTA PREVIA",
+      periodoDesde,
+      periodoHasta,
+      tipoCambio: 0,
+      gastos,
+      saldoAnterior: ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial),
+    });
   },
 
   // Comprobante de Diario: el asiento contable de partida doble (Bs./$us.)

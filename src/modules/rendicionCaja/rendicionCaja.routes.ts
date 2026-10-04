@@ -46,4 +46,11 @@ router.post(
   rendicionCajaController.anular,
 );
 
+router.delete(
+  "/:id",
+  authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
+  validateParams(idSchema),
+  rendicionCajaController.eliminar,
+);
+
 export default router;

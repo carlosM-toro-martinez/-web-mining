@@ -23,3 +23,15 @@ export const estadoCuentaBancariaQuerySchema = z
     fechaFin: z.coerce.date().optional(),
   })
   .strict();
+
+export const reportePrevioRendicionQuerySchema = z
+  .object({
+    cajaId: z.coerce.number().int().positive(),
+    periodoDesde: z.coerce.date(),
+    periodoHasta: z.coerce.date(),
+  })
+  .strict()
+  .refine((data) => data.periodoHasta >= data.periodoDesde, {
+    message: "periodoHasta debe ser posterior o igual a periodoDesde",
+    path: ["periodoHasta"],
+  });

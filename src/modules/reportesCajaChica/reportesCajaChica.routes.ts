@@ -5,6 +5,7 @@ import {
   estadoCuentaBancariaQuerySchema,
   estadoCuentaCajaQuerySchema,
   reporteCajaChicaQuerySchema,
+  reportePrevioRendicionQuerySchema,
 } from "./reportesCajaChica.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 
@@ -26,6 +27,11 @@ router.get(
   "/estado-cuenta-bancaria",
   validateQuery(estadoCuentaBancariaQuerySchema),
   reportesCajaChicaController.getEstadoCuentaBancaria,
+);
+router.get(
+  "/rendicion-previa",
+  validateQuery(reportePrevioRendicionQuerySchema),
+  reportesCajaChicaController.getReportePrevio,
 );
 router.get("/rendicion/:rendicionId", reportesCajaChicaController.getReporteRendicion);
 router.get("/rendicion/:rendicionId/comprobante-diario", reportesCajaChicaController.getComprobanteDiario);
