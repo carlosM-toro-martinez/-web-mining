@@ -581,52 +581,37 @@ export const reportesCajaChicaService = {
     });
     if (!rendicion) throw new HttpError("Rendición no encontrada", 404);
 
-    const [fondosCaja, fondosBanco] = await Promise.all([
-      prisma.movimientoFondoCaja.findMany({
-        where: { cajaId: rendicion.cajaId, fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta } },
-        orderBy: { fecha: "asc" },
-      }),
-      prisma.movimientoBancoCaja.findMany({
-        where: {
-          cajaId: rendicion.cajaId,
-          tipo: "SALIDA_A_CAJA",
-          fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta },
-        },
-        include: { cuentaBancaria: true },
-        orderBy: { fecha: "asc" },
-      }),
-    ]);
+    // El reporte mensual replica el documento físico de la caja: en "Fondos
+    // Recibidos" solo van las remesas que entraron a la caja (CH-xxx), nunca
+    // los movimientos del banco del módulo de presupuesto — esos se ven en
+    // los reportes del banco, no en la rendición de la caja.
+    const fondosCaja = await prisma.movimientoFondoCaja.findMany({
+      where: { cajaId: rendicion.cajaId, fecha: { gte: rendicion.periodoDesde, lte: rendicion.periodoHasta } },
+      orderBy: { fecha: "asc" },
+    });
 
-    const fondos = [
-      ...fondosCaja.map((f) => ({
-        id: f.id,
-        tipo: f.tipo as string,
-        monto: f.monto,
-        moneda: f.moneda,
-        fecha: f.fecha,
-        referencia: f.referencia,
-      })),
-      ...fondosBanco.map((m) => ({
-        id: m.id,
-        tipo: `${m.formaPago}${m.numeroCheque ? ` ${m.numeroCheque}` : ""} - ${m.cuentaBancaria.banco}`,
-        monto: m.monto,
-        moneda: m.moneda,
-        fecha: m.fecha,
-        referencia: m.descripcion,
-      })),
-    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+    const fondos = fondosCaja.map((f) => ({
+      id: f.id,
+      tipo: f.tipo as string,
+      monto: f.monto,
+      moneda: f.moneda,
+      fecha: f.fecha,
+      referencia: f.referencia,
+    }));
 
     const gastosDeRendicion = rendicion.detalleGastos
       .map((d) => d.gasto)
       .filter((g) => g.estado !== "ANULADO");
 
+    // Todas las categorías, aunque estén vacías (el documento real siempre
+    // muestra "ACTIVOS FIJOS" y "MEDIO AMBIENTE" con sub-total 0,00).
     const grupos = CATEGORIA_ORDEN.map((categoria) => {
       const gastos = gastosDeRendicion
         .filter((g) => g.categoriaRendicion === categoria)
-        .sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+        .sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
       const subtotal = gastos.reduce((acc, g) => acc + Number(g.montoTotal), 0);
       return { categoria, label: CATEGORIA_LABEL[categoria], gastos, subtotal };
-    }).filter((grupo) => grupo.gastos.length > 0);
+    });
 
     const totalFondos = fondos.reduce((acc, f) => acc + Number(f.monto), 0);
     const totalGastos = grupos.reduce((acc, g) => acc + g.subtotal, 0);

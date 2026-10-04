@@ -170,14 +170,22 @@ function tokensSignificativos(texto: string): Set<string> {
 }
 
 // Fracción de la glosa MÁS CORTA (en palabras significativas) que también
-// aparece en la otra — 1.0 = una es subconjunto completo de la otra.
+// aparece en la otra — 1.0 = una es subconjunto completo de la otra. Una
+// palabra larga también cuenta si aparece pegada dentro del otro texto
+// ("ELECTROCENTRO" vs "ELECTRO CENTRO").
 function similitudTexto(a: string, b: string): number {
   const ta = tokensSignificativos(a);
   const tb = tokensSignificativos(b);
   if (ta.size === 0 || tb.size === 0) return 0;
-  let compartidos = 0;
-  for (const t of ta) if (tb.has(t)) compartidos += 1;
-  return compartidos / Math.min(ta.size, tb.size);
+  const pegadoA = [...ta].join("");
+  const pegadoB = [...tb].join("");
+  const contar = (origen: Set<string>, destino: Set<string>, pegadoDestino: string) => {
+    let n = 0;
+    for (const t of origen) if (destino.has(t) || (t.length >= 6 && pegadoDestino.includes(t))) n += 1;
+    return n;
+  };
+  const compartidos = Math.max(contar(ta, tb, pegadoB), contar(tb, ta, pegadoA));
+  return Math.min(1, compartidos / Math.min(ta.size, tb.size));
 }
 
 // Bs 2 de diferencia absoluta, o 1% del monto mayor — cubre los redondeos
@@ -201,6 +209,20 @@ function respaldosCoinciden(a: string, b: string): boolean {
 }
 
 const UMBRAL_SIMILITUD_DUPLICADO = 0.3;
+
+// "1200", "1.200", "1.200,50", "1,200.50", "1200.5" -> número. El último
+// separador cuenta como decimal solo si le siguen 1 o 2 dígitos.
+function montoDesdeTexto(texto: string): number | null {
+  const limpio = texto.replace(/bs\.?|bob/gi, "");
+  if (!/^\d[\d.,]*$/.test(limpio)) return null;
+  const ultimo = Math.max(limpio.lastIndexOf("."), limpio.lastIndexOf(","));
+  const normalizado =
+    ultimo !== -1 && limpio.length - ultimo - 1 <= 2
+      ? `${limpio.slice(0, ultimo).replace(/[.,]/g, "")}.${limpio.slice(ultimo + 1)}`
+      : limpio.replace(/[.,]/g, "");
+  const valor = Number(normalizado);
+  return Number.isFinite(valor) ? valor : null;
+}
 
 export const gastoCajaService = {
   // Carga masiva del reporte mensual "Caja Lipeña" (fondos recibidos +
@@ -272,27 +294,90 @@ export const gastoCajaService = {
     // viaje real puede valer un par de centavos distinto.
     const existentesAntes = await prisma.gastoCaja.findMany({
       where: { cajaId: caja.id, estado: { not: "ANULADO" } },
-      select: { glosa: true, montoTotal: true, numeroRespaldo: true },
+      select: { proveedorNombre: true, glosa: true, montoTotal: true, numeroRespaldo: true },
     });
-    const firmasExistentes = new Set(
-      existentesAntes.map((g) => `${g.glosa}|||${Number(g.montoTotal)}|||${g.numeroRespaldo ?? ""}`),
-    );
+    type Existente = (typeof existentesAntes)[number];
+    // Los gastos cargados a mano llevan el nombre de la persona en el
+    // proveedor ("Ovidio Ramos") y algo genérico en la glosa ("Viáticos
+    // salida chilcobija"), mientras que el Excel lo trae todo junto en una
+    // sola descripción — comparar solo la glosa hacía que no se reconociera
+    // a la misma persona.
+    const textoExistente = (e: Existente) => `${e.proveedorNombre} ${e.glosa}`;
+    const etiqueta = (e: Existente) =>
+      e.proveedorNombre && e.proveedorNombre !== e.glosa ? `${e.proveedorNombre} — ${e.glosa}` : e.glosa;
 
     // Cada gasto ya existente solo puede "reclamar" UNA fila del Excel como
-    // su posible duplicado, nunca varias — sin esto, un solo gasto manual
-    // con un monto redondo (ej. un "MATERIALES" de Bs 1.200) bloqueaba TODAS
-    // las filas reales del Excel que compartieran ese mismo monto (ej. 3
-    // compras distintas de Bs 1.200), no solo la que de verdad lo duplica.
-    // Al consumir el índice apenas se usa (sea "omitido" confiable o
-    // "revisar" ambiguo), el resto de filas con ese monto ya no tienen con
-    // qué chocar y se crean normalmente.
+    // su duplicado, nunca varias (si no, un solo "MATERIALES" de Bs 1.200
+    // bloqueaba todas las filas de Bs 1.200). Y se decide en pasadas sobre
+    // TODO el archivo, de la coincidencia más segura a la menos segura:
+    // primero las idénticas, luego monto + texto/n° de respaldo, y recién
+    // al final las que solo coinciden en monto. Si se decidiera fila por
+    // fila en orden, una fila anterior sin relación (ej. "GARY CRUZ" Bs 40)
+    // se quedaba con el lugar del gasto manual de "Ovidio Ramos" Bs 40 antes
+    // de que llegara la fila de Ovidio, y Ovidio terminaba duplicado.
     const consumidos = new Set<number>();
-    function buscarCoincidencia(filtro: (e: (typeof existentesAntes)[number]) => boolean): number {
-      for (let i = 0; i < existentesAntes.length; i++) {
-        if (consumidos.has(i)) continue;
-        if (filtro(existentesAntes[i]!)) return i;
+    const decisiones = new Map<number, { accion: "omitido" | "revisar"; mensaje: string }>();
+    const candidatos = parseado.gastos
+      .map((g, i) => ({ g, i }))
+      .filter(({ g }) => g.monto !== null && g.monto > 0 && Boolean(g.descripcion));
+
+    function reclamar(
+      g: (typeof parseado.gastos)[number],
+      filtro: (e: Existente) => boolean,
+    ): number {
+      let mejor = -1;
+      let mejorSimilitud = -1;
+      existentesAntes.forEach((e, idx) => {
+        if (consumidos.has(idx) || !filtro(e)) return;
+        const s = similitudTexto(textoExistente(e), g.descripcion);
+        if (s > mejorSimilitud) {
+          mejor = idx;
+          mejorSimilitud = s;
+        }
+      });
+      if (mejor !== -1) consumidos.add(mejor);
+      return mejor;
+    }
+
+    for (const { g, i } of candidatos) {
+      const respaldo = g.facturaORecibo || "S/N";
+      const idx = reclamar(
+        g,
+        (e) => e.glosa === g.descripcion && Number(e.montoTotal) === g.monto && (e.numeroRespaldo ?? "") === respaldo,
+      );
+      if (idx !== -1) {
+        decisiones.set(i, { accion: "omitido", mensaje: "Ya existe un gasto igual (misma glosa, monto y respaldo)" });
       }
-      return -1;
+    }
+
+    for (const { g, i } of candidatos) {
+      if (decisiones.has(i)) continue;
+      const idx = reclamar(
+        g,
+        (e) =>
+          montosParecidos(Number(e.montoTotal), g.monto!) &&
+          (similitudTexto(textoExistente(e), g.descripcion) >= UMBRAL_SIMILITUD_DUPLICADO ||
+            respaldosCoinciden(e.numeroRespaldo ?? "", g.facturaORecibo)),
+      );
+      if (idx !== -1) {
+        const e = existentesAntes[idx]!;
+        decisiones.set(i, {
+          accion: "omitido",
+          mensaje: `No se agregó: mismo monto y texto/n° de respaldo parecido a "${etiqueta(e)}" (Bs ${Number(e.montoTotal).toFixed(2)}) ya registrado.`,
+        });
+      }
+    }
+
+    for (const { g, i } of candidatos) {
+      if (decisiones.has(i)) continue;
+      const idx = reclamar(g, (e) => montosParecidos(Number(e.montoTotal), g.monto!));
+      if (idx !== -1) {
+        const e = existentesAntes[idx]!;
+        decisiones.set(i, {
+          accion: "revisar",
+          mensaje: `No se creó: coincide en monto con "${etiqueta(e)}" (Bs ${Number(e.montoTotal).toFixed(2)}) ya registrado, pero el texto y el n° de respaldo no se parecen — revisa si de verdad es el mismo gasto; si no lo es, agrégalo a mano desde "Nuevo gasto".`,
+        });
+      }
     }
 
     const totalGastos = parseado.gastos.length;
@@ -308,55 +393,12 @@ export const gastoCajaService = {
           continue;
         }
 
+        const decision = decisiones.get(indiceGasto);
+        if (decision) {
+          resultados.push({ fila: g.fila, tipo: "gasto", ...decision });
+          continue;
+        }
         const numeroRespaldo = g.facturaORecibo || "S/N";
-        const firma = `${g.descripcion}|||${g.monto}|||${numeroRespaldo}`;
-        if (firmasExistentes.has(firma)) {
-          resultados.push({ fila: g.fila, tipo: "gasto", accion: "omitido", mensaje: "Ya existe un gasto igual (misma glosa, monto y respaldo)" });
-          continue;
-        }
-
-        // Dedup en 3 niveles, de más a menos confiable (ver nota de
-        // "consumidos" arriba: cada existente solo bloquea UNA fila):
-        //  1. Monto parecido Y (texto parecido O mismo n° de factura/recibo)
-        //     -> es un duplicado real con alta confianza: se omite solo.
-        //  2. Monto parecido pero SIN texto ni n° de respaldo en común
-        //     -> ambiguo: NO se crea solo (si de verdad es el mismo gasto,
-        //     contarlo dos veces es peor que no crearlo), pero TAMPOCO se
-        //     descarta como si fuera seguro un duplicado (podría ser un gasto
-        //     real distinto que solo comparte un monto redondo, ej. varios
-        //     viáticos de Bs 40 de personas distintas) — queda como
-        //     "revisar" para que el usuario decida y lo agregue a mano desde
-        //     "Nuevo gasto" si corresponde.
-        const idxConfiable = buscarCoincidencia(
-          (e) =>
-            montosParecidos(Number(e.montoTotal), g.monto!) &&
-            (similitudTexto(e.glosa, g.descripcion) >= UMBRAL_SIMILITUD_DUPLICADO ||
-              respaldosCoinciden(e.numeroRespaldo ?? "", g.facturaORecibo)),
-        );
-        if (idxConfiable !== -1) {
-          consumidos.add(idxConfiable);
-          const coincideConfiable = existentesAntes[idxConfiable]!;
-          resultados.push({
-            fila: g.fila,
-            tipo: "gasto",
-            accion: "omitido",
-            mensaje: `No se agregó: mismo monto y texto/n° de respaldo parecido a "${coincideConfiable.glosa}" (Bs ${Number(coincideConfiable.montoTotal).toFixed(2)}) ya registrado.`,
-          });
-          continue;
-        }
-
-        const idxSoloMonto = buscarCoincidencia((e) => montosParecidos(Number(e.montoTotal), g.monto!));
-        if (idxSoloMonto !== -1) {
-          consumidos.add(idxSoloMonto);
-          const coincideSoloMonto = existentesAntes[idxSoloMonto]!;
-          resultados.push({
-            fila: g.fila,
-            tipo: "gasto",
-            accion: "revisar",
-            mensaje: `No se creó: coincide en monto con "${coincideSoloMonto.glosa}" (Bs ${Number(coincideSoloMonto.montoTotal).toFixed(2)}) ya registrado, pero el texto y el n° de respaldo no se parecen — revisa si de verdad es el mismo gasto; si no lo es, agrégalo a mano desde "Nuevo gasto".`,
-          });
-          continue;
-        }
 
         const tipoDocumento = clasificarTipoDocumento(g.facturaORecibo);
         const fechaGasto =
@@ -421,8 +463,66 @@ export const gastoCajaService = {
       if (query.fechaInicio) where.fecha.gte = query.fechaInicio;
       if (query.fechaFin) where.fecha.lte = query.fechaFin;
     }
+    if (query.categoriaRendicion) where.categoriaRendicion = query.categoriaRendicion;
+    if (query.tipoDocumento) where.tipoDocumento = query.tipoDocumento;
+    if (query.montoMin !== undefined || query.montoMax !== undefined) {
+      where.montoTotal = {};
+      if (query.montoMin !== undefined) where.montoTotal.gte = query.montoMin;
+      if (query.montoMax !== undefined) where.montoTotal.lte = query.montoMax;
+    }
 
-    const [gastos, total] = await Promise.all([
+    const condiciones: any[] = [];
+    if (query.informacionIncompleta === "true") {
+      condiciones.push({
+        OR: [
+          { centroCostoCajaId: null },
+          { funcionGastoCajaId: null },
+          { cuentaContableCajaId: null },
+          { partidaPresupuestoId: null },
+        ],
+      });
+    } else if (query.informacionIncompleta === "false") {
+      condiciones.push({
+        centroCostoCajaId: { not: null },
+        funcionGastoCajaId: { not: null },
+        cuentaContableCajaId: { not: null },
+        partidaPresupuestoId: { not: null },
+      });
+    }
+    // Cada palabra tiene que aparecer en algún campo (proveedor, glosa,
+    // n° de factura/recibo o NIT) — "andrea 1200" encuentra los gastos de
+    // Andrea por Bs 1.200. Si la palabra es un número, también se compara
+    // contra el monto exacto.
+    for (const palabra of (query.search ?? "").split(/\s+/).filter(Boolean)) {
+      const contiene = { contains: palabra, mode: "insensitive" as const };
+      const opciones: any[] = [
+        { proveedorNombre: contiene },
+        { glosa: contiene },
+        { numeroRespaldo: contiene },
+        { proveedorNitCi: contiene },
+      ];
+      // "F-218" también encuentra un respaldo guardado como "218".
+      const digitos = palabra.replace(/\D/g, "");
+      if (digitos && digitos !== palabra) opciones.push({ numeroRespaldo: { contains: digitos } });
+      const monto = montoDesdeTexto(palabra);
+      if (monto !== null) opciones.push({ montoTotal: { gte: monto - 0.005, lte: monto + 0.005 } });
+      condiciones.push({ OR: opciones });
+    }
+    if (condiciones.length) where.AND = condiciones;
+
+    const orderBy =
+      query.orden === "fecha_asc"
+        ? [{ fecha: "asc" as const }, { createdAt: "asc" as const }]
+        : query.orden === "monto_desc"
+          ? [{ montoTotal: "desc" as const }]
+          : query.orden === "monto_asc"
+            ? [{ montoTotal: "asc" as const }]
+            : [{ fecha: "desc" as const }, { createdAt: "desc" as const }];
+
+    // La suma no cuenta los anulados, salvo que se esté filtrando justo por ese estado.
+    const whereSuma = query.estado ? where : { ...where, estado: { not: "ANULADO" } };
+
+    const [gastos, total, suma] = await Promise.all([
       prisma.gastoCaja.findMany({
         where,
         skip,
@@ -436,12 +536,16 @@ export const gastoCajaService = {
           partidaPresupuesto: true,
           anulacion: true,
         },
-        orderBy: { fecha: "desc" },
+        orderBy,
       }),
       prisma.gastoCaja.count({ where }),
+      prisma.gastoCaja.aggregate({ where: whereSuma, _sum: { montoTotal: true } }),
     ]);
 
-    return { gastos: gastos.map(conInfoIncompleta), meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    return {
+      gastos: gastos.map(conInfoIncompleta),
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit), totalMonto: Number(suma._sum.montoTotal ?? 0) },
+    };
   },
 
   async getById(id: string) {

@@ -104,6 +104,13 @@ export const gastoCajaQuerySchema = z
     estado: estadoGastoCajaSchema.optional(),
     fechaInicio: z.coerce.date().optional(),
     fechaFin: z.coerce.date().optional(),
+    search: z.string().trim().max(120).optional(),
+    categoriaRendicion: categoriaRendicionGastoSchema.optional(),
+    tipoDocumento: tipoDocumentoGastoSchema.optional(),
+    montoMin: z.coerce.number().nonnegative().optional(),
+    montoMax: z.coerce.number().nonnegative().optional(),
+    informacionIncompleta: z.enum(["true", "false"]).optional(),
+    orden: z.enum(["fecha_desc", "fecha_asc", "monto_desc", "monto_asc"]).optional(),
   })
   .strict();
 
