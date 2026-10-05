@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { correlativoLiberadoDeLoteAnulado } from "../../utils/correlativo.js";
 import type {
   AnularFormulario101DTO,
   ReutilizarFormulario101DTO,
@@ -139,7 +140,14 @@ export const formulario101Service = {
       });
 
       if (formulario101.loteId && formulario101.lote && formulario101.lote.estadoLote !== "ANULADO") {
-        await tx.loteDespacho.update({ where: { id: formulario101.loteId }, data: { estadoLote: "ANULADO" } });
+        await tx.loteDespacho.update({
+          where: { id: formulario101.loteId },
+          data: {
+            estadoLote: "ANULADO",
+            // Libera el número para el próximo lote del mes (ver correlativo.ts).
+            correlativo: await correlativoLiberadoDeLoteAnulado(tx, formulario101.lote.correlativo, formulario101.lote.anio),
+          },
+        });
         await tx.anulacionLote.create({
           data: {
             loteId: formulario101.loteId,

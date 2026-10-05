@@ -1,5 +1,9 @@
 import { prisma } from "../../config/prisma.js";
-import { generarCorrelativoLote } from "../../utils/correlativo.js";
+import {
+  asignarCorrelativoLoteManual,
+  correlativoLiberadoDeLoteAnulado,
+  generarCorrelativoLote,
+} from "../../utils/correlativo.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { parseCuadroEnvioExcel } from "./loteDespachoImport.parser.js";
@@ -113,8 +117,10 @@ export const loteDespachoService = {
   },
 
   // Edición de un lote ya creado — para corregir datos mal cargados (a mano
-  // o por una importación masiva), no para repetir el flujo de creación:
-  // el correlativo y el año nunca cambian acá. No se permite editar un
+  // o por una importación masiva), no para repetir el flujo de creación.
+  // El correlativo se puede corregir a mano (numeroCorrelativo); si cambia
+  // el mes de la fecha de despacho, el lote pasa a la serie de ese mes
+  // con el siguiente número libre. No se permite editar un
   // lote ANULADO ni LIQUIDADO (ese ya quedó "cerrado"). Si vienen
   // tonelajeBruto/tonelajeTara, solo se aplican cuando el lote YA tiene un
   // pesaje registrado (recalcula el neto); si no lo tiene, se ignoran acá
@@ -150,7 +156,16 @@ export const loteDespachoService = {
           ? data.combustibleAsignadoLitros
           : existente.combustibleAsignadoLitros;
 
-    const { tonelajeBruto, tonelajeTara, tonelajeNeto, detalleCarga, descripcion, observaciones, ...camposLote } = data;
+    const {
+      tonelajeBruto,
+      tonelajeTara,
+      tonelajeNeto,
+      detalleCarga,
+      descripcion,
+      observaciones,
+      numeroCorrelativo,
+      ...camposLote
+    } = data;
 
     const loteData: Record<string, unknown> = {};
     for (const [clave, valor] of Object.entries(camposLote)) {
@@ -159,7 +174,18 @@ export const loteDespachoService = {
     loteData.incluyeCombustible = incluyeCombustible;
     loteData.combustibleAsignadoLitros = combustibleAsignadoLitros;
 
+    const fechaNueva = data.fechaDespachoReal ?? existente.fechaDespachoReal;
+    const cambiaDeMes =
+      fechaNueva.getUTCFullYear() !== existente.fechaDespachoReal.getUTCFullYear() ||
+      fechaNueva.getUTCMonth() !== existente.fechaDespachoReal.getUTCMonth();
+
     const lote = await prisma.$transaction(async (tx) => {
+      if (numeroCorrelativo !== undefined) {
+        Object.assign(loteData, await asignarCorrelativoLoteManual(tx, id, numeroCorrelativo, fechaNueva));
+      } else if (cambiaDeMes) {
+        Object.assign(loteData, await generarCorrelativoLote(tx, fechaNueva, id));
+      }
+
       const actualizado = await tx.loteDespacho.update({ where: { id }, data: loteData });
 
       if (detalleCarga !== undefined || descripcion !== undefined || observaciones !== undefined) {
@@ -436,9 +462,13 @@ export const loteDespachoService = {
         throw new HttpError("No se puede anular un lote ya liquidado", 409);
       }
 
+      // Libera el número para el próximo lote del mes (ver correlativo.ts).
       const actualizado = await tx.loteDespacho.update({
         where: { id },
-        data: { estadoLote: "ANULADO" },
+        data: {
+          estadoLote: "ANULADO",
+          correlativo: await correlativoLiberadoDeLoteAnulado(tx, lote.correlativo, lote.anio),
+        },
       });
 
       await tx.anulacionLote.create({

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { HttpError } from "../errors/http.error.js";
 
 // Reserva el siguiente número de una secuencia identificada por `clave`
 // (ej. "LOTE_DESPACHO_2026") dentro de una transacción Prisma. El `upsert`
@@ -27,14 +28,99 @@ function formatearCorrelativoLote(numero: number, mes: number): string {
   return `${numero}/${String(mes).padStart(2, "0")}`;
 }
 
+// Al anular un lote su número NO se pierde (la serie del Conocimiento tiene
+// que quedar seguida): el anulado pasa a "27/10 ANULADO" — sigue en el
+// historial — y el "27/10" queda libre para el próximo lote de ese mes.
+const SUFIJO_LOTE_ANULADO = " ANULADO";
+
+export async function correlativoLiberadoDeLoteAnulado(
+  tx: Prisma.TransactionClient,
+  correlativo: string,
+  anio: number,
+): Promise<string> {
+  const base = `${correlativo}${SUFIJO_LOTE_ANULADO}`;
+  let candidato = base;
+  // Si el mismo número ya se anuló antes (reusado y vuelto a anular).
+  for (let n = 2; await tx.loteDespacho.findUnique({ where: { correlativo_anio: { correlativo: candidato, anio } } }); n++) {
+    candidato = `${base} ${n}`;
+  }
+  return candidato;
+}
+
+// La serie de un mes es dinámica: los números que ocupan los lotes vigentes
+// de ese mes ("27/10"; los anulados llevan sufijo y no ocupan). El próximo
+// lote toma siempre el MENOR número libre — el que dejó una anulación o una
+// edición —, así la serie del Conocimiento nunca queda con huecos.
+// Bloquea la serie hasta el fin de la transacción: dos altas/ediciones
+// simultáneas del mismo mes no pueden tomar el mismo número.
+async function leerSerieLote(tx: Prisma.TransactionClient, anio: number, mes: number, excluirLoteId?: string) {
+  const mesTxt = String(mes).padStart(2, "0");
+  const clave = `LOTE_DESPACHO_${anio}_${mesTxt}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${clave}))`;
+
+  // Acepta también el mes sin cero ("37/9") de algunas importaciones viejas.
+  const patron = new RegExp(`^(\\d+)/0?${mes}$`);
+  const lotes = await tx.loteDespacho.findMany({
+    where: { anio, correlativo: { contains: "/" }, ...(excluirLoteId ? { id: { not: excluirLoteId } } : {}) },
+    select: { correlativo: true },
+  });
+  const ocupados = new Set<number>();
+  for (const l of lotes) {
+    const m = patron.exec(l.correlativo);
+    if (m) ocupados.add(Number(m[1]));
+  }
+  let siguiente = 1;
+  while (ocupados.has(siguiente)) siguiente++;
+  const maximo = ocupados.size > 0 ? Math.max(...ocupados) : 0;
+  return { clave, ocupados, siguiente, maximo };
+}
+
+// El contador queda siempre en el número más alto de la serie (lo usa la
+// importación del Excel); la serie en sí sale de los lotes, no de acá.
+async function sincronizarContador(tx: Prisma.TransactionClient, clave: string, maximo: number) {
+  await tx.correlativoContador.upsert({
+    where: { clave },
+    create: { clave, ultimoNumero: maximo },
+    update: { ultimoNumero: maximo },
+  });
+}
+
 export async function generarCorrelativoLote(
   tx: Prisma.TransactionClient,
+  fechaDespachoReal: Date,
+  excluirLoteId?: string,
+): Promise<{ correlativo: string; anio: number }> {
+  const anio = fechaDespachoReal.getUTCFullYear();
+  const mes = fechaDespachoReal.getUTCMonth() + 1;
+  const serie = await leerSerieLote(tx, anio, mes, excluirLoteId);
+  await sincronizarContador(tx, serie.clave, Math.max(serie.maximo, serie.siguiente));
+  return { correlativo: formatearCorrelativoLote(serie.siguiente, mes), anio };
+}
+
+// Número puesto a mano al editar un lote: no puede repetir el de otro lote
+// del mes ni saltarse la serie (a lo sumo, el siguiente al más alto).
+export async function asignarCorrelativoLoteManual(
+  tx: Prisma.TransactionClient,
+  loteId: string,
+  numero: number,
   fechaDespachoReal: Date,
 ): Promise<{ correlativo: string; anio: number }> {
   const anio = fechaDespachoReal.getUTCFullYear();
   const mes = fechaDespachoReal.getUTCMonth() + 1;
-  const numero = await reservarSiguienteNumero(tx, `LOTE_DESPACHO_${anio}_${String(mes).padStart(2, "0")}`);
-  return { correlativo: formatearCorrelativoLote(numero, mes), anio };
+  const serie = await leerSerieLote(tx, anio, mes, loteId);
+  const correlativo = formatearCorrelativoLote(numero, mes);
+  if (serie.ocupados.has(numero)) {
+    throw new HttpError(`El N° ${correlativo} ya lo tiene otro lote de ese mes`, 409);
+  }
+  if (numero > serie.maximo + 1) {
+    throw new HttpError(
+      `No se puede saltar la serie: el número más alto de ese mes es ${serie.maximo}, como máximo puede ser ${serie.maximo + 1}`,
+      409,
+    );
+  }
+  // Ojo: el lote editado puede ser el que tenía el número más alto.
+  await sincronizarContador(tx, serie.clave, Math.max(serie.maximo, numero));
+  return { correlativo, anio };
 }
 
 // Formato observado en los comprobantes reales de Caja Lipeña ("P-1/2025",

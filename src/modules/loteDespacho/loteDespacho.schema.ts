@@ -80,6 +80,9 @@ export const updateLoteDespachoSchema = z
     combustibleAsignadoLitros: z.number().nonnegative().nullable().optional(),
     fechaDespachoReal: z.coerce.date().optional(),
     fechaDocumentalFiscal: z.coerce.date().optional(),
+    // N° del Conocimiento dentro de su mes (el "27" de "27/10"): para
+    // corregir la serie a mano. Ver asignarCorrelativoLoteManual.
+    numeroCorrelativo: z.number().int().positive().optional(),
     detalleCarga: z.string().trim().min(1).optional(),
     descripcion: z.string().trim().nullable().optional(),
     observaciones: z.string().trim().nullable().optional(),
