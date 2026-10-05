@@ -1022,6 +1022,10 @@ model GastoCaja {
   montoRetencionIueCompras Decimal                  @default(0) @db.Decimal(14, 2)
   montoRetencionIt         Decimal                  @default(0) @db.Decimal(14, 2)
   esNoDeducible            Boolean                  @default(false)
+  // Factura de combustible: el crédito fiscal IVA se calcula sobre el 70%
+  // del importe facturado (no sobre el total), igual que en el Comprobante
+  // de Diario real (gasolina 1.870 -> 1.309 x 13% = 170,17).
+  esCombustible            Boolean                  @default(false)
   estado                   EstadoGastoCaja          @default(REGISTRADO)
   usuarioId                Int
   createdAt                DateTime                 @default(now())

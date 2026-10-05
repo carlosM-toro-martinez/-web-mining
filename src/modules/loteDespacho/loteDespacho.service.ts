@@ -86,6 +86,8 @@ export const loteDespachoService = {
           municipioOrigen: true,
           transportista: true,
           vehiculo: true,
+          // El chofer va en el Conocimiento, que se imprime directo desde la fila.
+          chofer: true,
           tipoMineral: true,
           destinoIngenio: true,
           formulario101: true,

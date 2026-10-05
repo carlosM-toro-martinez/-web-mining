@@ -7,6 +7,7 @@ import { movimientoFondoCajaService } from "../movimientoFondoCaja/movimientoFon
 import { parseCajaChicaExcel, type CategoriaRendicionGastoTexto } from "./gastoCajaImport.parser.js";
 import type {
   AnularGastoCajaDTO,
+  ClasificarGastosCajaDTO,
   CreateGastoCajaDTO,
   FilaImportGastoCajaResultado,
   ResultadoImportacionGastosCaja,
@@ -62,7 +63,10 @@ async function obtenerPorcentaje(codigo: "RC_IVA" | "IUE_COMPRAS" | "IT") {
 // (nunca hardcodeadas), así que cambiar un porcentaje después no requiere
 // tocar código — igual que TarifaLiquidacion en el módulo de Logística.
 //
-// FACTURA            -> separa el 13% (tasa RC_IVA) como Crédito Fiscal IVA.
+// FACTURA            -> separa el 13% (tasa RC_IVA) como Crédito Fiscal IVA;
+//                        si es combustible, el 13% sobre el 70% del importe;
+//                        si es no deducible (ej. canastones navideños), sin
+//                        crédito fiscal y todo el monto al gasto.
 // CONTRATO_RETENCION
 //   + SERVICIO        -> retiene RC-IVA (cuenta "RC-IVA Retenciones Servicios") + IT.
 //   + COMPRA          -> retiene IUE Compras + IT.
@@ -74,7 +78,17 @@ type DatosImpuesto = {
   tipoDocumento: CreateGastoCajaDTO["tipoDocumento"];
   categoriaRetencion?: CreateGastoCajaDTO["categoriaRetencion"] | null;
   montoTotal: number;
+  esCombustible?: boolean | undefined;
+  esNoDeducible?: boolean | undefined;
 };
+
+// En las facturas de combustible solo el 70% del importe genera crédito
+// fiscal (el resto corresponde al IEHD) — verificado contra el Comprobante
+// de Diario real: gasolina 1.870 -> 70% = 1.309,00 -> x 13% = 170,17.
+// Se redondea el 70% a centavos antes de aplicar la tasa, igual que el
+// documento (270,05 -> 189,04 -> 24,58).
+const PORCENTAJE_BASE_CREDITO_COMBUSTIBLE = 0.7;
+const redondear2 = (valor: number) => Math.round(valor * 100) / 100;
 
 async function calcularImpuestos(data: DatosImpuesto) {
   let montoCreditoFiscalIva = 0;
@@ -84,8 +98,15 @@ async function calcularImpuestos(data: DatosImpuesto) {
   let esNoDeducible = false;
 
   if (data.tipoDocumento === "FACTURA") {
-    const tasaIva = await obtenerPorcentaje("RC_IVA");
-    montoCreditoFiscalIva = Math.round(data.montoTotal * tasaIva * 100) / 100;
+    if (data.esNoDeducible) {
+      esNoDeducible = true;
+    } else {
+      const tasaIva = await obtenerPorcentaje("RC_IVA");
+      const base = data.esCombustible
+        ? redondear2(data.montoTotal * PORCENTAJE_BASE_CREDITO_COMBUSTIBLE)
+        : data.montoTotal;
+      montoCreditoFiscalIva = redondear2(base * tasaIva);
+    }
   } else if (data.tipoDocumento === "CONTRATO_RETENCION") {
     const tasaIt = await obtenerPorcentaje("IT");
     montoRetencionIt = Math.round(data.montoTotal * tasaIt * 100) / 100;
@@ -99,9 +120,11 @@ async function calcularImpuestos(data: DatosImpuesto) {
     }
   } else if (data.tipoDocumento === "RECIBO_DIRECTO") {
     esNoDeducible = true;
+  } else if (data.tipoDocumento === "RECIBO") {
+    // Con respaldo, sin créditos ni retenciones; deducible salvo que se
+    // marque lo contrario.
+    esNoDeducible = Boolean(data.esNoDeducible);
   }
-  // RECIBO: con respaldo, sin créditos ni retenciones, deducible — todos los
-  // montos quedan en 0 y esNoDeducible en false (los valores por defecto).
 
   return { montoCreditoFiscalIva, montoRetencionRcIva, montoRetencionIueCompras, montoRetencionIt, esNoDeducible };
 }
@@ -417,6 +440,8 @@ export const gastoCajaService = {
             numeroRespaldo,
             montoTotal: g.monto,
             moneda: "BOB",
+            // Facturas de gasolina/diésel: crédito fiscal sobre el 70%.
+            esCombustible: tipoDocumento === "FACTURA" && /GASOLINA|DIESEL|DI[EÉ]SEL|COMBUSTIBLE/i.test(g.descripcion),
           },
           userId,
         );
@@ -633,6 +658,7 @@ export const gastoCajaService = {
           montoRetencionIueCompras: impuestos.montoRetencionIueCompras,
           montoRetencionIt: impuestos.montoRetencionIt,
           esNoDeducible: impuestos.esNoDeducible,
+          esCombustible: data.tipoDocumento === "FACTURA" ? Boolean(data.esCombustible) : false,
           usuarioId: userId,
         },
         include: INCLUDE_DETALLE,
@@ -675,6 +701,13 @@ export const gastoCajaService = {
         data.categoriaRetencion !== undefined ? data.categoriaRetencion : existente.categoriaRetencion,
       montoTotal: data.montoTotal ?? Number(existente.montoTotal),
       numeroRespaldo: data.numeroRespaldo !== undefined ? data.numeroRespaldo : existente.numeroRespaldo,
+      esCombustible: data.esCombustible ?? existente.esCombustible,
+      // Si cambia el tipo de documento y no se manda la marca, no se arrastra
+      // la de antes (un RECIBO_DIRECTO es no deducible por definición, pero
+      // al pasarlo a FACTURA no tiene por qué seguir siéndolo).
+      esNoDeducible:
+        data.esNoDeducible ??
+        (data.tipoDocumento && data.tipoDocumento !== existente.tipoDocumento ? false : existente.esNoDeducible),
     };
     if (merged.tipoDocumento === "CONTRATO_RETENCION" && !merged.categoriaRetencion) {
       throw new HttpError("categoriaRetencion es obligatoria cuando el tipo de documento es CONTRATO_RETENCION", 400);
@@ -732,6 +765,7 @@ export const gastoCajaService = {
     // claves que de verdad vinieron en el payload (null explícito sí se
     // aplica, para poder "vaciar" un campo; undefined se omite del todo).
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
+    cleanData.esCombustible = merged.tipoDocumento === "FACTURA" ? merged.esCombustible : false;
     cleanData.montoCreditoFiscalIva = impuestos.montoCreditoFiscalIva;
     cleanData.montoRetencionRcIva = impuestos.montoRetencionRcIva;
     cleanData.montoRetencionIueCompras = impuestos.montoRetencionIueCompras;
@@ -755,6 +789,38 @@ export const gastoCajaService = {
     logger.info({ userId, gastoId: gasto.id, action: "UPDATE_GASTO_CAJA" }, "Gasto de caja actualizado");
 
     return conInfoIncompleta(gasto);
+  },
+
+  // Asigna la misma clasificación a varios gastos REGISTRADO a la vez. No
+  // cambia montos ni impuestos (la clasificación no los afecta). Los que ya
+  // están RENDIDO o ANULADO se saltan y se informan.
+  async clasificarVarios(data: ClasificarGastosCajaDTO, userId: number) {
+    const { ids, ...campos } = data;
+    const cambios = Object.fromEntries(Object.entries(campos).filter(([, v]) => v !== undefined));
+    if (Object.keys(cambios).length === 0) throw new HttpError("No hay nada que asignar", 400);
+
+    const [cuenta, centro, funcion, partida] = await Promise.all([
+      campos.cuentaContableCajaId ? prisma.cuentaContableCaja.findUnique({ where: { id: campos.cuentaContableCajaId } }) : null,
+      campos.centroCostoCajaId ? prisma.centroCostoCaja.findUnique({ where: { id: campos.centroCostoCajaId } }) : null,
+      campos.funcionGastoCajaId ? prisma.funcionGastoCaja.findUnique({ where: { id: campos.funcionGastoCajaId } }) : null,
+      campos.partidaPresupuestoId ? prisma.partidaPresupuestoCaja.findUnique({ where: { id: campos.partidaPresupuestoId } }) : null,
+    ]);
+    if (campos.cuentaContableCajaId && !cuenta) throw new HttpError("Cuenta contable no encontrada", 404);
+    if (campos.centroCostoCajaId && !centro) throw new HttpError("Centro de costo no encontrado", 404);
+    if (campos.funcionGastoCajaId && !funcion) throw new HttpError("Función de gasto no encontrada", 404);
+    if (campos.partidaPresupuestoId && !partida) throw new HttpError("Partida de presupuesto no encontrada", 404);
+
+    return prisma.$transaction(async (tx) => {
+      const resultado = await tx.gastoCaja.updateMany({
+        where: { id: { in: ids }, estado: "REGISTRADO" },
+        data: cambios,
+      });
+      await tx.log.create({
+        data: { usuarioId: userId, accion: "CLASIFICAR_GASTOS_CAJA", data: { ids, ...cambios } },
+      });
+      logger.info({ userId, cantidad: resultado.count, action: "CLASIFICAR_GASTOS_CAJA" }, "Gastos de caja clasificados");
+      return { actualizados: resultado.count, omitidos: ids.length - resultado.count };
+    });
   },
 
   async anular(id: string, data: AnularGastoCajaDTO, userId: number) {

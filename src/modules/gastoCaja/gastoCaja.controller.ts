@@ -69,6 +69,16 @@ export const gastoCajaController = {
     }
   },
 
+  async clasificarVarios(req: AuthRequest, res: Response) {
+    try {
+      const data = await gastoCajaService.clasificarVarios(req.body, req.user!.id);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async anular(req: AuthRequest, res: Response) {
     try {
       const gasto = await gastoCajaService.anular(req.params.id as string, req.body, req.user!.id);

@@ -4,6 +4,7 @@ import { gastoCajaController } from "./gastoCaja.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
 import {
   anularGastoCajaSchema,
+  clasificarGastosCajaSchema,
   createGastoCajaSchema,
   gastoCajaQuerySchema,
   updateGastoCajaSchema,
@@ -38,6 +39,14 @@ router.post(
   authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"),
   upload.single("file"),
   gastoCajaController.importarDesdeExcel,
+);
+
+// POST /api/gastos-caja/clasificar — misma clasificación para varios gastos.
+router.post(
+  "/clasificar",
+  authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"),
+  validate(clasificarGastosCajaSchema),
+  gastoCajaController.clasificarVarios,
 );
 
 router.get("/", validateQuery(gastoCajaQuerySchema), gastoCajaController.getAll);

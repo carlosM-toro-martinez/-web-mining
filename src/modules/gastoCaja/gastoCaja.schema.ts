@@ -31,6 +31,8 @@ export const createGastoCajaSchema = z
     fecha: z.coerce.date(),
     tipoDocumento: tipoDocumentoGastoSchema,
     categoriaRetencion: categoriaRetencionGastoSchema.optional(),
+    esCombustible: z.boolean().optional(),
+    esNoDeducible: z.boolean().optional(),
     categoriaRendicion: categoriaRendicionGastoSchema,
     proveedorNombre: z.string().min(1),
     proveedorNitCi: z.string().optional(),
@@ -80,6 +82,8 @@ export const updateGastoCajaSchema = z
     fecha: z.coerce.date().optional(),
     tipoDocumento: tipoDocumentoGastoSchema.optional(),
     categoriaRetencion: categoriaRetencionGastoSchema.nullable().optional(),
+    esCombustible: z.boolean().optional(),
+    esNoDeducible: z.boolean().optional(),
     categoriaRendicion: categoriaRendicionGastoSchema.optional(),
     proveedorNombre: z.string().min(1).optional(),
     proveedorNitCi: z.string().nullable().optional(),
@@ -117,5 +121,20 @@ export const gastoCajaQuerySchema = z
 export const anularGastoCajaSchema = z
   .object({
     motivo: z.string().trim().min(1),
+  })
+  .strict();
+
+// Clasificación de varios gastos a la vez (cuenta contable, centro de costo,
+// función de gasto, partida y/o categoría): solo se aplican los campos que
+// vienen; null vacía el campo. Pensado para completar de una sola vez los
+// gastos importados que quedaron sin clasificar.
+export const clasificarGastosCajaSchema = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(500),
+    cuentaContableCajaId: z.number().int().positive().nullable().optional(),
+    centroCostoCajaId: z.number().int().positive().nullable().optional(),
+    funcionGastoCajaId: z.number().int().positive().nullable().optional(),
+    partidaPresupuestoId: z.number().int().positive().nullable().optional(),
+    categoriaRendicion: categoriaRendicionGastoSchema.optional(),
   })
   .strict();
