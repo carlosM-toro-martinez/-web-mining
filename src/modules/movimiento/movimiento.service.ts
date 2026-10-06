@@ -3,7 +3,23 @@ import { randomUUID } from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { assertMesSinCppMovil, esFechaCppMovil } from "../../utils/cppMovil.js";
+import { registrarMovimientoMovil } from "../kardex/kardexMovil.service.js";
 import type { CreateSalidaDTO, CreateEntradaDTO } from "./movimiento.types.js";
+
+const includeMovimiento: Prisma.MovimientoInclude = {
+  producto: true,
+  usuario: { select: { id: true, nombre: true, email: true } },
+  usuarioEntrega: { select: { id: true, nombre: true, email: true } },
+  usuarioRecibido: { select: { id: true, nombre: true, email: true } },
+  cuenta: {
+    include: {
+      centroCosto: true,
+      funcionGasto: true,
+      sector: true,
+    },
+  },
+};
 
 function getCostoUnitario(
   stock: { precioUnit: Prisma.Decimal; precioProm: Prisma.Decimal },
@@ -165,6 +181,41 @@ export const movimientoService = {
         throw new HttpError("Stock insuficiente para la salida", 409);
       }
 
+      if (esFechaCppMovil(new Date())) {
+        const movimiento = await registrarMovimientoMovil(tx, {
+          productoId: data.productoId,
+          tipo: "SALIDA",
+          cantidad,
+          regla: { tipo: "SALIDA_CPP" },
+          validarStock: true,
+          referencia: data.referencia ?? null,
+          referenciaId: data.referenciaId ?? null,
+          usuarioId: userId,
+          usuarioEntregaId: data.usuarioEntregaId,
+          usuarioRecibidoId: data.usuarioRecibidoId,
+          cuentaId,
+          include: includeMovimiento,
+        });
+        await tx.log.create({
+          data: {
+            usuarioId: userId,
+            accion: "CREATE_SALIDA_INVENTARIO",
+            data: {
+              movimientoId: movimiento.id,
+              productoId: data.productoId,
+              cantidad: data.cantidad,
+              cuentaId,
+              usuarioEntregaId: data.usuarioEntregaId,
+              usuarioRecibidoId: data.usuarioRecibidoId,
+              referencia: data.referencia,
+              referenciaId: data.referenciaId,
+              cppMovil: true,
+            },
+          },
+        });
+        return movimiento;
+      }
+
       const metodoCosteo = await getMetodoCosteo(tx);
       const precioUnit = getCostoUnitario(producto.stock, metodoCosteo);
       const salidaBs = precioUnit.mul(cantidad);
@@ -270,6 +321,39 @@ export const movimientoService = {
         throw new HttpError("La cantidad y precio deben ser mayores a 0", 400);
       }
 
+      if (esFechaCppMovil(new Date())) {
+        const movimiento = await registrarMovimientoMovil(tx, {
+          productoId: data.productoId,
+          tipo: "ENTRADA",
+          cantidad,
+          regla: { tipo: "ENTRADA_VALOR", valorBs: precioUnit.mul(cantidad) },
+          referencia: data.referencia ?? null,
+          referenciaId: data.referenciaId ?? null,
+          usuarioId: userId,
+          usuarioEntregaId: data.usuarioEntregaId,
+          usuarioRecibidoId: data.usuarioRecibidoId,
+          cuentaId: cuentaId ?? null,
+          include: includeMovimiento,
+        });
+        await tx.log.create({
+          data: {
+            usuarioId: userId,
+            accion: "CREATE_ENTRADA_INVENTARIO",
+            data: {
+              movimientoId: movimiento.id,
+              productoId: data.productoId,
+              cantidad: data.cantidad,
+              precioUnit: data.precioUnit,
+              cuentaId,
+              referencia: data.referencia,
+              referenciaId: data.referenciaId,
+              cppMovil: true,
+            },
+          },
+        });
+        return movimiento;
+      }
+
       const stockAntes = new Prisma.Decimal(producto.stock.cantidad);
       const stockDespues = stockAntes.add(cantidad);
       const entradaBs = precioUnit.mul(cantidad);
@@ -347,6 +431,8 @@ export const movimientoService = {
   },
 
   async reordenarMovimientos({ productoId, anio, mes }: { productoId?: number; anio: number; mes: number }) {
+    // Reordenar pone entradas antes que salidas y cambia fechas: destruiría el kardex cronológico.
+    assertMesSinCppMovil(anio, mes, "Reordenar movimientos");
     const desde = new Date(Date.UTC(anio, mes - 1, 1));
     const hasta  = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1));
 

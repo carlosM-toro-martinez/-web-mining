@@ -4,6 +4,16 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { detectarPeriodo } from "../../utils/periodoRetroactivo.js";
+import { esFechaCppMovil, fechaInicioCppMovil } from "../../utils/cppMovil.js";
+import { esGasEspecialCompra, redondearPrecio, valorEntradaCompra } from "../kardex/kardexMovil.calc.js";
+import {
+  conTransaccionKardex,
+  primerMesAbiertoCppMovil,
+  recalcularKardexProductoTx,
+  registrarMovimientoMovil,
+  registrarMovimientoMovilTx,
+  valorReversoCompra,
+} from "../kardex/kardexMovil.service.js";
 import type { CreateCompraDTO, RecibirCompraDTO, CompraQueryDTO } from "./compras.types.js";
 
 function calcularCPP(
@@ -245,6 +255,7 @@ export const comprasService = {
     const esRetroactivo = periodoRecibo.esRetroactivo;
     const periodoAnio = periodoRecibo.esRetroactivo ? periodoRecibo.periodoAnio : undefined;
     const periodoMes = periodoRecibo.esRetroactivo ? periodoRecibo.periodoMes : undefined;
+    const usarKardexMovil = !esRetroactivo && esFechaCppMovil(new Date());
 
     // Crear movimientos de entrada para cada item y actualizar stock
     const movimientos = [];
@@ -278,7 +289,7 @@ export const comprasService = {
               stockDespues: stockDespuesRetro,
               usuarioId: userId,
               usuarioEntregaId: userId,
-              cuentaId: item.producto.cuentaId,
+              cuentaId: null,
               referencia: "COMPRA",
               referenciaId: id,
               esRetroactivo: true,
@@ -332,6 +343,37 @@ export const comprasService = {
           });
 
           movimientos.push(movimiento);
+        } else if (usarKardexMovil) {
+          const ahora = new Date();
+          const cantidadDec = new Prisma.Decimal(cantidadRecibidaAhora);
+          const valor = valorEntradaCompra({
+            cantidad: cantidadDec,
+            precioUnit: new Prisma.Decimal(item.precioUnit),
+            totalBs: item.totalBs != null ? new Prisma.Decimal(item.totalBs) : null,
+            cantidadPedida: new Prisma.Decimal(item.cantidadPedida),
+            tieneIva: compra.tieneIva,
+            esGasEspecial: esGasEspecialCompra(compra.esGasEspecial, item.producto.codigo, ahora.getUTCFullYear(), ahora.getUTCMonth() + 1),
+          });
+
+          const movimiento = await registrarMovimientoMovilTx({
+            productoId: item.productoId,
+            tipo: "ENTRADA",
+            cantidad: cantidadDec,
+            regla: { tipo: "ENTRADA_VALOR", valorBs: valor },
+            precioCompraSinIva: redondearPrecio(valor.div(cantidadDec)),
+            referencia: "COMPRA",
+            referenciaId: id,
+            usuarioId: userId,
+            usuarioEntregaId: userId,
+            cuentaId: null,
+          });
+
+          await prisma.compraItem.update({
+            where: { id: item.id },
+            data: { cantidadRecibida: new Prisma.Decimal(item.cantidadRecibida).add(cantidadRecibidaAhora) },
+          });
+
+          movimientos.push(movimiento);
         } else {
           const stockAntes = item.producto.stock!.cantidad;
           const stockDespues = new Prisma.Decimal(stockAntes).add(cantidadRecibidaAhora);
@@ -352,7 +394,7 @@ export const comprasService = {
               stockDespues,
               usuarioId: userId,
               usuarioEntregaId: userId,
-              cuentaId: item.producto.cuentaId,
+              cuentaId: null,
               referencia: "COMPRA",
               referenciaId: id,
             },
@@ -525,7 +567,33 @@ export const comprasService = {
       updateData.totalBs = new Prisma.Decimal(data.nuevoTotalBs);
     }
 
-    if (data.nuevoPrecioUnit != null) {
+    const inicioMovil = fechaInicioCppMovil();
+    const entradaMovil = inicioMovil
+      ? await prisma.movimiento.findFirst({
+          where: {
+            referencia: "COMPRA", referenciaId: compraId, productoId: item.productoId, tipo: "ENTRADA",
+            esRetroactivo: false, createdAt: { gte: inicioMovil },
+          },
+          orderBy: { createdAt: "asc" },
+          select: { createdAt: true },
+        })
+      : null;
+
+    if (entradaMovil) {
+      // Con CPP móvil el precio de esta compra cambia el CPP de todos los movimientos posteriores del producto.
+      const desde = await primerMesAbiertoCppMovil();
+      const mesCompra = entradaMovil.createdAt.getUTCFullYear() * 100 + entradaMovil.createdAt.getUTCMonth() + 1;
+      if (mesCompra < desde.anio * 100 + desde.mes) {
+        throw new HttpError("La compra pertenece a un mes ya cerrado; reábrelo antes de corregir el precio", 409);
+      }
+      if (data.nuevoPrecioUnit != null) updateData.precioUnit = new Prisma.Decimal(data.nuevoPrecioUnit);
+      await conTransaccionKardex(async (tx) => {
+        await tx.compraItem.update({ where: { id: itemId }, data: updateData });
+        const r = await recalcularKardexProductoTx(tx, item.productoId, desde, { aplicar: true });
+        if (!r.aplicado) throw new HttpError(`No se pudo recalcular el kardex de ${r.codigo}: ${r.motivo}`, 409);
+        movimientosActualizados = r.movimientosModificados;
+      });
+    } else if (data.nuevoPrecioUnit != null) {
       const nuevoPrecio = new Prisma.Decimal(data.nuevoPrecioUnit);
       updateData.precioUnit = nuevoPrecio;
 
@@ -587,8 +655,9 @@ export const comprasService = {
     if (compra.estado === "ANULADA") throw new HttpError("La compra ya está anulada", 409);
     if (compra.anulacion) throw new HttpError("La compra ya tiene una anulación registrada", 409);
 
-    const periodoCompra = await detectarPeriodo(compra.fechaOperacion);
+    const periodoCompra = await detectarPeriodo(compra.fechaOperacion, { anulacion: true });
     const esRetroactivo = periodoCompra.esRetroactivo;
+    const usarKardexMovil = !esRetroactivo && esFechaCppMovil(new Date());
     const periodoAnio   = esRetroactivo ? periodoCompra.periodoAnio : undefined;
     const periodoMes    = esRetroactivo ? periodoCompra.periodoMes  : undefined;
 
@@ -656,6 +725,21 @@ export const comprasService = {
             } as any,
           });
         }
+      } else if (usarKardexMovil) {
+        // Retira las unidades al valor con que entraron (nunca más que el valor que queda en stock).
+        if (!item.producto.stock) continue;
+        await conTransaccionKardex(async (tx) => {
+          const valor = await valorReversoCompra(tx, id, item.productoId, recibido);
+          await registrarMovimientoMovil(tx, {
+            productoId: item.productoId,
+            tipo: "SALIDA",
+            cantidad: recibido,
+            regla: { tipo: "SALIDA_VALOR", valorBs: valor },
+            referencia: "ANULACION_COMPRA",
+            referenciaId: id,
+            usuarioId: userId,
+          });
+        });
       } else {
         // Contra-asiento normal: descuenta stock físico
         const stock = item.producto.stock;

@@ -1,5 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
+import { cppMovilActivo, esMesCppMovil } from "../../utils/cppMovil.js";
 import type {
   BinCardQueryDTO,
   StockQueryDTO,
@@ -191,6 +192,8 @@ export const reportesService = {
       const cantidad = Number(s.cantidad);
       const reservada = Number(s.cantidadReservada);
       const precioUnit = Number(s.precioUnit);
+      // Con CPP móvil el valor del stock es el del kardex (no cantidad × último precio).
+      const valorTotal = cppMovilActivo() ? Number(s.valorBs) : cantidad * precioUnit;
       return {
         productoId: s.productoId,
         codigo: s.producto.codigo,
@@ -202,7 +205,7 @@ export const reportesService = {
         cantidadDisponible: cantidad - reservada,
         precioUnit,
         precioProm: Number(s.precioProm),
-        valorTotal: cantidad * precioUnit,
+        valorTotal,
       };
     });
 
@@ -549,7 +552,7 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true, salidaBs: true },
             orderBy: [{ id: "asc" }],
           }),
           prisma.movimiento.findMany({
@@ -557,6 +560,7 @@ export const reportesService = {
             select: { referenciaId: true },
           }),
         ]);
+        const movil = esMesCppMovil(anio, mes);
 
         const valesAnuladosIdsBalance = new Set(
           anulacionValeMovs.map(m => m.referenciaId).filter((id): id is string => id !== null),
@@ -599,7 +603,7 @@ export const reportesService = {
         const salidaBsMap = new Map<number, number>();
         for (const mov of salidasMovs) {
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          const contrib = Number(mov.cantidad) * precio;
+          const contrib = movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
           salidaBsRawFlat += contrib;
           salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + contrib);
         }
@@ -808,7 +812,7 @@ export const reportesService = {
           }),
           prisma.movimiento.findMany({
             where: { tipo: "SALIDA", referencia: { not: "ANULACION_COMPRA" }, ...movFilter },
-            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true },
+            select: { productoId: true, cantidad: true, referencia: true, referenciaId: true, salidaBs: true },
             orderBy: [{ id: "asc" }],
           }),
           prisma.movimiento.findMany({
@@ -816,6 +820,7 @@ export const reportesService = {
             select: { referenciaId: true },
           }),
         ]);
+        const movil = esMesCppMovil(anio, mes);
 
         const valesAnuladosIdsInv = new Set(
           anulacionValeMovsInv.map(m => m.referenciaId).filter((id): id is string => id !== null),
@@ -855,7 +860,7 @@ export const reportesService = {
         for (const mov of salidasMovs) {
           salidaQtyMap.set(mov.productoId, (salidaQtyMap.get(mov.productoId) ?? 0) + Number(mov.cantidad));
           const precio = precioFinalMap.get(mov.productoId) ?? 0;
-          const contrib = Number(mov.cantidad) * precio;
+          const contrib = movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
           salidaBsRawFlat += contrib;
           salidaBsMap.set(mov.productoId, (salidaBsMap.get(mov.productoId) ?? 0) + contrib);
         }
@@ -1254,13 +1259,14 @@ export const reportesService = {
         type ProdEntry = { producto: typeof movimientos[0]["producto"]; salidaQty: number; salidaBsRaw: number };
         const prodMap = new Map<number, ProdEntry>();
         let salidaBsRawFlat = 0;
+        const movil = esMesCppMovil(anio, mes);
         for (const mov of movimientos) {
           const pid = mov.productoId;
           if (!prodMap.has(pid)) {
             prodMap.set(pid, { producto: mov.producto, salidaQty: 0, salidaBsRaw: 0 });
           }
           const precio = precioHistoricoMap.get(pid) ?? 0;
-          const contrib = Number(mov.cantidad) * precio;
+          const contrib = movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
           salidaBsRawFlat += contrib;
           const entry = prodMap.get(pid)!;
           entry.salidaQty   += Number(mov.cantidad);
@@ -1298,7 +1304,7 @@ export const reportesService = {
             });
           }
 
-          const precioUnit = precioHistoricoMap.get(producto.id) ?? 0;
+          const precioUnit = movil && salidaQty > 0 ? salidaBsRaw / salidaQty : (precioHistoricoMap.get(producto.id) ?? 0);
 
           grupoEntry.subGrupos.get(subGrupoId)!.productos.push({
             codigo: producto.codigo,
@@ -1660,6 +1666,7 @@ export const reportesService = {
 
         // Group by funcionGasto.codigo (SUB CENTRO) × centroCosto.codigo (SUB CUENTA)
         const lineaMap = new Map<string, { subCuenta: string; subCentro: string; subCentroNombre: string; importeBs: number }>();
+        const movil = esMesCppMovil(anio, mes);
 
         for (const mov of movimientos) {
           if (!mov.cuenta) continue;
@@ -1672,7 +1679,7 @@ export const reportesService = {
           if (!lineaMap.has(key)) {
             lineaMap.set(key, { subCuenta, subCentro, subCentroNombre: mov.cuenta.funcionGasto.nombre, importeBs: 0 });
           }
-          lineaMap.get(key)!.importeBs += Number(mov.cantidad) * precio;
+          lineaMap.get(key)!.importeBs += movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
         }
 
         const lineas = [...lineaMap.values()]
@@ -1723,7 +1730,7 @@ export const reportesService = {
           if (!mov.cuenta) continue;
           const _psDetalle2 = precioMap.get(mov.productoId);
           const precio = (_psDetalle2 != null && _psDetalle2 > 0) ? _psDetalle2 : (compraAvgDetalle.get(mov.productoId) ?? Number(mov.precioUnit));
-          const importeBs = Number(mov.cantidad) * precio;
+          const importeBs = movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
           const cc = mov.cuenta.codigoCompleto;
           const esTransporte = mov.cuenta.sectorId !== null;
 
@@ -1985,16 +1992,20 @@ export const reportesService = {
         const COSTO_DETALLE_CODIGOS = new Set(["100 001 000", "104 001 000"]);
         // Acumulador plano: misma suma lineal que balance-mensual (orderBy id) → resultado IEEE754 idéntico
         let importeBsRawFlat = 0;
+        const movil = esMesCppMovil(anio, mes);
 
         for (const mov of movimientos) {
           if (!mov.cuenta || !mov.cuentaId) continue;
           const _ps            = precioMap.get(mov.productoId);
           const _compraFallback = compraAvgDiario.get(mov.productoId) ?? 0;
           // Precio siempre sin-IVA; compraAvgDiario viene de facturas (con IVA) → menos13
-          const precio = (_ps != null && _ps > 0)
-            ? _ps
-            : _compraFallback > 0 ? menos13(_compraFallback) : Number(mov.precioUnit);
-          const importeBs    = Number(mov.cantidad) * precio;
+          // Con CPP móvil cada salida vale lo que registró el kardex.
+          const precio = movil
+            ? Number(mov.precioUnit)
+            : (_ps != null && _ps > 0)
+              ? _ps
+              : _compraFallback > 0 ? menos13(_compraFallback) : Number(mov.precioUnit);
+          const importeBs    = movil ? Number(mov.salidaBs) : Number(mov.cantidad) * precio;
           importeBsRawFlat  += importeBs;
           const sectorKey    = mov.cuenta.sectorId ?? -1;
           const esTransporte = mov.cuenta.sectorId !== null;
@@ -2346,10 +2357,12 @@ export const reportesService = {
       // Determinar el período del movimiento
       const pAnio = m.periodoAnio ?? m.createdAt.getUTCFullYear();
       const pMes  = m.periodoMes  ?? (m.createdAt.getUTCMonth() + 1);
-      // Precio: SaldoMensual del período → fallback al precio del movimiento
+      // Precio: SaldoMensual del período → fallback al precio del movimiento.
+      // Con CPP móvil cada salida vale lo que registró el kardex.
+      const movil       = esMesCppMovil(pAnio, pMes);
       const precioSaldo = precioMesMap.get(precioMesKey(m.productoId, pAnio, pMes));
-      const precioUnit  = (precioSaldo != null && precioSaldo > 0) ? precioSaldo : Number(m.precioUnit);
-      const importeBs   = Math.round(Number(m.cantidad) * precioUnit * 100) / 100;
+      const precioUnit  = movil || precioSaldo == null || precioSaldo <= 0 ? Number(m.precioUnit) : precioSaldo;
+      const importeBs   = movil ? Number(m.salidaBs) : Math.round(Number(m.cantidad) * precioUnit * 100) / 100;
       return {
         id:             m.id,
         fecha:          m.createdAt,

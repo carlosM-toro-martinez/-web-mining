@@ -164,6 +164,7 @@ model Stock {
   precioProm        Decimal  @db.Decimal(14, 6)
   updatedAt         DateTime @updatedAt
   cantidadReservada Decimal  @default(0) @db.Decimal(12, 2)
+  valorBs           Decimal  @default(0) @db.Decimal(14, 2)
   producto          Producto @relation(fields: [productoId], references: [id])
 }
 

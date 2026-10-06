@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
+import { assertCppMovilInactivo, esMesCppMovil } from "../../utils/cppMovil.js";
 
 type ProductoResult = {
   productoId: number;
@@ -207,6 +208,9 @@ async function procesarProductoMes(
 
 export const backfillService = {
   async backfillCPP({ anio, mes }: { anio: number; mes: number }) {
+    if (esMesCppMovil(anio, mes)) {
+      return { anio, mes, productosProcessados: 0, movimientosActualizados: 0, saldosActualizados: 0, detalle: [], errores: [], advertencia: "Este mes usa CPP móvil: el kardex se calcula en tiempo real y el backfill no aplica" };
+    }
     const esCerrado = !!(await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } }));
     if (esCerrado) {
       return { anio, mes, productosProcessados: 0, movimientosActualizados: 0, saldosActualizados: 0, detalle: [], errores: [], advertencia: "Mes cerrado — reabrir el mes antes de ejecutar el backfill" };
@@ -265,6 +269,7 @@ export const backfillService = {
     errores: Array<{ productoId: number; error: string }>;
     detalle: Array<{ productoId: number; codigo: string; cantidad: string; precioUnit: string; precioProm: string }>;
   }> {
+    assertCppMovilInactivo("Sincronizar el stock desde SaldoMensual");
     // Traer todos los SaldoMensual ordenados por producto y período descendente
     const todos = await prisma.saldoMensual.findMany({
       orderBy: [

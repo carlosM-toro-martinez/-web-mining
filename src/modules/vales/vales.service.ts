@@ -4,6 +4,13 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { detectarPeriodo } from "../../utils/periodoRetroactivo.js";
+import { esFechaCppMovil, fechaInicioCppMovil } from "../../utils/cppMovil.js";
+import {
+  conTransaccionKardex,
+  registrarMovimientoMovil,
+  registrarMovimientoMovilTx,
+  valorDevolucionVale,
+} from "../kardex/kardexMovil.service.js";
 import type {
   CreateValeDTO,
   AprobarValeDTO,
@@ -104,6 +111,9 @@ export const valesService = {
 
     // Detectar si es retroactivo ANTES de verificar/reservar stock
     // forceRetroactivo=true fuerza la ruta retroactiva (p.ej. desde vales-históricos)
+    if (data.forceRetroactivo === true && esFechaCppMovil(data.fechaOperacion ?? new Date())) {
+      throw new HttpError("No se registran vales históricos en meses con CPP móvil: registra el vale con la fecha actual", 409);
+    }
     const periodoCreacion = await detectarPeriodo(data.fechaOperacion);
     const esRetroactivoCreacion = data.forceRetroactivo === true ? true : periodoCreacion.esRetroactivo;
 
@@ -336,8 +346,12 @@ export const valesService = {
 
     // Detectar retroactividad ANTES de validar stock (retroactivos no tocan Stock)
     // forceRetroactivo=true fuerza la ruta retroactiva (p.ej. desde vales-históricos)
+    if (data.forceRetroactivo === true && esFechaCppMovil(vale.fechaOperacion ?? new Date())) {
+      throw new HttpError("No se entregan vales históricos en meses con CPP móvil: registra la entrega con la fecha actual", 409);
+    }
     const periodoEntrega = await detectarPeriodo(vale.fechaOperacion);
     const esRetroactivo = data.forceRetroactivo === true ? true : periodoEntrega.esRetroactivo;
+    const usarKardexMovil = !esRetroactivo && esFechaCppMovil(new Date());
     let periodoAnio: number | undefined;
     let periodoMes: number | undefined;
     if (esRetroactivo) {
@@ -490,6 +504,28 @@ export const valesService = {
             totalBs:     nuevoFinal.mul(precioSaldo),
             totalBsProm: nuevoFinal.mul(precioSaldoProm),
           },
+        });
+
+        await prisma.valeItem.update({
+          where: { id: item.id },
+          data: { cantidadEntregada: new Prisma.Decimal(item.cantidadEntregada ?? 0).add(cantidad) },
+        });
+
+        movimientos.push(movimiento);
+      } else if (usarKardexMovil) {
+        const movimiento = await registrarMovimientoMovilTx({
+          productoId: item.productoId,
+          tipo: "SALIDA",
+          cantidad,
+          regla: { tipo: "SALIDA_CPP" },
+          validarStock: true,
+          referencia: "VALE",
+          referenciaId: id,
+          usuarioId: userId,
+          usuarioEntregaId: userId,
+          usuarioRecibidoId: vale.solicitanteId,
+          cuentaId,
+          liberarReserva: cantidad,
         });
 
         await prisma.valeItem.update({
@@ -729,8 +765,9 @@ export const valesService = {
     if (vale.estado === "RECHAZADO") throw new HttpError("No se puede anular un vale rechazado", 409);
     if (vale.anulacion) throw new HttpError("El vale ya tiene una anulación registrada", 409);
 
-    const periodoVale = await detectarPeriodo(vale.fechaOperacion);
+    const periodoVale = await detectarPeriodo(vale.fechaOperacion, { anulacion: true });
     const esRetroactivo = periodoVale.esRetroactivo;
+    const usarKardexMovil = !esRetroactivo && esFechaCppMovil(new Date());
     const periodoAnio = esRetroactivo ? periodoVale.periodoAnio : undefined;
     const periodoMes  = esRetroactivo ? periodoVale.periodoMes  : undefined;
 
@@ -785,6 +822,21 @@ export const valesService = {
             },
           });
         }
+      } else if (usarKardexMovil) {
+        // Devuelve las unidades con el mismo valor con que salieron (reverso exacto del vale).
+        if (!item.producto.stock) continue;
+        await conTransaccionKardex(async (tx) => {
+          const valor = await valorDevolucionVale(tx, id, item.productoId, entregado);
+          await registrarMovimientoMovil(tx, {
+            productoId: item.productoId,
+            tipo: "ENTRADA",
+            cantidad: entregado,
+            regla: { tipo: "ENTRADA_VALOR", valorBs: valor },
+            referencia: "ANULACION_VALE",
+            referenciaId: id,
+            usuarioId: userId,
+          });
+        });
       } else {
         // Contra-asiento normal: devuelve stock físico
         const stock = item.producto.stock;
@@ -895,6 +947,17 @@ export const valesService = {
         "Este vale tiene movimientos retroactivos. Usa 'Anular' en lugar de eliminar.",
         409,
       );
+    }
+
+    // Borrar un movimiento del medio rompería la cadena del kardex con CPP móvil.
+    const inicioMovil = fechaInicioCppMovil();
+    if (inicioMovil) {
+      const movsMovil = await prisma.movimiento.count({
+        where: { referencia: "VALE", referenciaId: id, esRetroactivo: false, createdAt: { gte: inicioMovil } },
+      });
+      if (movsMovil > 0) {
+        throw new HttpError("Este vale ya tiene entregas en el kardex con CPP móvil. Usa 'Anular' en lugar de eliminar.", 409);
+      }
     }
 
     await prisma.$transaction(async (tx) => {

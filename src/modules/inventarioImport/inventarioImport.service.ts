@@ -5,6 +5,8 @@ import { logger } from "../../config/logger.js";
 import { parseCatalogoExcel } from "./inventarioImport.parser.js";
 import { HttpError } from "../../errors/http.error.js";
 import { verificarMesAbierto } from "../../utils/periodoRetroactivo.js";
+import { assertCppMovilInactivo, assertMesSinCppMovil, esMesCppMovil } from "../../utils/cppMovil.js";
+import { acumularSaldo, contadorPorMovimiento, redondearBs, redondearPrecio } from "../kardex/kardexMovil.calc.js";
 import { productoService } from "../producto/producto.service.js";
 import type {
   CatalogoImportResult,
@@ -174,6 +176,7 @@ export async function importarCatalogo(
     if (cargarSaldo && row.cantidad !== undefined) {
       const { anio, mes } = opciones!;
       await verificarMesAbierto(anio!, mes!);
+      assertMesSinCppMovil(anio!, mes!, "La carga de saldos desde el catálogo");
       const precio = row.precioUnit ?? 0;
       const totalBs = row.cantidad * precio;
 
@@ -229,6 +232,7 @@ export async function cargarStockInicial(
   items: StockInicialItem[],
   userId: number,
 ): Promise<StockInicialResult> {
+  assertCppMovilInactivo("La carga de stock inicial");
   const result: StockInicialResult = { actualizados: 0, noEncontrados: [] };
 
   for (const item of items) {
@@ -295,6 +299,7 @@ export async function cargarSaldoMensual(
   userId: number,
 ): Promise<SaldoMensualResult> {
   const { anio, mes, items } = input;
+  assertMesSinCppMovil(anio, mes, "La carga de saldo mensual");
   const result: SaldoMensualResult = { creados: 0, actualizados: 0, noEncontrados: [] };
 
   for (const item of items) {
@@ -364,6 +369,7 @@ export async function upsertSaldoMensualItem(
   input: SaldoMensualItemInput,
   userId: number,
 ): Promise<SaldoMensualItemResult> {
+  assertMesSinCppMovil(input.anio, input.mes, "La edición de saldo mensual");
   const productoId = await resolveProductoId(input.productoId, input.productoCodigo);
   const totalBs = input.saldoFinal * input.precioUnit;
 
@@ -476,6 +482,7 @@ export async function updateSaldoMensualItem(
   });
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
   await verificarMesAbierto(existing.anio, existing.mes);
+  assertMesSinCppMovil(existing.anio, existing.mes, "La edición de saldo mensual");
 
   const newSaldoInicial = data.saldoInicial !== undefined ? data.saldoInicial : Number(existing.saldoInicial);
   const newIngresoQty = data.ingresoQty !== undefined ? data.ingresoQty : Number(existing.ingresoQty);
@@ -544,6 +551,9 @@ export async function ajustarCamposSaldoMensual(
     producto: { codigo: string; nombre: string };
   } | null;
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
+  assertMesSinCppMovil(existing.anio, existing.mes, "El ajuste de saldo mensual");
+  // Cambiar saldoInicial se propaga en cascada hasta el mes actual, que ya es CPP móvil.
+  if (campos.saldoInicial !== undefined) assertCppMovilInactivo("Ajustar el saldo inicial");
 
   const precioUnitActivo = campos.precioUnit !== undefined
     ? new Prisma.Decimal(campos.precioUnit)
@@ -683,6 +693,7 @@ export async function ajustarTotalBsInicialDesdeExcel(
   mes: number,
   userId: number,
 ): Promise<{ procesados: number; exitosos: number; fallidos: number; resultados: AjusteInicialExcelFila[] }> {
+  assertMesSinCppMovil(anio, mes, "El ajuste de saldo mensual desde Excel");
   const workbook = XLSX.read(fileBuffer, { type: "buffer" });
   const sheet = workbook.Sheets[workbook.SheetNames[0]!];
   if (!sheet) throw new HttpError("El archivo Excel está vacío o no tiene hojas", 400);
@@ -785,6 +796,7 @@ export async function deleteSaldoMensualItem(
   });
   if (!existing) throw new HttpError("Registro de saldo mensual no encontrado", 404);
   await verificarMesAbierto(existing.anio, existing.mes);
+  assertMesSinCppMovil(existing.anio, existing.mes, "Eliminar saldo mensual");
 
   await prisma.saldoMensual.delete({ where: { id } });
 
@@ -886,6 +898,7 @@ export async function cargarStockInicialItem(
   item: StockInicialItemInput,
   userId: number,
 ): Promise<StockInicialItemResult> {
+  assertCppMovilInactivo("La carga de stock inicial");
   let productoId: number;
   let productoCreado = false;
 
@@ -986,6 +999,7 @@ export async function cargarStockInicialItem(
 // Elimina todos los registros de Stock. Usar antes de cargarStockInicial.
 
 export async function reiniciarStock(userId: number): Promise<ReiniciarStockResult> {
+  assertCppMovilInactivo("Reiniciar el stock");
   const { count } = await prisma.stock.deleteMany({});
 
   await prisma.log.create({
@@ -1008,6 +1022,7 @@ export async function sincronizarStockDesdeSaldoMensual(
   opciones: { anio?: number | undefined; mes?: number | undefined },
   userId: number,
 ): Promise<SincronizarStockResult> {
+  assertCppMovilInactivo("Sincronizar el stock desde SaldoMensual");
   const result: SincronizarStockResult = { actualizados: 0, creados: 0, sinSaldo: 0 };
 
   const productos = await prisma.producto.findMany({
@@ -1077,8 +1092,59 @@ export async function sincronizarStockDesdeSaldoMensual(
 // También recalcula la cadena stockAntes/stockDespues de los movimientos retroactivos
 // del período para que el bincard muestre valores correctos de inmediato.
 
+// En meses con CPP móvil solo crea las filas que faltan: las existentes las mantiene el kardex.
+async function inicializarPeriodoCppMovil(anio: number, mes: number) {
+  const mesPrev = mes === 1 ? 12 : mes - 1;
+  const anioPrev = mes === 1 ? anio - 1 : anio;
+
+  const [productos, existentes, previos] = await Promise.all([
+    prisma.producto.findMany({ select: { id: true, stock: { select: { cantidad: true, precioProm: true } } } }),
+    prisma.saldoMensual.findMany({ where: { anio, mes }, select: { productoId: true } }),
+    prisma.saldoMensual.findMany({
+      where: { anio: anioPrev, mes: mesPrev },
+      select: { productoId: true, saldoFinal: true, precioUnit: true, precioUnitProm: true },
+    }),
+  ]);
+  const yaExisten = new Set(existentes.map((e) => e.productoId));
+  const previoMap = new Map(previos.map((p) => [p.productoId, p]));
+
+  let creados = 0;
+  for (const producto of productos) {
+    if (yaExisten.has(producto.id)) continue;
+    const previo = previoMap.get(producto.id);
+    const saldoInicial = previo
+      ? new Prisma.Decimal(previo.saldoFinal)
+      : new Prisma.Decimal(producto.stock?.cantidad ?? 0);
+    const cpp = previo
+      ? (new Prisma.Decimal(previo.precioUnitProm).gt(0) ? new Prisma.Decimal(previo.precioUnitProm) : new Prisma.Decimal(previo.precioUnit))
+      : new Prisma.Decimal(producto.stock?.precioProm ?? 0);
+    const valor = redondearBs(saldoInicial.mul(cpp));
+    await prisma.saldoMensual.create({
+      data: {
+        productoId: producto.id,
+        anio,
+        mes,
+        saldoInicial,
+        ingresoQty: 0,
+        salidaQty: 0,
+        ingresosBs: 0,
+        saldoFinal: saldoInicial,
+        precioUnit: previo ? new Prisma.Decimal(previo.precioUnit) : cpp,
+        totalBs: valor,
+        precioUnitProm: cpp,
+        totalBsProm: valor,
+      },
+    });
+    creados++;
+  }
+
+  logger.info({ anio, mes, creados }, "Período CPP móvil inicializado");
+  return { anio, mes, creados, actualizados: 0, movimientosRecalculados: 0 };
+}
+
 export async function inicializarPeriodo(anio: number, mes: number) {
   await verificarMesAbierto(anio, mes);
+  if (esMesCppMovil(anio, mes)) return inicializarPeriodoCppMovil(anio, mes);
 
   const mesPrev = mes === 1 ? 12 : mes - 1;
   const anioPrev = mes === 1 ? anio - 1 : anio;
@@ -1208,9 +1274,177 @@ export async function inicializarPeriodo(anio: number, mes: number) {
 // ─── Cerrar mes ──────────────────────────────────────────────────────────────
 // Consolida los movimientos del mes en SaldoMensual y bloquea el período.
 
+// Cierre de un mes con CPP móvil: los valores ya están en el kardex (Movimiento.saldoBs),
+// solo se consolidan en SaldoMensual y se arrastran al mes siguiente. Todo o nada.
+async function cerrarMesCppMovil(anio: number, mes: number, userId: number, reemplazarCierre: boolean) {
+  const prev = mes === 1 ? { anio: anio - 1, mes: 12 } : { anio, mes: mes - 1 };
+  const sig  = mes === 12 ? { anio: anio + 1, mes: 1 } : { anio, mes: mes + 1 };
+
+  const [cierrePrev, cierreSig] = await Promise.all([
+    prisma.cierreMes.findUnique({ where: { anio_mes: prev } }),
+    prisma.cierreMes.findUnique({ where: { anio_mes: sig } }),
+  ]);
+  if (!cierrePrev) {
+    throw new HttpError(`Primero cierra ${prev.mes}/${prev.anio}: el saldo inicial de ${mes}/${anio} depende de ese cierre`, 409);
+  }
+  if (cierreSig) {
+    throw new HttpError(`${sig.mes}/${sig.anio} ya está cerrado; reábrelo antes de volver a cerrar ${mes}/${anio}`, 409);
+  }
+
+  const inicio = new Date(Date.UTC(anio, mes - 1, 1));
+  const fin    = new Date(Date.UTC(anio, mes, 1));
+
+  const [registros, movimientos] = await Promise.all([
+    prisma.saldoMensual.findMany({
+      where: { anio, mes },
+      select: {
+        id: true, productoId: true, saldoInicial: true, precioUnit: true, precioUnitProm: true, totalBsInicial: true,
+        producto: { select: { codigo: true } },
+      },
+    }),
+    prisma.movimiento.findMany({
+      where: {
+        OR: [
+          { esRetroactivo: false, createdAt: { gte: inicio, lt: fin } },
+          { esRetroactivo: true, periodoAnio: anio, periodoMes: mes },
+        ],
+      },
+      select: { productoId: true, tipo: true, cantidad: true, entradaBs: true, salidaBs: true, saldoBs: true, referencia: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    }),
+  ]);
+
+  const CERO = new Prisma.Decimal(0);
+  type Acum = { ingresoQty: Prisma.Decimal; ingresosBs: Prisma.Decimal; salidaQty: Prisma.Decimal };
+  const porProducto = new Map<number, { acc: Acum; entradas: Prisma.Decimal; salidas: Prisma.Decimal; ultimoSaldoBs: Prisma.Decimal }>();
+  for (const mov of movimientos) {
+    const p = porProducto.get(mov.productoId) ?? {
+      acc: { ingresoQty: CERO, ingresosBs: CERO, salidaQty: CERO },
+      entradas: CERO,
+      salidas: CERO,
+      ultimoSaldoBs: CERO,
+    };
+    const entradaBs = new Prisma.Decimal(mov.entradaBs);
+    const salidaBs  = new Prisma.Decimal(mov.salidaBs);
+    p.acc = acumularSaldo(p.acc, contadorPorMovimiento(mov.tipo, mov.referencia), new Prisma.Decimal(mov.cantidad), { entradaBs, salidaBs });
+    p.entradas = p.entradas.add(entradaBs);
+    p.salidas  = p.salidas.add(salidaBs);
+    p.ultimoSaldoBs = new Prisma.Decimal(mov.saldoBs);
+    porProducto.set(mov.productoId, p);
+  }
+
+  const inconsistentes: string[] = [];
+  const conRegistro = new Set(registros.map((r) => r.productoId));
+  for (const productoId of porProducto.keys()) {
+    if (!conRegistro.has(productoId)) inconsistentes.push(`producto ${productoId} sin SaldoMensual`);
+  }
+
+  const calculos = registros.map((r) => {
+    const saldoInicial = new Prisma.Decimal(r.saldoInicial);
+    const precio = new Prisma.Decimal(r.precioUnitProm).gt(0) ? new Prisma.Decimal(r.precioUnitProm) : new Prisma.Decimal(r.precioUnit);
+    const valorInicial = r.totalBsInicial !== null ? new Prisma.Decimal(r.totalBsInicial) : redondearBs(saldoInicial.mul(precio));
+    const p = porProducto.get(r.productoId);
+    const acc = p?.acc ?? { ingresoQty: CERO, ingresosBs: CERO, salidaQty: CERO };
+    const saldoFinal = saldoInicial.add(acc.ingresoQty).sub(acc.salidaQty);
+    const valorFinal = p ? valorInicial.add(p.entradas).sub(p.salidas) : valorInicial;
+    // El último saldo del kardex debe coincidir con saldo inicial + entradas − salidas del mes.
+    if (p && !p.ultimoSaldoBs.eq(valorFinal)) inconsistentes.push(r.producto.codigo);
+    const cpp = saldoFinal.gt(0) ? redondearPrecio(valorFinal.div(saldoFinal)) : precio;
+    return { r, acc, saldoFinal, valorFinal, cpp };
+  });
+
+  if (inconsistentes.length > 0) {
+    const lista = inconsistentes.slice(0, 20).join(", ") + (inconsistentes.length > 20 ? ` y ${inconsistentes.length - 20} más` : "");
+    throw new HttpError(
+      `El kardex no cuadra con el saldo inicial de ${mes}/${anio} para: ${lista}. Ejecuta el recálculo del kardex antes de cerrar.`,
+      409,
+    );
+  }
+
+  return prisma.$transaction(async (tx) => {
+    if (reemplazarCierre) await tx.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
+
+    const siguientes = await tx.saldoMensual.findMany({
+      where: { anio: sig.anio, mes: sig.mes },
+      select: { id: true, productoId: true, ingresoQty: true, salidaQty: true },
+    });
+    const sigMap = new Map(siguientes.map((s) => [s.productoId, s]));
+
+    let saldosCreados = 0;
+    let saldosActualizados = 0;
+    for (const c of calculos) {
+      await tx.saldoMensual.update({
+        where: { id: c.r.id },
+        data: {
+          ingresoQty: c.acc.ingresoQty,
+          ingresosBs: c.acc.ingresosBs,
+          salidaQty: c.acc.salidaQty,
+          saldoFinal: c.saldoFinal,
+          totalBs: c.valorFinal,
+          totalBsProm: c.valorFinal,
+          precioUnitProm: c.cpp,
+        },
+      });
+      saldosActualizados++;
+
+      const s = sigMap.get(c.r.productoId);
+      if (s) {
+        const sinMovimientos = new Prisma.Decimal(s.ingresoQty).isZero() && new Prisma.Decimal(s.salidaQty).isZero();
+        await tx.saldoMensual.update({
+          where: { id: s.id },
+          data: {
+            saldoInicial: c.saldoFinal,
+            totalBsInicial: c.valorFinal,
+            saldoFinal: c.saldoFinal.add(s.ingresoQty).sub(s.salidaQty),
+            ...(sinMovimientos ? { precioUnitProm: c.cpp, totalBs: c.valorFinal, totalBsProm: c.valorFinal } : {}),
+          },
+        });
+      } else {
+        await tx.saldoMensual.create({
+          data: {
+            productoId: c.r.productoId,
+            anio: sig.anio,
+            mes: sig.mes,
+            saldoInicial: c.saldoFinal,
+            ingresoQty: 0,
+            salidaQty: 0,
+            ingresosBs: 0,
+            saldoFinal: c.saldoFinal,
+            precioUnit: c.r.precioUnit,
+            precioUnitProm: c.cpp,
+            totalBs: c.valorFinal,
+            totalBsProm: c.valorFinal,
+            totalBsInicial: c.valorFinal,
+          },
+        });
+        saldosCreados++;
+      }
+    }
+
+    const cierre = await tx.cierreMes.create({ data: { anio, mes, usuarioId: userId } });
+    await tx.log.create({
+      data: {
+        usuarioId: userId,
+        accion: "CERRAR_MES",
+        data: { anio, mes, cppMovil: true, saldosCreados, saldosActualizados, productosConMovimientos: porProducto.size },
+      },
+    });
+    logger.info({ anio, mes, saldosCreados, saldosActualizados }, "Mes con CPP móvil cerrado");
+
+    return {
+      cierre: { id: cierre.id, anio: cierre.anio, mes: cierre.mes, creadoAt: cierre.creadoAt },
+      saldosCreados,
+      saldosActualizados,
+      productosConMovimientos: porProducto.size,
+      movimientosRecalculados: 0,
+    };
+  }, { timeout: 300_000, maxWait: 20_000 });
+}
+
 export async function cerrarMes(anio: number, mes: number, userId: number, force?: boolean, soloRegistrarCierre?: boolean) {
   const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
   if (existing && !force) throw new HttpError(`El período ${mes}/${anio} ya está cerrado`, 409);
+  if (esMesCppMovil(anio, mes)) return cerrarMesCppMovil(anio, mes, userId, !!existing);
   if (existing && force)  await prisma.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
 
   // Cierre sin recalcular: solo crea el registro CierreMes, preserva todos los valores de SaldoMensual intactos.
@@ -1603,6 +1837,14 @@ export async function reabrirMes(anio: number, mes: number, userId: number) {
   const existing = await prisma.cierreMes.findUnique({ where: { anio_mes: { anio, mes } } });
   if (!existing) throw new HttpError(`El período ${mes}/${anio} no está cerrado`, 409);
 
+  const sig = mes === 12 ? { anio: anio + 1, mes: 1 } : { anio, mes: mes + 1 };
+  if (esMesCppMovil(sig.anio, sig.mes) && await prisma.cierreMes.findUnique({ where: { anio_mes: sig } })) {
+    throw new HttpError(
+      `No se puede reabrir ${mes}/${anio} mientras ${sig.mes}/${sig.anio} esté cerrado: su saldo inicial depende de este mes`,
+      409,
+    );
+  }
+
   await prisma.cierreMes.delete({ where: { anio_mes: { anio, mes } } });
 
   await prisma.log.create({
@@ -1652,6 +1894,8 @@ function buildCompraMapFromItems(items: Array<{ productoId: number; cantidadReci
 }
 
 export async function ajustarPreciosSinIva(anio: number, mes: number) {
+  // Propaga precios en cascada hasta el mes actual, que ya es CPP móvil.
+  assertCppMovilInactivo("El ajuste de precios sin IVA");
   const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
   const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
 
@@ -1875,6 +2119,7 @@ export async function diagnosticarRedondeo(anio: number, mes: number) {
 }
 
 export async function fixRedondeo(anio: number, mes: number, saldoMensualId: string, ingresosBsNuevo: number, userId: number) {
+  assertMesSinCppMovil(anio, mes, "El ajuste de redondeo");
   const registro = await (prisma.saldoMensual.findUnique as any)({
     where: { id: saldoMensualId },
     select: { id: true, anio: true, mes: true, productoId: true, ingresosBs: true },
@@ -2167,6 +2412,7 @@ export async function getLimpiarMesPreview(anio: number, mes: number) {
 }
 
 export async function ejecutarLimpiarMes(anio: number, mes: number, userId: number) {
+  assertMesSinCppMovil(anio, mes, "Limpiar el mes");
   const preview = await getLimpiarMesPreview(anio, mes);
 
   let valesEliminados = 0;
@@ -2290,6 +2536,7 @@ export async function recalcularStock(
   userId: number,
 ): Promise<RecalcularStockResult> {
   const { productoId, stockInicial, eliminarValeIds = [] } = input;
+  assertCppMovilInactivo("Recalcular el stock");
 
   const producto = await prisma.producto.findUnique({ where: { id: productoId }, select: { id: true, nombre: true } });
   if (!producto) throw new HttpError("Producto no encontrado", 404);
@@ -2430,6 +2677,7 @@ export async function recalcularPreciosProm() {
   let actualizados = 0;
 
   for (const saldo of saldos) {
+    if (esMesCppMovil(saldo.anio, saldo.mes)) continue;
     const startOfMonth = new Date(Date.UTC(saldo.anio, saldo.mes - 1, 1));
     const endOfMonth   = new Date(Date.UTC(saldo.anio, saldo.mes, 1));
 
@@ -2508,6 +2756,7 @@ export async function ajusteProductosMes(
   mes: number,
   productos: AjusteProductoItem[],
 ): Promise<AjusteProductoResultado[]> {
+  assertMesSinCppMovil(anio, mes, "El ajuste masivo de productos");
   const mesInicio = new Date(anio, mes - 1, 1);
   const mesFin    = new Date(anio, mes,     1);
 

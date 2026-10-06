@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { HttpError } from "../../errors/http.error.js";
 import { backfillService } from "./backfill.service.js";
 
 export const backfillController = {
@@ -19,6 +20,7 @@ export const backfillController = {
       const result = await backfillService.backfillCPP({ anio: anioNum, mes: mesNum });
       res.json({ success: true, data: result });
     } catch (error) {
+      if (error instanceof HttpError) return res.status(error.statusCode).json({ success: false, error: error.message });
       console.error("[backfill-cpp] Error:", error);
       res.status(500).json({ success: false, error: "Error en el proceso de backfill" });
     }
@@ -29,6 +31,7 @@ export const backfillController = {
       const result = await backfillService.syncStockFromSaldoMensual();
       res.json({ success: true, data: result });
     } catch (error) {
+      if (error instanceof HttpError) return res.status(error.statusCode).json({ success: false, error: error.message });
       console.error("[sync-stock] Error:", error);
       res.status(500).json({ success: false, error: "Error al sincronizar stock desde SaldoMensual" });
     }
