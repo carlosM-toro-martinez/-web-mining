@@ -49,14 +49,14 @@ router.get("/:id", validateParams(idSchema), loteDespachoController.getById);
 
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validate(createLoteDespachoSchema),
   loteDespachoController.create,
 );
 
 router.patch(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(updateLoteDespachoSchema),
   loteDespachoController.update,
@@ -64,7 +64,7 @@ router.patch(
 
 router.patch(
   "/:id/estado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(avanzarEstadoLoteSchema),
   loteDespachoController.avanzarEstado,
@@ -72,7 +72,7 @@ router.patch(
 
 router.post(
   "/:id/pesaje",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(registrarPesajeSchema),
   loteDespachoController.registrarPesaje,
@@ -80,7 +80,7 @@ router.post(
 
 router.post(
   "/:id/combustible-entregado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(registrarCombustibleEntregadoSchema),
   loteDespachoController.registrarCombustibleEntregado,
@@ -88,7 +88,7 @@ router.post(
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(anularLoteSchema),
   loteDespachoController.anular,
@@ -96,7 +96,7 @@ router.post(
 
 router.post(
   "/:id/transbordo",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(transbordarLoteSchema),
   loteDespachoController.transbordar,

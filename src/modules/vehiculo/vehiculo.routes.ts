@@ -37,11 +37,9 @@ router.put(
   vehiculoController.update,
 );
 
-// Tablero de flota: cualquier rol con acceso al módulo puede mover una
-// tarjeta de estado (incluye ALMACENERO, que también opera despachos).
 router.patch(
   "/:id/estado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateParams(idSchema),
   validate(cambiarEstadoVehiculoSchema),
   vehiculoController.cambiarEstado,
