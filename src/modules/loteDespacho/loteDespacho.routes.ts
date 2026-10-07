@@ -88,7 +88,7 @@ router.post(
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO", "ALMACENERO"),
   validateParams(idSchema),
   validate(anularLoteSchema),
   loteDespachoController.anular,

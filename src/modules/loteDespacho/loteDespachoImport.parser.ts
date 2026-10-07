@@ -29,11 +29,10 @@ export interface FilaCuadroEnvio {
 
 // Pasa SOLO cuando "FECHA" vino como texto plano, no como celda de fecha
 // real de Excel — esas se confían directo por el serial (ver parseFecha).
-// Prioriza MM/DD/AAAA (la convención confirmada contra el documento real:
-// "09/01/2026" con año de 4 dígitos = 1 de septiembre de 2026), y SOLO cae
-// a DD/MM/AAAA cuando el mes en esa posición es imposible (>12) — esto
-// cubre, sin ambigüedad real, las filas que vienen escritas al revés (ej.
-// "14/9/2026": el 14 no puede ser mes, así que es el día → 14 de septiembre).
+// El formato boliviano es DD/MM/AAAA ("02/10/2026" = 2 de octubre), así que
+// se trata el primer campo como día y el segundo como mes. Solo invierte el
+// orden cuando el primer campo es imposible como día (>31) o el segundo es
+// imposible como mes (>12, ej. "14/9/2026" es inequívoco: 14 día, 9 mes).
 function parseTextoFecha(texto: string): Date | null {
   const match = texto.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (!match) return null;
@@ -43,8 +42,10 @@ function parseTextoFecha(texto: string): Date | null {
   let anio = Number(yStr);
   if (anio < 100) anio += 2000;
 
-  if (a >= 1 && a <= 12 && b >= 1 && b <= 31) return new Date(Date.UTC(anio, a - 1, b));
-  if (b >= 1 && b <= 12 && a >= 1 && a <= 31) return new Date(Date.UTC(anio, b - 1, a));
+  // DD/MM/AAAA primero (formato boliviano)
+  if (a >= 1 && a <= 31 && b >= 1 && b <= 12) return new Date(Date.UTC(anio, b - 1, a));
+  // MM/DD/AAAA como fallback cuando b > 12 (ej. "9/14/2026")
+  if (b >= 1 && b <= 31 && a >= 1 && a <= 12) return new Date(Date.UTC(anio, a - 1, b));
   return null;
 }
 
