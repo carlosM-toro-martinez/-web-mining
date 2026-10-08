@@ -19,6 +19,17 @@ export const logisticaReportesController = {
     }
   },
 
+  async getIntegridadCorrelativo(req: AuthRequest, res: Response) {
+    try {
+      const query = cuadroMensualQuerySchema.parse(req.query);
+      const data = await logisticaReportesService.getIntegridadCorrelativo(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async cerrarMes(req: AuthRequest, res: Response) {
     try {
       const cierre = await logisticaReportesService.cerrarMes(req.body, req.user!.id);

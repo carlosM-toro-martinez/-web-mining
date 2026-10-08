@@ -20,6 +20,13 @@ router.get(
 );
 
 router.get(
+  "/integridad-correlativo",
+  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  validateQuery(cuadroMensualQuerySchema),
+  logisticaReportesController.getIntegridadCorrelativo,
+);
+
+router.get(
   "/cierres",
   authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateQuery(cierresQuerySchema),

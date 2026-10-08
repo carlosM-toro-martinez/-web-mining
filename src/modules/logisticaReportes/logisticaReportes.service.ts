@@ -9,6 +9,12 @@ function rangoMes(anio: number, mes: number) {
   return { inicio, fin };
 }
 
+// Extrae el número entero que precede al "/" en un correlativo ("27/10" → 27).
+// Lotes anulados tienen sufijo " ANULADO" y devuelven el mismo número.
+function numeroDeLote(correlativo: string): number {
+  return parseInt(correlativo.split("/")[0] ?? "", 10) || 0;
+}
+
 export const logisticaReportesService = {
   // Cuadro mensual: consolida los lotes del municipio en el mes (por
   // fecha_documental_fiscal, no por fecha_despacho_real) para declarar
@@ -34,8 +40,12 @@ export const logisticaReportesService = {
         conocimientoCarga: true,
         formulario101: true,
       },
-      orderBy: { fechaDocumentalFiscal: "asc" },
+      orderBy: { createdAt: "asc" },
     });
+
+    // El cuadro impreso del Conocimiento de Carga se entrega en orden de
+    // número de lote (no de fecha), así que se ordena antes de devolverlo.
+    lotes.sort((a, b) => numeroDeLote(a.correlativo) - numeroDeLote(b.correlativo));
 
     // El cierre mensual es por municipio — en modo "todos los municipios"
     // no hay un único registro que lo represente, así que se omite (no
@@ -107,6 +117,92 @@ export const logisticaReportesService = {
     );
 
     return cierre;
+  },
+
+  // Verifica que la serie de conocimientos y la de F101 estén completas y en
+  // orden. Incluye los lotes ANULADO para que se vea el historial completo.
+  async getIntegridadCorrelativo(query: CuadroMensualQuery) {
+    const { inicio, fin } = rangoMes(query.anio, query.mes);
+    const mes = query.mes;
+
+    const lotes = await prisma.loteDespacho.findMany({
+      where: {
+        ...(query.municipioId ? { municipioOrigenId: query.municipioId } : {}),
+        ...(query.nivel ? { nivel: query.nivel } : {}),
+        fechaDocumentalFiscal: { gte: inicio, lt: fin },
+      },
+      include: { transportista: true, formulario101: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Patrón que reconoce lotes activos: "N/MM" exacto (sin sufijo ANULADO).
+    const patronActivo = new RegExp(`^(\\d+)/0?${mes}$`);
+
+    const lotesConNumero = lotes.map((l) => {
+      const m = patronActivo.exec(l.correlativo);
+      return { ...l, numero: m ? parseInt(m[1]!, 10) : null };
+    });
+
+    // Ordena por número; los que no tienen número (no deberían existir) van al final.
+    lotesConNumero.sort((a, b) => {
+      if (a.numero === null) return 1;
+      if (b.numero === null) return -1;
+      return a.numero - b.numero;
+    });
+
+    // Huecos en la serie activa (números 1..max que no tienen lote activo).
+    const numerosActivos = lotesConNumero.filter((l) => l.numero !== null).map((l) => l.numero!);
+    const maxActivo = numerosActivos.length > 0 ? Math.max(...numerosActivos) : 0;
+    const setActivos = new Set(numerosActivos);
+    const huecosCorrelativo: number[] = [];
+    for (let i = 1; i <= maxActivo; i++) {
+      if (!setActivos.has(i)) huecosCorrelativo.push(i);
+    }
+
+    // Análisis de F101: solo lotes activos que ya tienen código asignado.
+    const activosConF101 = lotesConNumero
+      .filter((l) => l.numero !== null && l.formulario101 !== null)
+      .map((l) => ({ numero: l.numero!, codigo: parseInt(l.formulario101!.codigo, 10) }))
+      .filter((l) => !isNaN(l.codigo));
+
+    let f101Min: number | null = null;
+    let f101Max: number | null = null;
+    const f101Gaps: number[] = [];
+    let f101FueraDeOrden = false;
+
+    if (activosConF101.length > 0) {
+      const codigos = activosConF101.map((l) => l.codigo);
+      f101Min = Math.min(...codigos);
+      f101Max = Math.max(...codigos);
+      const setF101 = new Set(codigos);
+      for (let i = f101Min; i <= f101Max; i++) {
+        if (!setF101.has(i)) f101Gaps.push(i);
+      }
+      // ¿Los códigos van de menor a mayor al recorrer los lotes en orden de N°?
+      for (let i = 1; i < activosConF101.length; i++) {
+        if (activosConF101[i]!.codigo <= activosConF101[i - 1]!.codigo) {
+          f101FueraDeOrden = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      lotes: lotesConNumero.map((l) => ({
+        id: l.id,
+        correlativo: l.correlativo,
+        numero: l.numero,
+        estadoLote: l.estadoLote,
+        fechaDocumentalFiscal: l.fechaDocumentalFiscal,
+        transportista: l.transportista ? { nombreORazonSocial: l.transportista.nombreORazonSocial } : null,
+        f101: l.formulario101 ? { codigo: l.formulario101.codigo, estado: l.formulario101.estado } : null,
+      })),
+      huecosCorrelativo,
+      f101Min,
+      f101Max,
+      f101Gaps,
+      f101FueraDeOrden,
+    };
   },
 
   async getCierres(municipioId?: number) {
