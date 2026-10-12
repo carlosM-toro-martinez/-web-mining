@@ -1,19 +1,13 @@
-import { Role } from "@prisma/client";
 import { z } from "zod";
 
-// Antes era un z.enum([...]) con una lista de roles escrita a mano +
-// un switch que la repetía — cada vez que se agregaba un rol nuevo al
-// enum Role de Prisma (ej. ASISTENTE_ADMINISTRATIVO, MEDIOAMBIENTE,
-// SEGURIDAD) había que acordarse de tocar esto también, y si no, el
-// registro de un usuario con ese rol fallaba con 400 aunque el rol ya
-// existiera en la base de datos. z.nativeEnum(Role) lee el enum real de
-// Prisma directamente, así que nunca más se desincroniza. "user"/"USER"
-// se mantiene como alias histórico de TRABAJADOR.
+// Los roles ahora viven en la tabla Rol (se crean desde la app), así que
+// aquí solo se normaliza el código; authService valida que exista y esté
+// activo. "user"/"USER" se mantiene como alias histórico de TRABAJADOR.
 const roleInputSchema = z.preprocess((val) => {
   if (typeof val !== "string") return val;
-  const upper = val.toUpperCase();
+  const upper = val.trim().toUpperCase();
   return upper === "USER" ? "TRABAJADOR" : upper;
-}, z.nativeEnum(Role));
+}, z.string().min(1).max(50));
 
 export const registerSchema = z.object({
   nombre: z.string().min(1),

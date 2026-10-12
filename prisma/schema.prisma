@@ -18,7 +18,10 @@ model User {
   nombre                     String
   email                      String                   @unique
   password                   String
-  role                       Role
+  // Código del rol (FK a Rol.codigo). Antes era el enum Role; ahora los
+  // roles viven en la tabla Rol y se pueden crear/editar desde la app.
+  role                       String
+  rol                        Rol                      @relation(fields: [role], references: [codigo], onUpdate: Cascade)
   createdAt                  DateTime                 @default(now())
   resetToken                 String?
   resetTokenExpiry           DateTime?
@@ -1211,19 +1214,36 @@ enum MetodoCosteo {
   PROMEDIO_PONDERADO
 }
 
-enum Role {
-  ADMIN
-  ALMACENERO
-  SUPERINTENDENTE
-  TRABAJADOR
-  VISITANTE
-  GEOLOGOADMIN
-  GEOLOGO
-  ADMINISTRADOR
-  MEDIOAMBIENTE
-  SEGURIDAD
-  ASISTENTE_ADMINISTRATIVO
-  CONTADOR
+// ─── Roles y permisos dinámicos ───────────────────────────────────────────────
+// Los roles "de sistema" (esSistema) son los que existían como enum Role: no
+// se pueden borrar ni cambiar de código porque el código legado todavía los
+// referencia por nombre, pero sus permisos sí son editables. ADMIN tiene
+// acceso total siempre (no depende de RolPermiso).
+model Rol {
+  id          Int          @id @default(autoincrement())
+  codigo      String       @unique
+  nombre      String
+  descripcion String?
+  esSistema   Boolean      @default(false)
+  activo      Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  permisos    RolPermiso[]
+  usuarios    User[]
+}
+
+// Un permiso = recurso + acción (ej. "personal.empleados" + "eliminar").
+// El catálogo válido de recursos/acciones está en código
+// (src/modules/roles/permisos.catalogo.ts).
+model RolPermiso {
+  id      Int    @id @default(autoincrement())
+  rolId   Int
+  recurso String
+  accion  String
+  rol     Rol    @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@unique([rolId, recurso, accion])
+  @@index([rolId])
 }
 
 enum TipoMovimiento {

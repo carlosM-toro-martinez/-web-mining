@@ -1,28 +1,27 @@
 import { Router } from "express";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { employeeController } from "./employee.controller.js";
 
 const router = Router();
 router.use(authenticate);
 
-const ROLES = ["ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"] as const;
-
 // GET  /api/employees
-router.get("/", authorize(...ROLES), employeeController.getAll);
+router.get("/", requirePermiso("personal.empleados", "ver"), employeeController.getAll);
 
 // GET  /api/employees/:id
-router.get("/:id", authorize(...ROLES), employeeController.getById);
+router.get("/:id", requirePermiso("personal.empleados", "ver"), employeeController.getById);
 
 // POST /api/employees
-router.post("/", authorize(...ROLES), employeeController.create);
+router.post("/", requirePermiso("personal.empleados", "crear"), employeeController.create);
 
 // PUT  /api/employees/:id
-router.put("/:id", authorize(...ROLES), employeeController.update);
+router.put("/:id", requirePermiso("personal.empleados", "editar"), employeeController.update);
 
 // DELETE /api/employees/:id
-router.delete("/:id", authorize(...ROLES), employeeController.remove);
+router.delete("/:id", requirePermiso("personal.empleados", "eliminar"), employeeController.remove);
 
-// POST /api/employees/sync-device
-router.post("/sync-device", authorize(...ROLES), employeeController.syncPending);
+// POST /api/employees/sync-device — reencola empleados pendientes al biométrico
+router.post("/sync-device", requirePermiso("personal.biometrico", "sincronizar"), employeeController.syncPending);
 
 export default router;

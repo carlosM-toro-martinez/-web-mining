@@ -14,7 +14,15 @@ import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 
 const router = Router();
 
-router.post("/register", validate(registerSchema), authController.register);
+// Antes era público: cualquiera podía crearse un usuario (incluso ADMIN).
+// Ahora solo quienes gestionan usuarios (mismos roles que /users).
+router.post(
+  "/register",
+  authenticate,
+  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  validate(registerSchema),
+  authController.register,
+);
 router.post("/login", validate(loginSchema), authController.login);
 router.post("/refresh", authController.refresh);
 router.post("/logout", authenticate, authController.logout);

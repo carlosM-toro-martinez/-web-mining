@@ -5,7 +5,7 @@ import type { AuthRequest } from "../../middleware/auth.middleware.js";
 export const authController = {
   async register(req: AuthRequest, res: Response) {
     try {
-      const user = await authService.register(req.body);
+      const user = await authService.register(req.body, req.user?.role);
       res.status(201).json({ success: true, data: user });
     } catch (error) {
       const status = (error as any).statusCode || 400;
@@ -85,7 +85,7 @@ export const authController = {
         return res.status(400).json({ success: false, message: "ID de usuario requerido" });
       }
 
-      const user = await authService.updateUser(id, req.body);
+      const user = await authService.updateUser(id, req.body, req.user?.role);
       res.json({ success: true, data: user });
     } catch (error) {
       const status = (error as any).statusCode || 400;

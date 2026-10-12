@@ -14,6 +14,8 @@ import type {
 } from "./auth.types.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { ROL_SUPERADMIN } from "../roles/permisos.catalogo.js";
+import { invalidarCachePermisos } from "../roles/permisos.service.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret";
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || "refresh_secret";
@@ -33,9 +35,23 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// El rol debe existir en la tabla Rol y estar activo. Solo un ADMIN puede
+// asignar el rol ADMIN (evita que quien gestiona usuarios se eleve a sí
+// mismo o a otro a acceso total).
+async function validarRolAsignable(codigo: string, solicitanteRole: string | undefined) {
+  const rol = await prisma.rol.findUnique({ where: { codigo }, select: { activo: true } });
+  if (!rol) throw new HttpError(`El rol "${codigo}" no existe`, 400);
+  if (!rol.activo) throw new HttpError(`El rol "${codigo}" está desactivado`, 400);
+  if (codigo === ROL_SUPERADMIN && solicitanteRole !== ROL_SUPERADMIN) {
+    throw new HttpError("Solo un ADMIN puede asignar el rol ADMIN", 403);
+  }
+}
+
 export const authService = {
-  async register(data: RegisterDTO) {
-    console.log("🔄 AUTH SERVICE: register called with:", data);
+  async register(data: RegisterDTO, solicitanteRole?: string) {
+    console.log("🔄 AUTH SERVICE: register called with:", { ...data, password: "***" });
+
+    await validarRolAsignable(data.role, solicitanteRole);
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
     console.log("🔐 Password hashed successfully");
@@ -136,7 +152,18 @@ export const authService = {
     });
   },
 
-  async updateUser(id: number, data: UpdateUserDTO) {
+  async updateUser(id: number, data: UpdateUserDTO, solicitanteRole?: string) {
+    const target = await prisma.user.findUnique({ where: { id }, select: { role: true } });
+    if (!target) throw new HttpError("Usuario no encontrado", 404);
+
+    // Un usuario ADMIN solo puede ser modificado por otro ADMIN.
+    if (target.role === ROL_SUPERADMIN && solicitanteRole !== ROL_SUPERADMIN) {
+      throw new HttpError("Solo un ADMIN puede modificar a un usuario ADMIN", 403);
+    }
+    if (data.role !== undefined && data.role !== target.role) {
+      await validarRolAsignable(data.role, solicitanteRole);
+    }
+
     const updateData: { [key: string]: any } = {};
 
     if (data.nombre !== undefined) updateData.nombre = data.nombre.trim();
@@ -148,7 +175,7 @@ export const authService = {
       throw new HttpError("No hay datos para actualizar", 400);
     }
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
       where: { id },
       data: updateData,
       select: {
@@ -160,6 +187,9 @@ export const authService = {
         createdAt: true,
       },
     });
+    // Rol o estado activo cambiaron → recalcular permisos de inmediato
+    invalidarCachePermisos();
+    return updated;
   },
 
   async forgotPassword(data: ForgotPasswordDTO) {
