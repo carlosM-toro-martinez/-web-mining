@@ -25,3 +25,11 @@ export const cierresQuerySchema = z
     municipioId: z.coerce.number().int().positive().optional(),
   })
   .strict();
+
+export const combustibleQuerySchema = z
+  .object({
+    fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    fechaFin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    municipioId: z.coerce.number().int().positive().optional(),
+  })
+  .strict();

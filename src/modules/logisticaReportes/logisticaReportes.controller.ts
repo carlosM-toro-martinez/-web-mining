@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { logisticaReportesService } from "./logisticaReportes.service.js";
-import { cuadroMensualQuerySchema } from "./logisticaReportes.schema.js";
+import { combustibleQuerySchema, cuadroMensualQuerySchema } from "./logisticaReportes.schema.js";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
@@ -23,6 +23,17 @@ export const logisticaReportesController = {
     try {
       const query = cuadroMensualQuerySchema.parse(req.query);
       const data = await logisticaReportesService.getIntegridadCorrelativo(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getCombustibleReport(req: AuthRequest, res: Response) {
+    try {
+      const query = combustibleQuerySchema.parse(req.query);
+      const data = await logisticaReportesService.getCombustibleReport(query);
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

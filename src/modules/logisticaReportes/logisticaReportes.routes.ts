@@ -4,38 +4,46 @@ import { validate, validateQuery } from "../../middleware/validate.middleware.js
 import {
   cierreMensualSchema,
   cierresQuerySchema,
+  combustibleQuerySchema,
   cuadroMensualQuerySchema,
 } from "./logisticaReportes.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 
 const router = Router();
 
 router.use(authenticate);
+// Leer requiere algún permiso de logística; cada acción, su permiso propio
+// (ver src/modules/roles/permisos.catalogo.ts).
+router.use(requireModulo("logistica"));
 
 router.get(
   "/cuadro-mensual",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateQuery(cuadroMensualQuerySchema),
   logisticaReportesController.getCuadroMensual,
 );
 
 router.get(
   "/integridad-correlativo",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateQuery(cuadroMensualQuerySchema),
   logisticaReportesController.getIntegridadCorrelativo,
 );
 
 router.get(
+  "/combustible",
+  validateQuery(combustibleQuerySchema),
+  logisticaReportesController.getCombustibleReport,
+);
+
+router.get(
   "/cierres",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
   validateQuery(cierresQuerySchema),
   logisticaReportesController.getCierres,
 );
 
 router.post(
   "/cierre-mensual",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("logistica.reportes", "cerrar_mes"),
   validate(cierreMensualSchema),
   logisticaReportesController.cerrarMes,
 );

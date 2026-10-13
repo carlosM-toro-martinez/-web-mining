@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import type { CierreMensualDTO, CuadroMensualQuery } from "./logisticaReportes.types.js";
+import type { CierreMensualDTO, CombustibleQuery, CuadroMensualQuery } from "./logisticaReportes.types.js";
 
 function rangoMes(anio: number, mes: number) {
   const inicio = new Date(Date.UTC(anio, mes - 1, 1));
@@ -202,6 +202,59 @@ export const logisticaReportesService = {
       f101Max,
       f101Gaps,
       f101FueraDeOrden,
+    };
+  },
+
+  async getCombustibleReport(query: CombustibleQuery) {
+    const inicio = new Date(query.fechaInicio + "T00:00:00Z");
+    const fin = new Date(query.fechaFin + "T23:59:59Z");
+
+    const lotes = await prisma.loteDespacho.findMany({
+      where: {
+        ...(query.municipioId ? { municipioOrigenId: query.municipioId } : {}),
+        fechaDespachoReal: { gte: inicio, lte: fin },
+        estadoLote: { not: "ANULADO" },
+        incluyeCombustible: "CON_COMBUSTIBLE",
+      },
+      include: { transportista: true },
+      orderBy: { fechaDespachoReal: "asc" },
+    });
+
+    // Agrupa por transportista
+    const mapaTransportistas = new Map<
+      string,
+      { transportistaId: number | null; nombre: string; viajes: number; asignados: number; entregados: number }
+    >();
+
+    for (const lote of lotes) {
+      const clave = lote.transportistaId != null ? String(lote.transportistaId) : "__sin__";
+      if (!mapaTransportistas.has(clave)) {
+        mapaTransportistas.set(clave, {
+          transportistaId: lote.transportistaId,
+          nombre: lote.transportista?.nombreORazonSocial ?? "Sin transportista",
+          viajes: 0,
+          asignados: 0,
+          entregados: 0,
+        });
+      }
+      const g = mapaTransportistas.get(clave)!;
+      g.viajes++;
+      g.asignados += Number(lote.combustibleAsignadoLitros ?? 0);
+      g.entregados += Number(lote.combustibleEntregadoLitros ?? 0);
+    }
+
+    const porTransportista = Array.from(mapaTransportistas.values()).sort((a, b) =>
+      a.nombre.localeCompare(b.nombre, "es"),
+    );
+
+    const totalAsignados = porTransportista.reduce((s, t) => s + t.asignados, 0);
+    const totalEntregados = porTransportista.reduce((s, t) => s + t.entregados, 0);
+
+    return {
+      porTransportista,
+      totalViajes: lotes.length,
+      totalAsignados,
+      totalEntregados,
     };
   },
 
