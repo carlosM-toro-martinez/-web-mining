@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from "express";
 import type { AuthRequest } from "./auth.middleware.js";
 import { obtenerPermisosUsuario, tienePermiso } from "../modules/roles/permisos.service.js";
+import { ROL_SUPERADMIN } from "../modules/roles/permisos.catalogo.js";
 
 // Reemplazo de authorize(...roles) para los módulos migrados a permisos
 // dinámicos. Usar después de authenticate.
@@ -10,6 +11,10 @@ export const requirePermiso = (recurso: string, accion: string) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: "Token requerido" });
     }
+    // ADMIN tiene acceso total siempre, igual que con authorize(): no depende
+    // de la tabla de permisos ni de la caché.
+    if (req.user.role === ROL_SUPERADMIN) return next();
+
     const permisos = await obtenerPermisosUsuario(req.user.id);
     if (!tienePermiso(permisos, recurso, accion)) {
       return res.status(403).json({ success: false, error: "Acceso denegado" });
