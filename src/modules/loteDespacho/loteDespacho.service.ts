@@ -455,14 +455,19 @@ export const loteDespachoService = {
   // contrario a anularFormulario101(), que si arrastra al lote consigo.
   async anular(id: string, data: AnularLoteDTO, userId: number) {
     return prisma.$transaction(async (tx) => {
-      const lote = await tx.loteDespacho.findUnique({ where: { id }, include: { formulario101: true, pesaje: true } });
+      const lote = await tx.loteDespacho.findUnique({
+        where: { id },
+        include: { formulario101: { include: { anulacion: true } }, pesaje: true },
+      });
       if (!lote) throw new HttpError("Lote no encontrado", 404);
       if (lote.estadoLote === "ANULADO") throw new HttpError("El lote ya está anulado", 409);
       if (lote.estadoLote === "LIQUIDADO") {
         throw new HttpError("No se puede anular un lote ya liquidado", 409);
       }
 
-      // Libera el número para el próximo lote del mes (ver correlativo.ts).
+      // El número de correlativo queda "consumido" (no se reasigna a otro
+      // lote): la serie activa avanza siempre hacia adelante. El sufijo
+      // " ANULADO" es solo para distinguirlo visualmente en la lista.
       const actualizado = await tx.loteDespacho.update({
         where: { id },
         data: {
@@ -484,11 +489,22 @@ export const loteDespachoService = {
         where: { loteId: id, liquidacion: { estado: "BORRADOR" } },
       });
 
+      // Al anular el lote, el F101 vinculado también se anula definitivamente:
+      // ya no puede reutilizarse porque el documento físico quedó invalidado.
       if (lote.formulario101 && lote.formulario101.estado === "VINCULADO") {
         await tx.formulario101.update({
           where: { id: lote.formulario101.id },
-          data: { loteId: null, estado: "DISPONIBLE" },
+          data: { estado: "ANULADO" },
         });
+        if (!lote.formulario101.anulacion) {
+          await tx.anulacionFormulario101.create({
+            data: {
+              formulario101Id: lote.formulario101.id,
+              usuarioId: userId,
+              motivo: `Anulado junto con lote ${lote.correlativo}: ${data.motivo}`,
+            },
+          });
+        }
       }
 
       // Si el viaje no llegó a pesarse, su vehículo sigue "ocupado" con este

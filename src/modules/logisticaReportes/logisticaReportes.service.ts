@@ -135,33 +135,35 @@ export const logisticaReportesService = {
       orderBy: { createdAt: "asc" },
     });
 
-    // Patrón que reconoce lotes activos: "N/MM" exacto (sin sufijo ANULADO).
-    const patronActivo = new RegExp(`^(\\d+)/0?${mes}$`);
+    // Captura tanto lotes activos ("27/10") como anulados ("27/10 ANULADO"):
+    // un número anulado está consumido, no es un hueco de la serie.
+    const patronNumero = new RegExp(`^(\\d+)/0?${mes}(\\s|$)`);
 
     const lotesConNumero = lotes.map((l) => {
-      const m = patronActivo.exec(l.correlativo);
+      const m = patronNumero.exec(l.correlativo);
       return { ...l, numero: m ? parseInt(m[1]!, 10) : null };
     });
 
-    // Ordena por número; los que no tienen número (no deberían existir) van al final.
+    // Ordena por número; los que no tienen número van al final.
     lotesConNumero.sort((a, b) => {
       if (a.numero === null) return 1;
       if (b.numero === null) return -1;
       return a.numero - b.numero;
     });
 
-    // Huecos en la serie activa (números 1..max que no tienen lote activo).
-    const numerosActivos = lotesConNumero.filter((l) => l.numero !== null).map((l) => l.numero!);
-    const maxActivo = numerosActivos.length > 0 ? Math.max(...numerosActivos) : 0;
-    const setActivos = new Set(numerosActivos);
+    // Huecos reales: números entre 1 y el máximo que no tienen NINGÚN lote
+    // (ni activo ni anulado) — los anulados no son huecos, están consumidos.
+    const todosLosNumeros = lotesConNumero.filter((l) => l.numero !== null).map((l) => l.numero!);
+    const maxNumero = todosLosNumeros.length > 0 ? Math.max(...todosLosNumeros) : 0;
+    const setTodos = new Set(todosLosNumeros);
     const huecosCorrelativo: number[] = [];
-    for (let i = 1; i <= maxActivo; i++) {
-      if (!setActivos.has(i)) huecosCorrelativo.push(i);
+    for (let i = 1; i <= maxNumero; i++) {
+      if (!setTodos.has(i)) huecosCorrelativo.push(i);
     }
 
-    // Análisis de F101: solo lotes activos que ya tienen código asignado.
+    // Análisis de F101: solo lotes NO anulados que ya tienen código asignado.
     const activosConF101 = lotesConNumero
-      .filter((l) => l.numero !== null && l.formulario101 !== null)
+      .filter((l) => l.numero !== null && l.estadoLote !== "ANULADO" && l.formulario101 !== null)
       .map((l) => ({ numero: l.numero!, codigo: parseInt(l.formulario101!.codigo, 10) }))
       .filter((l) => !isNaN(l.codigo));
 

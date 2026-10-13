@@ -28,9 +28,9 @@ function formatearCorrelativoLote(numero: number, mes: number): string {
   return `${numero}/${String(mes).padStart(2, "0")}`;
 }
 
-// Al anular un lote su número NO se pierde (la serie del Conocimiento tiene
-// que quedar seguida): el anulado pasa a "27/10 ANULADO" — sigue en el
-// historial — y el "27/10" queda libre para el próximo lote de ese mes.
+// Al anular un lote su número queda CONSUMIDO (no se reasigna): el anulado
+// pasa a "27/10 ANULADO" y permanece en el historial. El próximo lote toma
+// el menor número que nunca fue emitido (activo ni anulado).
 const SUFIJO_LOTE_ANULADO = " ANULADO";
 
 export async function correlativoLiberadoDeLoteAnulado(
@@ -58,8 +58,10 @@ async function leerSerieLote(tx: Prisma.TransactionClient, anio: number, mes: nu
   const clave = `LOTE_DESPACHO_${anio}_${mesTxt}`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${clave}))`;
 
-  // Acepta también el mes sin cero ("37/9") de algunas importaciones viejas.
-  const patron = new RegExp(`^(\\d+)/0?${mes}$`);
+  // Acepta también el mes sin cero ("37/9") de importaciones viejas.
+  // Captura tanto lotes activos ("27/10") como anulados ("27/10 ANULADO"):
+  // un número anulado ya se usó físicamente y NO se reasigna a otro viaje.
+  const patron = new RegExp(`^(\\d+)/0?${mes}(\\s|$)`);
   const lotes = await tx.loteDespacho.findMany({
     where: { anio, correlativo: { contains: "/" }, ...(excluirLoteId ? { id: { not: excluirLoteId } } : {}) },
     select: { correlativo: true },
