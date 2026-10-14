@@ -15,6 +15,11 @@ router.use(authenticate);
 router.use(authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"));
 
 router.get("/retenciones", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getRetenciones);
+router.get(
+  "/posibles-duplicados",
+  validateQuery(reporteCajaChicaQuerySchema),
+  reportesCajaChicaController.getPosiblesDuplicados,
+);
 router.get("/impuestos", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getImpuestos);
 router.get("/no-deducibles", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getNoDeducibles);
 router.get("/desglose", validateQuery(reporteCajaChicaQuerySchema), reportesCajaChicaController.getDesglose);

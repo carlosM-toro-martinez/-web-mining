@@ -1,5 +1,6 @@
 import type { Response } from "express";
 import { reportesCajaChicaService } from "./reportesCajaChica.service.js";
+import { getPosiblesDuplicados } from "./posiblesDuplicados.service.js";
 import {
   estadoCuentaBancariaQuerySchema,
   estadoCuentaCajaQuerySchema,
@@ -10,6 +11,16 @@ import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
 export const reportesCajaChicaController = {
+  async getPosiblesDuplicados(req: AuthRequest, res: Response) {
+    try {
+      const query = reporteCajaChicaQuerySchema.parse(req.query);
+      res.json({ success: true, data: await getPosiblesDuplicados(query) });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getRetenciones(req: AuthRequest, res: Response) {
     try {
       // Ver nota en gastoCaja.controller.ts: validateQuery() no puede
