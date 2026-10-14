@@ -61,6 +61,16 @@ export async function obtenerPermisosUsuario(userId: number): Promise<PermisosUs
   return valor;
 }
 
+// ¿Tiene al menos un permiso dentro del módulo? (ej. prefijo "logistica")
+export function tieneAlgunPermiso(p: PermisosUsuario, prefijo: string): boolean {
+  if (!p.activo) return false;
+  if (p.esSuperAdmin) return true;
+  for (const permiso of p.permisos) {
+    if (permiso.startsWith(`${prefijo}.`)) return true;
+  }
+  return false;
+}
+
 export function tienePermiso(p: PermisosUsuario, recurso: string, accion: string): boolean {
   if (!p.activo) return false;
   if (p.esSuperAdmin) return true;

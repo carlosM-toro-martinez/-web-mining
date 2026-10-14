@@ -21,6 +21,10 @@ router.put("/horarios/:id", requirePermiso("personal.horarios", "editar"), perso
 router.delete("/horarios/:id", requirePermiso("personal.horarios", "eliminar"), personalController.eliminarHorario);
 
 // ── Asignaciones empleado → horario ──────────────────────────────────────────
+// GET    /api/personal/asignaciones/estado  → empleados activos con su horario vigente (o null)
+router.get("/asignaciones/estado", requirePermiso("personal.asignaciones", "ver"), personalController.estadoAsignaciones);
+// POST   /api/personal/asignaciones/bulk  (employeeIds[], horarioId, desde) → asignar el mismo horario a varios
+router.post("/asignaciones/bulk", requirePermiso("personal.asignaciones", "crear"), personalController.asignarHorarioMasivo);
 // POST   /api/personal/asignaciones  (employeeId, horarioId, desde en body)
 router.post("/asignaciones", requirePermiso("personal.asignaciones", "crear"), personalController.asignarHorario);
 // DELETE /api/personal/asignaciones/:id

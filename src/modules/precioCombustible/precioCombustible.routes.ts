@@ -2,7 +2,8 @@ import { Router } from "express";
 import { precioCombustibleController } from "./precioCombustible.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
 import { createPrecioCombustibleSchema, precioCombustibleQuerySchema } from "./precioCombustible.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
 const idSchema = z.object({
@@ -12,13 +13,16 @@ const idSchema = z.object({
 const router = Router();
 
 router.use(authenticate);
+// Leer requiere algún permiso de logística; cada acción, su permiso propio
+// (ver src/modules/roles/permisos.catalogo.ts).
+router.use(requireModulo("logistica"));
 
 router.get("/", validateQuery(precioCombustibleQuerySchema), precioCombustibleController.getAll);
 router.get("/:id", validateParams(idSchema), precioCombustibleController.getById);
 
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.parametros", "crear"),
   validate(createPrecioCombustibleSchema),
   precioCombustibleController.create,
 );

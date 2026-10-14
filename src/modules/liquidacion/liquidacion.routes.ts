@@ -8,7 +8,8 @@ import {
   liquidacionQuerySchema,
   previewLiquidacionQuerySchema,
 } from "./liquidacion.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -17,6 +18,9 @@ const idConItemSchema = z.object({ id: z.string().uuid(), itemId: z.string().uui
 const router = Router();
 
 router.use(authenticate);
+// Leer requiere algún permiso de logística; cada acción, su permiso propio
+// (ver src/modules/roles/permisos.catalogo.ts).
+router.use(requireModulo("logistica"));
 
 // Registrada ANTES de "/:id" — si no, Express la tomaría como un id.
 router.get("/preview", validateQuery(previewLiquidacionQuerySchema), liquidacionController.preview);
@@ -26,14 +30,14 @@ router.get("/:id", validateParams(idSchema), liquidacionController.getById);
 
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.liquidaciones", "crear"),
   validate(createLiquidacionSchema),
   liquidacionController.create,
 );
 
 router.post(
   "/:id/items-concepto",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.liquidaciones", "editar"),
   validateParams(idSchema),
   validate(agregarItemConceptoSchema),
   liquidacionController.agregarItemConcepto,
@@ -41,7 +45,7 @@ router.post(
 
 router.delete(
   "/:id/items-concepto/:itemId",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.liquidaciones", "editar"),
   validateParams(idConItemSchema),
   liquidacionController.quitarItemConcepto,
 );
@@ -50,14 +54,14 @@ router.delete(
 // dinero y el estado final de los lotes, igual que el cierre de mes de inventario.
 router.post(
   "/:id/cerrar",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("logistica.liquidaciones", "cerrar"),
   validateParams(idSchema),
   liquidacionController.cerrar,
 );
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("logistica.liquidaciones", "anular"),
   validateParams(idSchema),
   validate(anularLiquidacionSchema),
   liquidacionController.anular,
@@ -67,7 +71,7 @@ router.post(
 // crearla, porque todavía no tuvo ningún efecto real que auditar.
 router.delete(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.liquidaciones", "eliminar"),
   validateParams(idSchema),
   liquidacionController.eliminarBorrador,
 );

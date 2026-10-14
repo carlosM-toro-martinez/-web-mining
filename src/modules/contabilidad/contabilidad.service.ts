@@ -481,8 +481,8 @@ export const contabilidadService = {
     const cuenta = await prisma.cuentaContable.findUnique({
       where: { id },
       include: {
-        _count: { select: { movimientos: true, transportistas: true } },
-        productos: { select: { codigo: true, nombre: true }, take: 10 },
+        _count: { select: { transportistas: true } },
+        productos: { select: { codigo: true } },
       },
     });
 
@@ -490,25 +490,32 @@ export const contabilidadService = {
       throw new HttpError("Cuenta contable no encontrada", 404);
     }
 
-    if (cuenta._count.movimientos > 0) {
-      throw new HttpError("No se puede eliminar: cuenta con movimientos asociados", 409);
-    }
-
-    // Al borrarla, la base deja sin cuenta a estos registros (ON DELETE SET NULL) y los vales del producto fallarían.
-    if (cuenta.productos.length > 0) {
-      const lista = cuenta.productos.map((p) => `${p.codigo} ${p.nombre}`).join(", ");
-      throw new HttpError(`No se puede eliminar: es la cuenta predeterminada de ${lista}. Asígnales otra cuenta primero.`, 409);
+    // Las salidas imputadas sí alimentan los reportes de costo: perderlas cambiaría los reportes.
+    const salidas = await prisma.movimiento.count({ where: { cuentaId: id, tipo: "SALIDA" } });
+    if (salidas > 0) {
+      throw new HttpError(`No se puede eliminar: tiene ${salidas} salidas (vales o entregas) imputadas a esta cuenta`, 409);
     }
     if (cuenta._count.transportistas > 0) {
       throw new HttpError("No se puede eliminar: hay transportistas que usan esta cuenta", 409);
     }
 
-    await prisma.cuentaContable.delete({ where: { id } });
+    // Las entradas de compra con cuenta no las usa ningún reporte; se desvinculan.
+    // Los productos que la tenían como predeterminada quedan sin cuenta (en el vale se elige una).
+    const [entradas] = await prisma.$transaction([
+      prisma.movimiento.updateMany({ where: { cuentaId: id, tipo: "ENTRADA" }, data: { cuentaId: null } }),
+      prisma.producto.updateMany({ where: { cuentaId: id }, data: { cuentaId: null } }),
+      prisma.cuentaContable.delete({ where: { id } }),
+    ]);
     await prisma.log.create({
       data: {
         usuarioId: userId,
         accion: "DELETE_CUENTA_CONTABLE",
-        data: { cuentaId: id },
+        data: {
+          cuentaId: id,
+          codigo: cuenta.codigoCompleto,
+          entradasDesvinculadas: entradas.count,
+          productosSinCuenta: cuenta.productos.map((p) => p.codigo),
+        },
       },
     });
 

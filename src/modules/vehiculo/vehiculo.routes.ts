@@ -7,7 +7,8 @@ import {
   updateVehiculoSchema,
   vehiculoQuerySchema,
 } from "./vehiculo.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
 const idSchema = z.object({
@@ -17,6 +18,9 @@ const idSchema = z.object({
 const router = Router();
 
 router.use(authenticate);
+// Leer requiere algún permiso de logística; cada acción, su permiso propio
+// (ver src/modules/roles/permisos.catalogo.ts).
+router.use(requireModulo("logistica"));
 
 router.get("/", validateQuery(vehiculoQuerySchema), vehiculoController.getAll);
 router.get("/:id", validateParams(idSchema), vehiculoController.getById);
@@ -24,14 +28,14 @@ router.get("/:id/historial-estados", validateParams(idSchema), vehiculoControlle
 
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.flota", "crear"),
   validate(createVehiculoSchema),
   vehiculoController.create,
 );
 
 router.put(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.flota", "editar"),
   validateParams(idSchema),
   validate(updateVehiculoSchema),
   vehiculoController.update,
@@ -39,7 +43,7 @@ router.put(
 
 router.patch(
   "/:id/estado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.flota", "editar"),
   validateParams(idSchema),
   validate(cambiarEstadoVehiculoSchema),
   vehiculoController.cambiarEstado,

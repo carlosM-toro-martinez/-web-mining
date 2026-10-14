@@ -637,3 +637,108 @@ export async function generarReporte(desde: Date, hasta: Date, employeeId?: numb
     empleados: resultados,
   };
 }
+
+// ─── ASIGNACIÓN DE HORARIOS EN LOTE ───────────────────────────────────────────
+
+// Todos los empleados activos con su horario vigente (o null). Alimenta la
+// pantalla de asignación en lote: filtrar "sin horario" y asignar varios a la vez.
+export async function listarEstadoAsignaciones() {
+  const empleados = await prisma.employee.findMany({
+    where: { activo: true },
+    orderBy: { nombre: "asc" },
+    select: {
+      id: true,
+      nombre: true,
+      documento: true,
+      cargo: true,
+      tipoPersonal: true,
+      horarios: {
+        where: { hasta: null },
+        orderBy: { desde: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          desde: true,
+          horario: { select: { id: true, nombre: true, horaEntrada: true, horaSalida: true } },
+        },
+      },
+    },
+  });
+
+  return empleados.map((e) => {
+    const vigente = e.horarios[0];
+    return {
+      id: e.id,
+      nombre: e.nombre,
+      documento: e.documento,
+      cargo: e.cargo,
+      tipoPersonal: e.tipoPersonal,
+      horarioActual: vigente
+        ? {
+            asignacionId: vigente.id,
+            horarioId: vigente.horario.id,
+            nombre: vigente.horario.nombre,
+            horaEntrada: vigente.horario.horaEntrada,
+            horaSalida: vigente.horario.horaSalida,
+            desde: vigente.desde,
+          }
+        : null,
+    };
+  });
+}
+
+// Asigna el mismo horario a varios empleados a la vez. Misma regla que
+// asignarHorario (cierra la asignación vigente con hasta = desde), pero todo en
+// una transacción y sin tocar a quien no corresponde: se omiten (y se informan)
+// los que ya tienen ese horario vigente o tienen una asignación que empieza
+// después de la fecha indicada (cerrarla dejaría un rango invertido).
+export async function asignarHorarioMasivo(employeeIds: number[], horarioId: number, desde: Date) {
+  const horario = await prisma.horario.findUnique({ where: { id: horarioId } });
+  if (!horario) throw new HttpError("Horario no encontrado", 404);
+  if (!horario.activo) throw new HttpError("El horario está inactivo", 400);
+
+  const ids = [...new Set(employeeIds)];
+  const empleados = await prisma.employee.findMany({
+    where: { id: { in: ids }, activo: true },
+    select: {
+      id: true,
+      nombre: true,
+      horarios: { where: { hasta: null }, select: { horarioId: true, desde: true } },
+    },
+  });
+  const porId = new Map(empleados.map((e) => [e.id, e]));
+
+  const omitidos: Array<{ employeeId: number; nombre: string | null; motivo: string }> = [];
+  const aAsignar: number[] = [];
+
+  for (const id of ids) {
+    const emp = porId.get(id);
+    if (!emp) {
+      omitidos.push({ employeeId: id, nombre: null, motivo: "No existe o está inactivo" });
+    } else if (emp.horarios.some((h) => h.horarioId === horarioId)) {
+      omitidos.push({ employeeId: id, nombre: emp.nombre, motivo: "Ya tiene este horario vigente" });
+    } else if (emp.horarios.some((h) => h.desde > desde)) {
+      omitidos.push({ employeeId: id, nombre: emp.nombre, motivo: "Tiene una asignación vigente que empieza después de la fecha indicada" });
+    } else {
+      aAsignar.push(id);
+    }
+  }
+
+  if (aAsignar.length > 0) {
+    await prisma.$transaction([
+      prisma.empleadoHorario.updateMany({
+        where: { employeeId: { in: aAsignar }, hasta: null },
+        data: { hasta: desde },
+      }),
+      prisma.empleadoHorario.createMany({
+        data: aAsignar.map((employeeId) => ({ employeeId, horarioId, desde })),
+      }),
+    ]);
+  }
+
+  return {
+    horario: { id: horario.id, nombre: horario.nombre },
+    asignados: aAsignar.length,
+    omitidos,
+  };
+}

@@ -5,6 +5,7 @@ import type { AusenciaTipo } from "@prisma/client";
 import {
   crearHorario, listarHorarios, obtenerHorario, actualizarHorario, eliminarHorario,
   asignarHorario, horarioActualEmpleado, historialHorariosEmpleado, eliminarAsignacion,
+  listarEstadoAsignaciones, asignarHorarioMasivo,
   crearAusencia, listarAusencias, actualizarAusencia, eliminarAusencia, crearAusenciasMasivas,
   generarReporte,
 } from "./personal.service.js";
@@ -34,7 +35,13 @@ const asignacionSchema = z.object({
   desde:      z.coerce.date(),
 });
 
-const AUSENCIA_TIPOS = ["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","ABANDONO","OTRO"] as const;
+const asignacionMasivaSchema = z.object({
+  employeeIds: z.array(z.coerce.number().int().positive()).min(1, "Selecciona al menos un empleado").max(500),
+  horarioId:   z.coerce.number().int().positive(),
+  desde:       z.coerce.date(),
+});
+
+const AUSENCIA_TIPOS =["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","ABANDONO","OTRO"] as const;
 
 const ausenciaSchema = z.object({
   employeeId: z.coerce.number().int().positive(),
@@ -96,6 +103,17 @@ export const personalController = {
     const parsed = asignacionSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
     const data = await asignarHorario(parsed.data.employeeId, parsed.data.horarioId, parsed.data.desde);
+    res.status(201).json({ success: true, data });
+  },
+
+  async estadoAsignaciones(_req: AuthRequest, res: Response) {
+    res.json({ success: true, data: await listarEstadoAsignaciones() });
+  },
+
+  async asignarHorarioMasivo(req: AuthRequest, res: Response) {
+    const parsed = asignacionMasivaSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    const data = await asignarHorarioMasivo(parsed.data.employeeIds, parsed.data.horarioId, parsed.data.desde);
     res.status(201).json({ success: true, data });
   },
 

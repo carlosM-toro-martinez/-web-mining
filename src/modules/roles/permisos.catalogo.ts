@@ -73,6 +73,64 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
     ],
   },
   {
+    clave: "logistica",
+    nombre: "Logística",
+    // Las pantallas de logística se consultan datos entre sí (flota lee
+    // lotes, reportes lee liquidaciones, etc.), así que LEER cualquier dato
+    // del módulo requiere solo tener algún permiso "logistica.*"
+    // (requireModulo). "Ver" de cada recurso controla qué pantallas y
+    // opciones del menú aparecen; las acciones sí son granulares.
+    recursos: [
+      {
+        clave: "logistica.parametros",
+        nombre: "Parámetros",
+        descripcion: "Municipios, tipos de mineral, ingenios, conceptos, alícuotas, tarifas y precios de combustible.",
+        acciones: [VER, CREAR, EDITAR, ELIMINAR],
+      },
+      {
+        clave: "logistica.flota",
+        nombre: "Flota",
+        descripcion: "Transportistas, vehículos y choferes. Editar incluye cambiar el estado de un vehículo.",
+        acciones: [VER, CREAR, EDITAR, ELIMINAR],
+      },
+      {
+        clave: "logistica.lotes",
+        nombre: "Lotes de despacho",
+        descripcion: "Editar incluye avanzar estado, pesaje, combustible entregado y transbordo.",
+        acciones: [
+          VER, CREAR, EDITAR,
+          { clave: "anular", nombre: "Anular" },
+          { clave: "importar", nombre: "Importar histórico" },
+        ],
+      },
+      {
+        clave: "logistica.f101",
+        nombre: "Formularios 101",
+        acciones: [
+          VER,
+          { clave: "gestionar", nombre: "Vincular / reutilizar / marcar petición" },
+          { clave: "anular", nombre: "Anular" },
+        ],
+      },
+      {
+        clave: "logistica.liquidaciones",
+        nombre: "Liquidaciones",
+        descripcion: "Editar = agregar/quitar conceptos. Eliminar = borrar un borrador.",
+        acciones: [
+          VER, CREAR, EDITAR,
+          { clave: "eliminar", nombre: "Eliminar borrador" },
+          { clave: "cerrar", nombre: "Cerrar" },
+          { clave: "anular", nombre: "Anular" },
+        ],
+      },
+      {
+        clave: "logistica.reportes",
+        nombre: "Reportes y cierre mensual",
+        acciones: [VER, { clave: "cerrar_mes", nombre: "Cierre mensual" }],
+      },
+    ],
+  },
+  {
     clave: "sistema",
     nombre: "Sistema",
     recursos: [
