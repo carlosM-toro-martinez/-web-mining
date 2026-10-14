@@ -21,7 +21,9 @@ import type {
 } from "./loteDespacho.types.js";
 import type { z } from "zod";
 import type { EstadoLoteDespacho } from "@prisma/client";
-import type { loteDespachoQuerySchema } from "./loteDespacho.schema.js";
+import { NIVELES_LOTE, type loteDespachoQuerySchema } from "./loteDespacho.schema.js";
+
+type NivelLote = (typeof NIVELES_LOTE)[number];
 
 type LoteDespachoQuery = z.infer<typeof loteDespachoQuerySchema>;
 
@@ -45,6 +47,14 @@ const TRANSICIONES_VALIDAS: Record<string, string[]> = {
   REGISTRADO: ["EN_TRANSITO"],
   EN_TRANSITO: ["EN_BALANZA"],
 };
+
+// "MOSA", "mosa", "0", "nivel 80" → el valor válido; null si no se reconoce.
+function nivelValido(nivel: string): NivelLote | null {
+  const limpio = nivel.trim().toUpperCase().replace(/\s+/g, " ");
+  if (["MOSA", "MOZA", "LA MOSA", "LA MOZA"].includes(limpio)) return "La Moza";
+  const numero = limpio.replace(/^NIVEL ?/, "");
+  return NIVELES_LOTE.find((n) => n === `Nivel ${numero}`) ?? null;
+}
 
 // Neto del pesaje con 3 decimales: el que escribió el usuario si lo corrigió
 // a mano (el ticket de balanza a veces difiere en algún decimal), o si no
@@ -125,6 +135,76 @@ export const loteDespachoService = {
 
   async getById(id: string) {
     return prisma.loteDespacho.findUnique({ where: { id }, include: INCLUDE_DETALLE });
+  },
+
+  // Vista previa de la corrección de niveles: qué se corrige solo (mal
+  // escrito), qué no se puede adivinar y qué conviene revisar a mano.
+  async revisarNiveles() {
+    const lotes = await prisma.loteDespacho.findMany({
+      select: {
+        id: true,
+        correlativo: true,
+        anio: true,
+        nivel: true,
+        estadoLote: true,
+        municipioOrigen: { select: { nombre: true } },
+      },
+      orderBy: [{ fechaDespachoReal: "asc" }, { createdAt: "asc" }],
+    });
+
+    const porCorregir: Array<{ id: string; correlativo: string; anio: number; nivelActual: string; nivelNuevo: NivelLote }> = [];
+    const noReconocidos: Array<{ id: string; correlativo: string; anio: number; nivelActual: string }> = [];
+    const sinNivel: Array<{ id: string; correlativo: string; anio: number }> = [];
+    const revisarMunicipio: Array<{ id: string; correlativo: string; anio: number; municipio: string; nivel: string }> = [];
+
+    for (const l of lotes) {
+      if (!l.nivel?.trim()) {
+        if (l.estadoLote !== "ANULADO") sinNivel.push({ id: l.id, correlativo: l.correlativo, anio: l.anio });
+        continue;
+      }
+      const valido = nivelValido(l.nivel);
+      if (!valido) {
+        noReconocidos.push({ id: l.id, correlativo: l.correlativo, anio: l.anio, nivelActual: l.nivel });
+        continue;
+      }
+      if (valido !== l.nivel) {
+        porCorregir.push({ id: l.id, correlativo: l.correlativo, anio: l.anio, nivelActual: l.nivel, nivelNuevo: valido });
+      }
+      // En los datos cargados La Moza es siempre de San Pablo y viceversa.
+      const esSanPablo = l.municipioOrigen.nombre.trim().toUpperCase() === "SAN PABLO";
+      if (l.estadoLote !== "ANULADO" && esSanPablo !== (valido === "La Moza")) {
+        revisarMunicipio.push({
+          id: l.id,
+          correlativo: l.correlativo,
+          anio: l.anio,
+          municipio: l.municipioOrigen.nombre,
+          nivel: valido,
+        });
+      }
+    }
+
+    return { totalLotes: lotes.length, porCorregir, noReconocidos, sinNivel, revisarMunicipio };
+  },
+
+  async normalizarNiveles(userId: number) {
+    const { porCorregir } = await this.revisarNiveles();
+    if (porCorregir.length === 0) return { corregidos: 0 };
+
+    await prisma.$transaction([
+      ...porCorregir.map((p) =>
+        prisma.loteDespacho.update({ where: { id: p.id }, data: { nivel: p.nivelNuevo } }),
+      ),
+      prisma.log.create({
+        data: {
+          usuarioId: userId,
+          accion: "NORMALIZAR_NIVELES_LOTE",
+          data: porCorregir.map((p) => ({ loteId: p.id, correlativo: p.correlativo, de: p.nivelActual, a: p.nivelNuevo })),
+        },
+      }),
+    ]);
+
+    logger.info({ userId, corregidos: porCorregir.length, action: "NORMALIZAR_NIVELES_LOTE" }, "Niveles de lotes normalizados");
+    return { corregidos: porCorregir.length };
   },
 
   // Edición de un lote ya creado — para corregir datos mal cargados (a mano
@@ -827,20 +907,67 @@ export const loteDespachoService = {
         let advertenciaMes = "";
         let fechaCorregida = new Date(Date.UTC(anio, mesOriginal - 1, diaOriginal));
         if (mesConocimiento && mesConocimiento >= 1 && mesConocimiento <= 12 && mesConocimiento !== mesOriginal) {
-          advertenciaMes = ` (ATENCIÓN: la fecha traía mes ${String(mesOriginal).padStart(2, "0")}, se corrigió a ${f.correlativoMes} según el Conocimiento)`;
-          fechaCorregida = new Date(Date.UTC(anio, mesConocimiento - 1, diaOriginal));
+          // "7/10/2026" leído por Excel como 10 de julio: el día real es el mes leído.
+          const cruzada = diaOriginal === mesConocimiento;
+          const diaReal = cruzada ? mesOriginal : diaOriginal;
+          advertenciaMes = cruzada
+            ? ""
+            : ` (ATENCIÓN: la fecha traía mes ${String(mesOriginal).padStart(2, "0")}, se corrigió a ${f.correlativoMes} según el Conocimiento)`;
+          fechaCorregida = new Date(Date.UTC(anio, mesConocimiento - 1, diaReal));
         }
 
         const correlativo = `${f.correlativoNumero}/${f.correlativoMes}`;
 
         // Un número anulado ("30/10 ANULADO") sigue consumido: no se recrea.
-        const existente = await prisma.loteDespacho.findFirst({
+        const coincidencias = await prisma.loteDespacho.findMany({
           where: {
             anio,
             OR: [{ correlativo }, { correlativo: { startsWith: `${correlativo} ANULADO` } }],
           },
         });
+        const existente = coincidencias.find((l) => l.estadoLote !== "ANULADO") ?? coincidencias[0];
         if (existente) {
+          // Lote ya cargado sin combustible y el Excel sí lo trae: se completa
+          // (nunca se pisa un combustible ya registrado).
+          const faltaCombustible =
+            Boolean(f.combustibleLitros) &&
+            !["ANULADO", "LIQUIDADO"].includes(existente.estadoLote) &&
+            existente.incluyeCombustible === "SIN_COMBUSTIBLE" &&
+            existente.combustibleAsignadoLitros === null;
+          if (faltaCombustible) {
+            const enBorrador = await prisma.liquidacionDetalleLote.findFirst({
+              where: { loteId: existente.id, liquidacion: { estado: "BORRADOR" } },
+            });
+            if (enBorrador) {
+              resultados.push({
+                fila: f.fila,
+                correlativo,
+                accion: "omitido",
+                mensaje: `Le falta el combustible (${f.combustibleLitros} L) pero está en una liquidación en borrador: complétalo con "Editar"`,
+              });
+            } else {
+              await prisma.$transaction([
+                prisma.loteDespacho.update({
+                  where: { id: existente.id },
+                  data: { incluyeCombustible: "CON_COMBUSTIBLE", combustibleAsignadoLitros: f.combustibleLitros },
+                }),
+                prisma.log.create({
+                  data: {
+                    usuarioId: userId,
+                    accion: "IMPORT_COMPLETAR_COMBUSTIBLE",
+                    data: { loteId: existente.id, correlativo, litros: f.combustibleLitros, fila: f.fila },
+                  },
+                }),
+              ]);
+              resultados.push({
+                fila: f.fila,
+                correlativo,
+                accion: "actualizado",
+                mensaje: `Ya existía: se le agregó el combustible (${f.combustibleLitros} L)`,
+              });
+            }
+            continue;
+          }
           resultados.push({
             fila: f.fila,
             correlativo,
@@ -1010,14 +1137,15 @@ export const loteDespachoService = {
     }
 
     const creadas = resultados.filter((r) => r.accion === "creado").length;
+    const actualizadas = resultados.filter((r) => r.accion === "actualizado").length;
     const omitidas = resultados.filter((r) => r.accion === "omitido").length;
     const errores = resultados.filter((r) => r.accion === "error").length;
 
     logger.info(
-      { userId, creadas, omitidas, errores, action: "IMPORT_LOTE_HISTORICO_EXCEL" },
+      { userId, creadas, actualizadas, omitidas, errores, action: "IMPORT_LOTE_HISTORICO_EXCEL" },
       "Importación histórica de lotes desde Excel",
     );
 
-    return { procesadas: filas.length, creadas, omitidas, errores, resultados };
+    return { procesadas: filas.length, creadas, actualizadas, omitidas, errores, resultados };
   },
 };

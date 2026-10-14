@@ -13,7 +13,7 @@ import {
   transbordarLoteSchema,
   updateLoteDespachoSchema,
 } from "./loteDespacho.schema.js";
-import { authenticate } from "../../middleware/auth.middleware.js";
+import { authenticate, authorize } from "../../middleware/auth.middleware.js";
 import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
@@ -48,6 +48,10 @@ router.post(
   upload.single("file"),
   loteDespachoController.importarHistorico,
 );
+
+// Corrección masiva de niveles mal escritos: solo ADMIN.
+router.get("/niveles/revision", authorize("ADMIN"), loteDespachoController.revisarNiveles);
+router.post("/niveles/normalizar", authorize("ADMIN"), loteDespachoController.normalizarNiveles);
 
 router.get("/", validateQuery(loteDespachoQuerySchema), loteDespachoController.getAll);
 router.get("/:id", validateParams(idSchema), loteDespachoController.getById);

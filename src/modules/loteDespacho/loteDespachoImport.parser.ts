@@ -49,11 +49,9 @@ function parseTextoFecha(texto: string): Date | null {
   return null;
 }
 
-// Las celdas de fecha REALES de Excel (no texto) se leen por su valor
-// serial con cellDates:true — ese número es inequívoco (no depende de
-// ningún formato ni locale), así que acá no hace falta adivinar nada. Si
-// el dato de origen está mal (alguien tipeó la fecha equivocada), seguirá
-// mal — pero eso ya no es algo que un parser pueda "arreglar" adivinando.
+// Las celdas de fecha REALES de Excel se leen por su serial (cellDates). Si
+// Excel interpretó "7/10/2026" como 10 de julio (día y mes cruzados), lo
+// corrige el servicio comparando contra el mes del Conocimiento.
 function parseFecha(raw: unknown): Date | null {
   if (raw instanceof Date) return new Date(Date.UTC(raw.getFullYear(), raw.getMonth(), raw.getDate()));
   if (typeof raw === "string") return parseTextoFecha(raw);
@@ -127,11 +125,11 @@ export function parseCuadroEnvioExcel(buffer: Buffer): FilaCuadroEnvio[] {
   const filas = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
 
   const indiceEncabezado = filas.findIndex(
-    (fila) => fila.some((c) => norm(c) === "FECHA") && fila.some((c) => norm(c) === "CONOCIMIENTO"),
+    (fila) => fila.some((c) => norm(c) === "CONOCIMIENTO") && fila.some((c) => norm(c) === "PLACA"),
   );
   if (indiceEncabezado === -1) {
     throw new Error(
-      'No se encontró la fila de encabezados (se esperaba una fila con "FECHA" y "CONOCIMIENTO"). Verifica que sea el Cuadro de Envío original.',
+      'No se encontró la fila de encabezados (se esperaba una fila con "CONOCIMIENTO" y "PLACA"). Verifica que sea el Cuadro de Envío original.',
     );
   }
 
@@ -153,6 +151,14 @@ export function parseCuadroEnvioExcel(buffer: Buffer): FilaCuadroEnvio[] {
     placa: buscarColumna(headerRow, usadas, (n) => n === "PLACA"),
     combustible: buscarColumna(headerRow, usadas, (n) => n.startsWith("COMBUSTIBLE")),
   };
+
+  // El cuadro real de la cliente deja sin título la columna de fecha (la de
+  // antes de CONOCIMIENTO) y titula "." la de combustible (la de después de
+  // "Lote"): se toman por posición cuando falta el título.
+  const sinTitulo = (i: number) => i >= 0 && ["", "."].includes(norm(headerRow[i]));
+  if (idx.fecha === -1 && sinTitulo(idx.conocimiento - 1)) idx.fecha = idx.conocimiento - 1;
+  const idxLote = headerRow.findIndex((c) => norm(c) === "LOTE");
+  if (idx.combustible === -1 && idxLote >= 0 && sinTitulo(idxLote + 1)) idx.combustible = idxLote + 1;
 
   const faltantes = (["fecha", "conocimiento", "propietario", "chofer", "placa"] as const).filter(
     (clave) => idx[clave] === -1,

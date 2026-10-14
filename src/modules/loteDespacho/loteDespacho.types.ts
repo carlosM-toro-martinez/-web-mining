@@ -22,13 +22,14 @@ export type TransbordarLoteDTO = z.infer<typeof transbordarLoteSchema>;
 export interface FilaImportLoteResultado {
   fila: number;
   correlativo: string | null;
-  accion: "creado" | "omitido" | "error";
+  accion: "creado" | "actualizado" | "omitido" | "error";
   mensaje: string;
 }
 
 export interface ResultadoImportacionLotes {
   procesadas: number;
   creadas: number;
+  actualizadas: number;
   omitidas: number;
   errores: number;
   resultados: FilaImportLoteResultado[];

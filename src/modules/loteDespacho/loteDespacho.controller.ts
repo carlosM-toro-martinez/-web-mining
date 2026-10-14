@@ -75,6 +75,22 @@ export const loteDespachoController = {
     }
   },
 
+  async revisarNiveles(_req: AuthRequest, res: Response) {
+    try {
+      res.json({ success: true, data: await loteDespachoService.revisarNiveles() });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async normalizarNiveles(req: AuthRequest, res: Response) {
+    try {
+      res.json({ success: true, data: await loteDespachoService.normalizarNiveles(req.user!.id) });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async corregirEstado(req: AuthRequest, res: Response) {
     try {
       const lote = await loteDespachoService.corregirEstado(req.params.id as string, req.body, req.user!.id);
