@@ -4,6 +4,7 @@ import { HttpError } from "../../errors/http.error.js";
 import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBancariaCaja.service.js";
 import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
 import { movimientoFondoCajaService } from "../movimientoFondoCaja/movimientoFondoCaja.service.js";
+import { validarNoAnteriorAlCuadre } from "../cuadreSaldo/cuadreSaldo.service.js";
 import { parseCajaChicaExcel, type CategoriaRendicionGastoTexto } from "./gastoCajaImport.parser.js";
 import type {
   AnularGastoCajaDTO,
@@ -648,6 +649,10 @@ export const gastoCajaService = {
     if (data.partidaPresupuestoId && !partidaPresupuesto) {
       throw new HttpError("Partida de presupuesto no encontrada", 404);
     }
+    await validarNoAnteriorAlCuadre(
+      { cajaId: data.origen === "CAJA" ? data.cajaId : null, cuentaBancariaId: data.origen === "BANCO" ? data.cuentaBancariaCajaId : null, fecha: data.fecha },
+      "registrar un gasto",
+    );
 
     // No dejar registrar un gasto por más de lo que realmente hay disponible
     // — ni en la caja física, ni en la cuenta bancaria cuando el pago se
@@ -741,6 +746,15 @@ export const gastoCajaService = {
     if (existente.estado === "ANULADO") throw new HttpError("No se puede editar un gasto anulado", 409);
     if (existente.estado === "RENDIDO") {
       throw new HttpError("No se puede editar un gasto ya incluido en una rendición cerrada", 409);
+    }
+    // Clasificar un gasto viejo se puede; cambiar lo que mueve el saldo, no.
+    const cambiaSaldo =
+      (data.montoTotal !== undefined && data.montoTotal !== Number(existente.montoTotal)) ||
+      (data.fecha !== undefined && new Date(data.fecha).getTime() !== existente.fecha.getTime());
+    if (cambiaSaldo) {
+      const destino = { cajaId: existente.cajaId, cuentaBancariaId: existente.cuentaBancariaCajaId };
+      await validarNoAnteriorAlCuadre({ ...destino, fecha: existente.fecha }, "cambiar el monto o la fecha de un gasto");
+      if (data.fecha) await validarNoAnteriorAlCuadre({ ...destino, fecha: new Date(data.fecha) }, "mover un gasto");
     }
 
     const merged = {
@@ -883,6 +897,10 @@ export const gastoCajaService = {
       if (gasto.estado === "RENDIDO") {
         throw new HttpError("No se puede anular un gasto ya incluido en una rendición cerrada", 409);
       }
+      await validarNoAnteriorAlCuadre(
+        { cajaId: gasto.cajaId, cuentaBancariaId: gasto.cuentaBancariaCajaId, fecha: gasto.fecha },
+        "anular un gasto",
+      );
 
       const actualizado = await tx.gastoCaja.update({ where: { id }, data: { estado: "ANULADO" } });
 

@@ -57,6 +57,7 @@ import cuentaBancariaCajaRoutes from "../modules/cuentaBancariaCaja/cuentaBancar
 import presupuestoCajaRoutes from "../modules/presupuestoCaja/presupuestoCaja.routes.js";
 import partidaPresupuestoCajaRoutes from "../modules/partidaPresupuestoCaja/partidaPresupuestoCaja.routes.js";
 import movimientoBancoCajaRoutes from "../modules/movimientoBancoCaja/movimientoBancoCaja.routes.js";
+import cuadreSaldoRoutes from "../modules/cuadreSaldo/cuadreSaldo.routes.js";
 
 const router = Router();
 
@@ -133,5 +134,6 @@ router.use("/cuentas-bancarias-caja", cuentaBancariaCajaRoutes);
 router.use("/presupuestos-caja", presupuestoCajaRoutes);
 router.use("/partidas-presupuesto-caja", partidaPresupuestoCajaRoutes);
 router.use("/movimientos-banco-caja", movimientoBancoCajaRoutes);
+router.use("/cuadres-saldo", cuadreSaldoRoutes);
 
 export default router;

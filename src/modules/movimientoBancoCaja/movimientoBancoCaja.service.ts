@@ -2,6 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBancariaCaja.service.js";
+import { validarNoAnteriorAlCuadre } from "../cuadreSaldo/cuadreSaldo.service.js";
 import type { CreateMovimientoBancoCajaDTO, VincularPresupuestoDTO } from "./movimientoBancoCaja.types.js";
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod";
@@ -54,6 +55,10 @@ export const movimientoBancoCajaService = {
     ]);
     if (!cuentaBancaria) throw new HttpError("Cuenta bancaria no encontrada", 404);
     if (data.cajaId && !caja) throw new HttpError("Caja chica no encontrada", 404);
+    await validarNoAnteriorAlCuadre(
+      { cuentaBancariaId: data.cuentaBancariaId, fecha: data.fecha },
+      "registrar un movimiento del banco",
+    );
 
     if (data.moneda !== cuentaBancaria.monedaBase) {
       throw new HttpError(

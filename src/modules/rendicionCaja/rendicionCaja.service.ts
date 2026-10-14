@@ -2,6 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { generarFolioRendicionCaja } from "../../utils/correlativo.js";
+import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
 import type { AnularRendicionCajaDTO, CreateRendicionCajaDTO } from "./rendicionCaja.types.js";
 import type { z } from "zod";
 import type { rendicionCajaQuerySchema } from "./rendicionCaja.schema.js";
@@ -13,6 +14,13 @@ const INCLUDE_DETALLE = {
   detalleGastos: { include: { gasto: true } },
   anulacion: true,
 } as const;
+
+// Saldo de la caja al empezar el período: el mismo que muestra Saldos
+// (última rendición cerrada + todo lo registrado después, ajustes por
+// cuadre incluidos), así lo no rendido entre medio no se pierde.
+async function saldoAlEmpezar(cajaId: number, periodoDesde: Date) {
+  return (await reportesCajaChicaService.getEstadoCuenta(cajaId, periodoDesde)).saldoInicial;
+}
 
 export const rendicionCajaService = {
   async getAll(query: RendicionCajaQuery) {
@@ -39,7 +47,7 @@ export const rendicionCajaService = {
     const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
 
-    const [gastosElegibles, fondos, ultimaCerrada] = await Promise.all([
+    const [gastosElegibles, fondos, saldoAnterior] = await Promise.all([
       prisma.gastoCaja.findMany({
         where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
         orderBy: { fecha: "asc" },
@@ -48,10 +56,7 @@ export const rendicionCajaService = {
         where: { cajaId, fecha: { gte: periodoDesde, lte: periodoHasta } },
         _sum: { monto: true },
       }),
-      prisma.rendicionCaja.findFirst({
-        where: { cajaId, estado: "CERRADO" },
-        orderBy: { periodoHasta: "desc" },
-      }),
+      saldoAlEmpezar(cajaId, periodoDesde),
     ]);
 
     // Ver nota en create(): solo las remesas cuentan como fondos de la caja.
@@ -63,7 +68,6 @@ export const rendicionCajaService = {
       0,
     );
     const totalCreditoFiscal = gastosElegibles.reduce((acc, g) => acc + Number(g.montoCreditoFiscalIva), 0);
-    const saldoAnterior = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const saldoNuevo = saldoAnterior + totalFondos - totalGastos;
 
     return {
@@ -98,15 +102,12 @@ export const rendicionCajaService = {
       throw new HttpError("No hay gastos registrados de esta caja en el rango de fechas indicado", 400);
     }
 
-    const [fondos, ultimaCerrada] = await Promise.all([
+    const [fondos, saldoAnterior] = await Promise.all([
       prisma.movimientoFondoCaja.aggregate({
         where: { cajaId: data.cajaId, fecha: { gte: data.periodoDesde, lte: data.periodoHasta } },
         _sum: { monto: true },
       }),
-      prisma.rendicionCaja.findFirst({
-        where: { cajaId: data.cajaId, estado: "CERRADO" },
-        orderBy: { periodoHasta: "desc" },
-      }),
+      saldoAlEmpezar(data.cajaId, data.periodoDesde),
     ]);
 
     // Solo las remesas (CH-xxx) son fondos de la caja. Los traspasos del
@@ -121,7 +122,6 @@ export const rendicionCajaService = {
       0,
     );
     const totalCreditoFiscal = gastosElegibles.reduce((acc, g) => acc + Number(g.montoCreditoFiscalIva), 0);
-    const saldoAnterior = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const saldoNuevo = saldoAnterior + totalFondos - totalGastos;
 
     const rendicion = await prisma.$transaction(async (tx) => {

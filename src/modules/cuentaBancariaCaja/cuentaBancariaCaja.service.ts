@@ -27,23 +27,28 @@ async function conSaldo<T extends { id: number; saldoInicial: unknown }>(cuentas
     }),
   ]);
 
-  const totalesPorCuenta = new Map<number, { ingresos: number; salidas: number; gastos: number }>();
+  type Totales = { ingresos: number; salidas: number; gastos: number; ajustes: number };
+  const vacio = (): Totales => ({ ingresos: 0, salidas: 0, gastos: 0, ajustes: 0 });
+  const totalesPorCuenta = new Map<number, Totales>();
   for (const m of movimientos) {
-    const actual = totalesPorCuenta.get(m.cuentaBancariaId) ?? { ingresos: 0, salidas: 0, gastos: 0 };
-    if (m.tipo === "INGRESO") actual.ingresos += Number(m._sum.monto ?? 0);
-    else actual.salidas += Number(m._sum.monto ?? 0);
+    const actual = totalesPorCuenta.get(m.cuentaBancariaId) ?? vacio();
+    const monto = Number(m._sum.monto ?? 0);
+    if (m.tipo === "INGRESO") actual.ingresos += monto;
+    else if (m.tipo === "AJUSTE_CUADRE") actual.ajustes += monto; // con signo
+    else actual.salidas += monto;
     totalesPorCuenta.set(m.cuentaBancariaId, actual);
   }
   for (const g of gastosDirectos) {
     if (g.cuentaBancariaCajaId === null) continue;
-    const actual = totalesPorCuenta.get(g.cuentaBancariaCajaId) ?? { ingresos: 0, salidas: 0, gastos: 0 };
+    const actual = totalesPorCuenta.get(g.cuentaBancariaCajaId) ?? vacio();
     actual.gastos += Number(g._sum.montoTotal ?? 0);
     totalesPorCuenta.set(g.cuentaBancariaCajaId, actual);
   }
 
   return cuentas.map((cuenta) => {
-    const totales = totalesPorCuenta.get(cuenta.id) ?? { ingresos: 0, salidas: 0, gastos: 0 };
-    const saldoActual = Number(cuenta.saldoInicial) + totales.ingresos - totales.salidas - totales.gastos;
+    const totales = totalesPorCuenta.get(cuenta.id) ?? vacio();
+    const saldoActual =
+      Number(cuenta.saldoInicial) + totales.ingresos + totales.ajustes - totales.salidas - totales.gastos;
     return { ...cuenta, totalIngresos: totales.ingresos, totalSalidas: totales.salidas, saldoActual };
   });
 }

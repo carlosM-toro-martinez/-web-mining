@@ -61,7 +61,7 @@ export async function getPosiblesDuplicados(query: {
       include: { caja: true, cuentaBancariaCaja: true },
     }),
     prisma.movimientoFondoCaja.findMany({
-      where: { ...(query.cajaId ? { cajaId: query.cajaId } : {}), ...rango },
+      where: { tipo: { not: "AJUSTE_CUADRE" }, ...(query.cajaId ? { cajaId: query.cajaId } : {}), ...rango },
       include: { caja: true },
     }),
     query.cajaId

@@ -51,6 +51,7 @@ model User {
   movimientosRecibidos       Movimiento[]             @relation("UsuarioRecibido")
   movimientosBancoCaja       MovimientoBancoCaja[]
   movimientosFondoCaja       MovimientoFondoCaja[]
+  cuadresSaldoCaja           CuadreSaldoCaja[]
   pesajesIngenio             PesajeIngenio[]
   registrosHidricos          RegistroHidrico[]
   registrosResiduo           RegistroResiduo[]
@@ -953,6 +954,7 @@ model CajaChica {
   movimientosFondo   MovimientoFondoCaja[]
   presupuestos       PresupuestoCaja[]
   rendiciones        RendicionCaja[]
+  cuadres            CuadreSaldoCaja[]
 }
 
 model CentroCostoCaja {
@@ -1080,6 +1082,7 @@ model MovimientoFondoCaja {
   createdAt  DateTime                @default(now())
   caja       CajaChica               @relation(fields: [cajaId], references: [id])
   usuario    User                    @relation(fields: [usuarioId], references: [id])
+  cuadre     CuadreSaldoCaja?
 
   @@index([cajaId])
 }
@@ -1147,6 +1150,7 @@ model CuentaBancariaCaja {
   cuentaContableCaja   CuentaContableCaja?   @relation(fields: [cuentaContableCajaId], references: [id])
   gastos       GastoCaja[]
   movimientos  MovimientoBancoCaja[]
+  cuadres      CuadreSaldoCaja[]
 }
 
 model PresupuestoCaja {
@@ -1204,9 +1208,37 @@ model MovimientoBancoCaja {
   cuentaBancaria        CuentaBancariaCaja  @relation(fields: [cuentaBancariaId], references: [id])
   usuario               User                @relation(fields: [usuarioId], references: [id])
   presupuestosAsignados PresupuestoCaja?
+  cuadre                CuadreSaldoCaja?
 
   @@index([cajaId])
   @@index([cuentaBancariaId])
+}
+
+// Saldo real (contado o del extracto) de una caja o una cuenta bancaria al
+// empezar el día fechaCorte. La diferencia con lo que calculaba el sistema
+// se registra como un movimiento de ajuste, así todos los saldos parten de
+// ese monto real; nada anterior a fechaCorte se puede cambiar después.
+model CuadreSaldoCaja {
+  id                 String               @id @default(uuid())
+  cajaId             Int?
+  cuentaBancariaId   Int?
+  fechaCorte         DateTime
+  saldoSistema       Decimal              @db.Decimal(14, 2)
+  saldoReal          Decimal              @db.Decimal(14, 2)
+  diferencia         Decimal              @db.Decimal(14, 2)
+  motivo             String
+  movimientoFondoId  String?              @unique
+  movimientoBancoId  String?              @unique
+  usuarioId          Int
+  createdAt          DateTime             @default(now())
+  caja               CajaChica?           @relation(fields: [cajaId], references: [id])
+  cuentaBancaria     CuentaBancariaCaja?  @relation(fields: [cuentaBancariaId], references: [id])
+  movimientoFondo    MovimientoFondoCaja? @relation(fields: [movimientoFondoId], references: [id])
+  movimientoBanco    MovimientoBancoCaja? @relation(fields: [movimientoBancoId], references: [id])
+  usuario            User                 @relation(fields: [usuarioId], references: [id])
+
+  @@index([cajaId, fechaCorte])
+  @@index([cuentaBancariaId, fechaCorte])
 }
 
 enum MetodoCosteo {
@@ -1465,6 +1497,7 @@ enum TipoMovimientoFondoCaja {
   REMESA_COMPRAS_GENERAL
   REMESA_OTROS
   REPOSICION
+  AJUSTE_CUADRE
 }
 
 enum EstadoRendicionCaja {
@@ -1476,6 +1509,7 @@ enum EstadoRendicionCaja {
 enum TipoMovimientoBanco {
   INGRESO
   SALIDA_A_CAJA
+  AJUSTE_CUADRE
 }
 
 enum FormaPagoBanco {

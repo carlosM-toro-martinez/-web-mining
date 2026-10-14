@@ -18,7 +18,11 @@ export const createMovimientoFondoCajaSchema = z
     fecha: z.coerce.date(),
     referencia: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => data.tipo !== "AJUSTE_CUADRE", {
+    message: "Los ajustes solo se crean con el cuadre de saldo",
+    path: ["tipo"],
+  });
 
 export const movimientoFondoCajaQuerySchema = z
   .object({

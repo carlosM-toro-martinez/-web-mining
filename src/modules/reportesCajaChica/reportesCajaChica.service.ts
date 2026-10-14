@@ -475,13 +475,14 @@ export const reportesCajaChicaService = {
     };
 
     const movimientos: Movimiento[] = [
+      // Un ajuste por cuadre puede ser negativo (había menos de lo calculado).
       ...fondos.map((f) => ({
         fecha: f.fecha,
         tipo: "FONDO" as const,
         detalle: f.tipo,
         referencia: f.referencia,
-        ingreso: Number(f.monto),
-        egreso: 0,
+        ingreso: Math.max(Number(f.monto), 0),
+        egreso: Math.max(-Number(f.monto), 0),
       })),
       ...gastos.map((g) => ({
         fecha: g.fecha,
@@ -558,17 +559,23 @@ export const reportesCajaChicaService = {
     };
 
     const movimientos: Movimiento[] = [
-      ...movimientosBanco.map((m) => ({
-        fecha: m.fecha,
-        tipo: "FONDO" as const,
-        detalle:
-          m.tipo === "INGRESO"
-            ? `Ingreso · ${m.formaPago}`
-            : `Salida hacia ${m.caja?.nombre ?? "caja"} · ${m.formaPago}`,
-        referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
-        ingreso: m.tipo === "INGRESO" ? Number(m.monto) : 0,
-        egreso: m.tipo === "SALIDA_A_CAJA" ? Number(m.monto) : 0,
-      })),
+      ...movimientosBanco.map((m) => {
+        const monto = Number(m.monto);
+        const efecto = m.tipo === "SALIDA_A_CAJA" ? -monto : monto; // AJUSTE_CUADRE ya viene con signo
+        return {
+          fecha: m.fecha,
+          tipo: "FONDO" as const,
+          detalle:
+            m.tipo === "INGRESO"
+              ? `Ingreso · ${m.formaPago}`
+              : m.tipo === "AJUSTE_CUADRE"
+                ? "Ajuste por cuadre de saldo"
+                : `Salida hacia ${m.caja?.nombre ?? "caja"} · ${m.formaPago}`,
+          referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
+          ingreso: Math.max(efecto, 0),
+          egreso: Math.max(-efecto, 0),
+        };
+      }),
       ...gastosDirectos.map((g) => ({
         fecha: g.fecha,
         tipo: "GASTO" as const,
@@ -638,14 +645,11 @@ export const reportesCajaChicaService = {
     const caja = await prisma.cajaChica.findUnique({ where: { id: cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
 
-    const [gastos, ultimaCerrada] = await Promise.all([
+    const [gastos, estadoAlEmpezar] = await Promise.all([
       prisma.gastoCaja.findMany({
         where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
       }),
-      prisma.rendicionCaja.findFirst({
-        where: { cajaId, estado: "CERRADO" },
-        orderBy: { periodoHasta: "desc" },
-      }),
+      reportesCajaChicaService.getEstadoCuenta(cajaId, periodoDesde),
     ]);
 
     return armarReporteMensual({
@@ -655,7 +659,7 @@ export const reportesCajaChicaService = {
       periodoHasta,
       tipoCambio: 0,
       gastos,
-      saldoAnterior: ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial),
+      saldoAnterior: estadoAlEmpezar.saldoInicial,
     });
   },
 

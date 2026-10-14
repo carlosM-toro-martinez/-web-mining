@@ -116,6 +116,8 @@ export const cajaChicaService = {
       const anulacionesGasto = await tx.anulacionGastoCaja.deleteMany({});
       const rendiciones = await tx.rendicionCaja.deleteMany({});
       const gastos = await tx.gastoCaja.deleteMany({});
+      // Un cuadre que sobreviva seguiría bloqueando fechas sin movimientos detrás.
+      const cuadres = await tx.cuadreSaldoCaja.deleteMany({});
       const movimientosBanco = await tx.movimientoBancoCaja.deleteMany({});
       const movimientosFondo = await tx.movimientoFondoCaja.deleteMany({});
       const partidas = await tx.partidaPresupuestoCaja.deleteMany({});
@@ -129,6 +131,7 @@ export const cajaChicaService = {
         anulacionesGasto: anulacionesGasto.count,
         rendiciones: rendiciones.count,
         gastos: gastos.count,
+        cuadres: cuadres.count,
         movimientosBanco: movimientosBanco.count,
         movimientosFondo: movimientosFondo.count,
         partidas: partidas.count,

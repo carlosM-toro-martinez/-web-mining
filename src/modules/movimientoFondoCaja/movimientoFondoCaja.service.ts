@@ -4,6 +4,7 @@ import type { z } from "zod";
 import type { movimientoFondoCajaQuerySchema } from "./movimientoFondoCaja.schema.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { validarNoAnteriorAlCuadre } from "../cuadreSaldo/cuadreSaldo.service.js";
 
 type MovimientoFondoCajaQuery = z.infer<typeof movimientoFondoCajaQuerySchema>;
 
@@ -27,6 +28,7 @@ export const movimientoFondoCajaService = {
   async create(data: CreateMovimientoFondoCajaDTO, userId: number) {
     const caja = await prisma.cajaChica.findUnique({ where: { id: data.cajaId } });
     if (!caja) throw new HttpError("Caja chica no encontrada", 404);
+    await validarNoAnteriorAlCuadre({ cajaId: data.cajaId, fecha: data.fecha }, "registrar dinero en la caja");
 
     const movimiento = await prisma.movimientoFondoCaja.create({
       data: {
