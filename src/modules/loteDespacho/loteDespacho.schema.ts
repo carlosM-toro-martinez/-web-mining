@@ -5,9 +5,7 @@ export const tipoCombustibleViajeSchema = z.enum(["CON_COMBUSTIBLE", "SIN_COMBUS
 // Únicos valores válidos: el Cuadro Mensual suma el peso por nivel con
 // coincidencia exacta, así que "MOSA" o "0" quedaban fuera de toda columna.
 export const NIVELES_LOTE = ["La Moza", "Nivel 0", "Nivel 40", "Nivel 80"] as const;
-export const nivelLoteSchema = z.enum(NIVELES_LOTE, {
-  message: `El nivel debe ser uno de: ${NIVELES_LOTE.join(", ")}`,
-});
+export const nivelLoteSchema = z.enum(NIVELES_LOTE);
 
 export const estadoLoteDespachoSchema = z.enum([
   "REGISTRADO",

@@ -1,14 +1,19 @@
 import type { Request, Response, NextFunction } from "express";
 import type { ZodTypeAny } from "zod";
+import { mensajeDeValidacion, validarConMensaje } from "../utils/mensajeValidacion.js";
 
+// `error` lleva el motivo real (campo + qué está mal): es lo que muestra el
+// frontend. `details` queda para depurar.
 export const validate =
   (schema: ZodTypeAny) => (req: Request, res: Response, next: NextFunction) => {
-    const result = schema.safeParse(req.body);
+    const result = validarConMensaje(schema, req.body);
 
     if (!result.success) {
-      console.log("❌ VALIDATION FAILED:", result.error.flatten());
+      const mensaje = mensajeDeValidacion(result.error);
+      console.log("❌ VALIDATION FAILED:", req.method, req.originalUrl, mensaje);
       return res.status(400).json({
-        error: "Validation error",
+        success: false,
+        error: mensaje,
         details: result.error.flatten(),
       });
     }
@@ -22,22 +27,22 @@ export const validate =
 // extrae aquí para no seguir copiándolo módulo por módulo).
 export const validateQuery =
   (schema: ZodTypeAny) => (req: Request, res: Response, next: NextFunction) => {
-    const result = schema.safeParse(req.query);
+    const result = validarConMensaje(schema, req.query);
     if (!result.success) {
       return res
         .status(400)
-        .json({ success: false, error: "Query validation error", details: result.error.flatten() });
+        .json({ success: false, error: mensajeDeValidacion(result.error), details: result.error.flatten() });
     }
     next();
   };
 
 export const validateParams =
   (schema: ZodTypeAny) => (req: Request, res: Response, next: NextFunction) => {
-    const result = schema.safeParse(req.params);
+    const result = validarConMensaje(schema, req.params);
     if (!result.success) {
       return res
         .status(400)
-        .json({ success: false, error: "Params validation error", details: result.error.flatten() });
+        .json({ success: false, error: mensajeDeValidacion(result.error), details: result.error.flatten() });
     }
     next();
   };
