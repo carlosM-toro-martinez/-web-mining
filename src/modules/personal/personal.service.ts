@@ -1,6 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import { HttpError } from "../../errors/http.error.js";
-import type { AusenciaTipo } from "@prisma/client";
+import { Prisma, type AusenciaTipo } from "@prisma/client";
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
 
@@ -132,10 +132,17 @@ export async function crearHorario(data: {
 }
 
 export async function listarHorarios() {
-  return prisma.horario.findMany({
-    orderBy: { nombre: "asc" },
-    include: { _count: { select: { asignaciones: { where: { hasta: null } } } } },
-  });
+  const [horarios, totales] = await Promise.all([
+    prisma.horario.findMany({
+      orderBy: { nombre: "asc" },
+      include: { _count: { select: { asignaciones: { where: { hasta: null } } } } },
+    }),
+    prisma.empleadoHorario.groupBy({ by: ["horarioId"], _count: { _all: true } }),
+  ]);
+  const totalPorHorario = new Map(totales.map((t) => [t.horarioId, t._count._all]));
+  // _count.asignaciones = asignaciones vigentes (trabajadores que lo usan hoy);
+  // totalAsignaciones = vigentes + historial (asignaciones ya cerradas).
+  return horarios.map((h) => ({ ...h, totalAsignaciones: totalPorHorario.get(h.id) ?? 0 }));
 }
 
 export async function obtenerHorario(id: number) {
@@ -182,10 +189,91 @@ export async function actualizarHorario(id: number, data: {
 }
 
 export async function eliminarHorario(id: number) {
-  const asignados = await prisma.empleadoHorario.count({ where: { horarioId: id, hasta: null } });
-  if (asignados > 0)
-    throw new HttpError(`No se puede eliminar: ${asignados} empleado(s) usan este horario actualmente`, 409);
+  const existe = await prisma.horario.findUnique({ where: { id }, select: { id: true } });
+  if (!existe) throw new HttpError("Horario no encontrado", 404);
+
+  const [vigentes, total] = await Promise.all([
+    prisma.empleadoHorario.count({ where: { horarioId: id, hasta: null } }),
+    prisma.empleadoHorario.count({ where: { horarioId: id } }),
+  ]);
+  if (vigentes > 0)
+    throw new HttpError(
+      `No se puede eliminar: ${vigentes} trabajador(es) usan este horario actualmente. Quítales o cámbiales el horario primero.`,
+      409,
+    );
+  if (total > 0)
+    throw new HttpError(
+      `No se puede eliminar: tiene ${total} asignación(es) antigua(s) en el historial de trabajadores que ya cambiaron de horario. Elimínalo con la opción de incluir el historial.`,
+      409,
+    );
   await prisma.horario.delete({ where: { id } });
+}
+
+// Elimina varios horarios a la vez. Un horario con trabajadores asignados HOY
+// nunca se elimina (hay que reasignarlos o quitarles el horario antes). Uno que
+// solo conserva historial (asignaciones cerradas) se elimina únicamente si
+// incluirHistorial = true, y en ese caso se borran también esas asignaciones.
+// Devuelve qué se eliminó y qué no (con el motivo), sin fallar por completo
+// cuando solo algunos están bloqueados.
+export async function eliminarHorariosMasivo(ids: number[], incluirHistorial: boolean) {
+  const unicos = [...new Set(ids)];
+  const [horarios, totales, vigentes] = await Promise.all([
+    prisma.horario.findMany({ where: { id: { in: unicos } }, select: { id: true, nombre: true, horaEntrada: true, horaSalida: true } }),
+    prisma.empleadoHorario.groupBy({ by: ["horarioId"], where: { horarioId: { in: unicos } }, _count: { _all: true } }),
+    prisma.empleadoHorario.groupBy({ by: ["horarioId"], where: { horarioId: { in: unicos }, hasta: null }, _count: { _all: true } }),
+  ]);
+  const totalDe = new Map(totales.map((t) => [t.horarioId, t._count._all]));
+  const vigentesDe = new Map(vigentes.map((t) => [t.horarioId, t._count._all]));
+
+  const eliminables: typeof horarios = [];
+  const bloqueados: Array<{ id: number; nombre: string; vigentes: number; historial: number; motivo: string }> = [];
+
+  for (const h of horarios) {
+    const v = vigentesDe.get(h.id) ?? 0;
+    const historial = (totalDe.get(h.id) ?? 0) - v;
+    if (v > 0) {
+      bloqueados.push({
+        id: h.id, nombre: h.nombre, vigentes: v, historial,
+        motivo: `${v} trabajador(es) lo usan actualmente: quítales o cámbiales el horario primero`,
+      });
+    } else if (historial > 0 && !incluirHistorial) {
+      bloqueados.push({
+        id: h.id, nombre: h.nombre, vigentes: 0, historial,
+        motivo: `tiene ${historial} asignación(es) antigua(s) en el historial: usa la opción de incluir el historial`,
+      });
+    } else {
+      eliminables.push(h);
+    }
+  }
+
+  const noEncontrados = unicos.filter((id) => !horarios.some((h) => h.id === id));
+
+  let asignacionesHistorialEliminadas = 0;
+  if (eliminables.length > 0) {
+    const idsEliminables = eliminables.map((h) => h.id);
+    try {
+      const [borradas] = await prisma.$transaction([
+        // Los eliminables no tienen asignaciones vigentes: todo lo que cuelga de
+        // ellos es historial (y solo llega aquí con incluirHistorial = true).
+        prisma.empleadoHorario.deleteMany({ where: { horarioId: { in: idsEliminables } } }),
+        prisma.horario.deleteMany({ where: { id: { in: idsEliminables } } }),
+      ]);
+      asignacionesHistorialEliminadas = borradas.count;
+    } catch (error) {
+      // Carrera: alguien asignó un horario entre la comprobación y el borrado
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+        throw new HttpError("Se asignó un trabajador a uno de los horarios mientras se eliminaba. Vuelve a intentarlo.", 409);
+      }
+      throw error;
+    }
+  }
+
+  return {
+    eliminados: eliminables.map((h) => ({ id: h.id, nombre: h.nombre })),
+    bloqueados,
+    noEncontrados,
+    asignacionesHistorialEliminadas,
+  };
 }
 
 // ─── ASIGNACIONES — ligar empleado a horario ──────────────────────────────────
@@ -652,6 +740,7 @@ export async function listarEstadoAsignaciones() {
       documento: true,
       cargo: true,
       tipoPersonal: true,
+      _count: { select: { horarios: true } },
       horarios: {
         where: { hasta: null },
         orderBy: { desde: "desc" },
@@ -673,6 +762,7 @@ export async function listarEstadoAsignaciones() {
       documento: e.documento,
       cargo: e.cargo,
       tipoPersonal: e.tipoPersonal,
+      totalAsignaciones: e._count.horarios,
       horarioActual: vigente
         ? {
             asignacionId: vigente.id,
@@ -740,5 +830,25 @@ export async function asignarHorarioMasivo(employeeIds: number[], horarioId: num
     horario: { id: horario.id, nombre: horario.nombre },
     asignados: aAsignar.length,
     omitidos,
+  };
+}
+
+// Elimina asignaciones de varios trabajadores a la vez. Por defecto solo la
+// vigente (los deja "sin horario"); con incluirHistorial también las anteriores.
+// Borrar no es "terminar": los reportes de los días que cubrían esas
+// asignaciones pasan a mostrar "sin horario".
+export async function eliminarAsignacionesMasivo(employeeIds: number[], incluirHistorial: boolean) {
+  const ids = [...new Set(employeeIds)];
+  const where = incluirHistorial
+    ? { employeeId: { in: ids } }
+    : { employeeId: { in: ids }, hasta: null };
+
+  const afectados = await prisma.empleadoHorario.groupBy({ by: ["employeeId"], where, _count: { _all: true } });
+  const { count } = await prisma.empleadoHorario.deleteMany({ where });
+
+  return {
+    asignacionesEliminadas: count,
+    trabajadoresAfectados: afectados.length,
+    trabajadoresSinAsignacion: ids.length - afectados.length,
   };
 }

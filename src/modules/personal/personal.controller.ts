@@ -5,7 +5,7 @@ import type { AusenciaTipo } from "@prisma/client";
 import {
   crearHorario, listarHorarios, obtenerHorario, actualizarHorario, eliminarHorario,
   asignarHorario, horarioActualEmpleado, historialHorariosEmpleado, eliminarAsignacion,
-  listarEstadoAsignaciones, asignarHorarioMasivo,
+  listarEstadoAsignaciones, asignarHorarioMasivo, eliminarHorariosMasivo, eliminarAsignacionesMasivo,
   crearAusencia, listarAusencias, actualizarAusencia, eliminarAusencia, crearAusenciasMasivas,
   generarReporte,
 } from "./personal.service.js";
@@ -41,7 +41,17 @@ const asignacionMasivaSchema = z.object({
   desde:       z.coerce.date(),
 });
 
-const AUSENCIA_TIPOS =["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","ABANDONO","OTRO"] as const;
+const horariosEliminarMasivoSchema = z.object({
+  ids:              z.array(z.coerce.number().int().positive()).min(1, "Selecciona al menos un horario").max(200),
+  incluirHistorial: z.boolean().optional(),
+});
+
+const asignacionesEliminarMasivoSchema = z.object({
+  employeeIds:      z.array(z.coerce.number().int().positive()).min(1, "Selecciona al menos un trabajador").max(500),
+  incluirHistorial: z.boolean().optional(),
+});
+
+const AUSENCIA_TIPOS = ["VACACION","DESCANSO","PERMISO","ENFERMEDAD","FERIADO","ABANDONO","OTRO"] as const;
 
 const ausenciaSchema = z.object({
   employeeId: z.coerce.number().int().positive(),
@@ -86,9 +96,16 @@ export const personalController = {
   },
 
   async actualizarHorario(req: AuthRequest, res: Response) {
-    const parsed = horarioSchema.partial().safeParse(req.body);
+    const parsed = horarioSchema.extend({ activo: z.boolean().optional() }).partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
     const data = await actualizarHorario(Number(req.params["id"]), strip(parsed.data));
+    res.json({ success: true, data });
+  },
+
+  async eliminarHorariosMasivo(req: AuthRequest, res: Response) {
+    const parsed = horariosEliminarMasivoSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    const data = await eliminarHorariosMasivo(parsed.data.ids, parsed.data.incluirHistorial ?? false);
     res.json({ success: true, data });
   },
 
@@ -104,6 +121,13 @@ export const personalController = {
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
     const data = await asignarHorario(parsed.data.employeeId, parsed.data.horarioId, parsed.data.desde);
     res.status(201).json({ success: true, data });
+  },
+
+  async eliminarAsignacionesMasivo(req: AuthRequest, res: Response) {
+    const parsed = asignacionesEliminarMasivoSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.flatten() });
+    const data = await eliminarAsignacionesMasivo(parsed.data.employeeIds, parsed.data.incluirHistorial ?? false);
+    res.json({ success: true, data });
   },
 
   async estadoAsignaciones(_req: AuthRequest, res: Response) {
