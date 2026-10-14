@@ -16,8 +16,14 @@ export const createMovimientoBancoCajaSchema = z
     moneda: monedaMovimientoBancoSchema,
     depositanteNombre: z.string().trim().optional(),
     descripcion: z.string().trim().min(1),
+    // Remesa (presupuesto) que cubre este ingreso. Solo para INGRESO.
+    presupuestoId: z.number().int().positive().optional(),
   })
   .strict()
+  .refine((data) => data.tipo === "INGRESO" || !data.presupuestoId, {
+    message: "Solo un ingreso a la cuenta se puede vincular a un presupuesto",
+    path: ["presupuestoId"],
+  })
   .refine((data) => data.formaPago !== "CHEQUE" || Boolean(data.numeroCheque), {
     message: "El número de cheque es obligatorio cuando la forma de pago es CHEQUE",
     path: ["numeroCheque"],
@@ -26,6 +32,13 @@ export const createMovimientoBancoCajaSchema = z
     message: "Debes elegir la caja destino cuando el movimiento es una salida hacia una caja",
     path: ["cajaId"],
   });
+
+export const vincularPresupuestoSchema = z
+  .object({
+    // null = desvincular
+    presupuestoId: z.number().int().positive().nullable(),
+  })
+  .strict();
 
 export const movimientoBancoCajaQuerySchema = z
   .object({

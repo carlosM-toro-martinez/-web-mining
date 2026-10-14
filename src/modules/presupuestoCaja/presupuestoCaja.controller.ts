@@ -67,17 +67,6 @@ export const presupuestoCajaController = {
     }
   },
 
-  async asignarBanco(req: AuthRequest, res: Response) {
-    try {
-      const id = Number(req.params.id);
-      const presupuesto = await presupuestoCajaService.asignarBanco(id, req.body, req.user!.id);
-      res.json({ success: true, data: presupuesto });
-    } catch (error) {
-      const status = error instanceof HttpError ? error.statusCode : 400;
-      res.status(status).json({ success: false, error: (error as Error).message });
-    }
-  },
-
   async duplicar(req: AuthRequest, res: Response) {
     try {
       const id = Number(req.params.id);

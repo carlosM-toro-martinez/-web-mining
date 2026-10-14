@@ -36,6 +36,14 @@ export const gastoCajaController = {
     }
   },
 
+  async getProveedores(_req: AuthRequest, res: Response) {
+    try {
+      res.json({ success: true, data: await gastoCajaService.getProveedores() });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async getById(req: AuthRequest, res: Response) {
     try {
       const gasto = await gastoCajaService.getById(req.params.id as string);

@@ -19,6 +19,20 @@ export const movimientoBancoCajaController = {
     }
   },
 
+  async vincularPresupuesto(req: AuthRequest, res: Response) {
+    try {
+      const movimiento = await movimientoBancoCajaService.vincularPresupuesto(
+        req.params.id as string,
+        req.body,
+        req.user!.id,
+      );
+      res.json({ success: true, data: movimiento });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async create(req: AuthRequest, res: Response) {
     try {
       const movimiento = await movimientoBancoCajaService.create(req.body, req.user!.id);

@@ -77,7 +77,7 @@ export const partidaPresupuestoCajaService = {
     const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id: data.presupuestoId } });
     if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
     if (presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se pueden agregar partidas: esta remesa ya fue aprobada y asignada al banco.", 409);
+      throw new HttpError("No se pueden agregar partidas: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
     }
 
     const partida = await prisma.partidaPresupuestoCaja.create({
@@ -112,7 +112,7 @@ export const partidaPresupuestoCajaService = {
     });
     if (!existente) throw new HttpError("Partida de presupuesto no encontrada", 404);
     if (existente.presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede editar: esta remesa ya fue aprobada y asignada al banco.", 409);
+      throw new HttpError("No se puede editar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
     }
 
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
@@ -146,7 +146,7 @@ export const partidaPresupuestoCajaService = {
     // así que borrar una partida después deja ese dinero sin partida a la
     // que imputarse cuando se registre el gasto real.
     if (existente.presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede eliminar: esta remesa ya fue aprobada y asignada al banco.", 409);
+      throw new HttpError("No se puede eliminar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
     }
 
     const enUso = await prisma.gastoCaja.count({ where: { partidaPresupuestoId: id } });

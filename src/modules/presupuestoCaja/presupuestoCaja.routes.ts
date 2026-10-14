@@ -2,7 +2,6 @@ import { Router } from "express";
 import { presupuestoCajaController } from "./presupuestoCaja.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
 import {
-  asignarBancoPresupuestoCajaSchema,
   createPresupuestoCajaSchema,
   duplicarPresupuestoCajaSchema,
   presupuestoCajaQuerySchema,
@@ -40,14 +39,6 @@ router.delete(
   authorize("ADMIN", "ADMINISTRADOR", "SUPERINTENDENTE"),
   validateParams(idSchema),
   presupuestoCajaController.remove,
-);
-
-router.post(
-  "/:id/asignar-banco",
-  authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"),
-  validateParams(idSchema),
-  validate(asignarBancoPresupuestoCajaSchema),
-  presupuestoCajaController.asignarBanco,
 );
 
 router.post(

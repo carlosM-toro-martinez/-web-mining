@@ -15,7 +15,7 @@ import type {
 } from "./gastoCaja.types.js";
 import type { z } from "zod";
 import type { gastoCajaQuerySchema } from "./gastoCaja.schema.js";
-import type { TipoMovimientoFondoCaja } from "@prisma/client";
+import type { Prisma, TipoMovimientoFondoCaja } from "@prisma/client";
 
 type GastoCajaQuery = z.infer<typeof gastoCajaQuerySchema>;
 
@@ -247,7 +247,53 @@ function montoDesdeTexto(texto: string): number | null {
   return Number.isFinite(valor) ? valor : null;
 }
 
+const normalizarNombreProveedor = (s: string) => s.trim().toUpperCase().replace(/\s+/g, " ");
+
+// Los proveedores de Caja Chica viven en la misma tabla que los de
+// inventario. Solo factura/recibo: un recibo directo o un contrato suele ser
+// una persona (trabajador, beneficiario), no un proveedor.
+async function registrarProveedor(
+  tx: Prisma.TransactionClient,
+  tipoDocumento: string,
+  nombre: string | null | undefined,
+  nit: string | null | undefined,
+) {
+  if (!["FACTURA", "RECIBO"].includes(tipoDocumento) || !nombre?.trim()) return;
+  // Se comparan todos en memoria (son cientos) para que "Juan  Pérez" y
+  // "JUAN PÉREZ" sean el mismo proveedor.
+  const buscado = normalizarNombreProveedor(nombre);
+  const todos = await tx.proveedor.findMany({ select: { id: true, nombre: true, nit: true } });
+  const existente = todos.find((p) => normalizarNombreProveedor(p.nombre) === buscado);
+  if (!existente) {
+    await tx.proveedor.create({ data: { nombre: nombre.trim().replace(/\s+/g, " "), nit: nit?.trim() || null } });
+  } else if (!existente.nit && nit?.trim()) {
+    await tx.proveedor.update({ where: { id: existente.id }, data: { nit: nit.trim() } });
+  }
+}
+
 export const gastoCajaService = {
+  // Para el autocompletado del campo proveedor: los de inventario más los ya
+  // usados en gastos (beneficiarios de recibos directos incluidos).
+  async getProveedores() {
+    const [proveedores, usados] = await Promise.all([
+      prisma.proveedor.findMany({ select: { nombre: true, nit: true } }),
+      prisma.gastoCaja.groupBy({
+        by: ["proveedorNombre", "proveedorNitCi"],
+        where: { estado: { not: "ANULADO" } },
+        _count: true,
+      }),
+    ]);
+    const porNombre = new Map<string, { nombre: string; nit: string | null }>();
+    for (const p of proveedores) porNombre.set(normalizarNombreProveedor(p.nombre), { nombre: p.nombre.trim(), nit: p.nit });
+    for (const u of usados) {
+      const clave = normalizarNombreProveedor(u.proveedorNombre);
+      const actual = porNombre.get(clave);
+      if (!actual) porNombre.set(clave, { nombre: u.proveedorNombre.trim(), nit: u.proveedorNitCi });
+      else if (!actual.nit && u.proveedorNitCi) actual.nit = u.proveedorNitCi;
+    }
+    return [...porNombre.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  },
+
   // Carga masiva del reporte mensual "Caja Lipeña" (fondos recibidos +
   // detalle de gastos) desde Excel — ver gastoCajaImport.parser.ts para el
   // formato esperado. Los fondos se cargan SIEMPRE antes que los gastos: el
@@ -664,6 +710,8 @@ export const gastoCajaService = {
         include: INCLUDE_DETALLE,
       });
 
+      await registrarProveedor(tx, data.tipoDocumento, data.proveedorNombre, data.proveedorNitCi);
+
       await tx.log.create({
         data: {
           usuarioId: userId,
@@ -778,6 +826,10 @@ export const gastoCajaService = {
         data: cleanData,
         include: INCLUDE_DETALLE,
       });
+
+      if (data.proveedorNombre !== undefined || data.proveedorNitCi !== undefined) {
+        await registrarProveedor(tx, actualizado.tipoDocumento, actualizado.proveedorNombre, actualizado.proveedorNitCi);
+      }
 
       await tx.log.create({
         data: { usuarioId: userId, accion: "UPDATE_GASTO_CAJA", data: { gastoId: id, ...data } },

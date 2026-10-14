@@ -49,6 +49,7 @@ router.post(
   gastoCajaController.clasificarVarios,
 );
 
+router.get("/proveedores", gastoCajaController.getProveedores);
 router.get("/", validateQuery(gastoCajaQuerySchema), gastoCajaController.getAll);
 router.get("/:id", validateParams(idSchema), gastoCajaController.getById);
 

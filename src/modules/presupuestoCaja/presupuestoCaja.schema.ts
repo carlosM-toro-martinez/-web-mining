@@ -26,12 +26,6 @@ export const presupuestoCajaQuerySchema = z
   })
   .strict();
 
-export const asignarBancoPresupuestoCajaSchema = z
-  .object({
-    cuentaBancariaId: z.number().int().positive(),
-  })
-  .strict();
-
 // nombre/cajaId opcionales: si no se pasan, se usa el mismo nombre y la
 // misma caja de la remesa que se está usando como plantilla.
 export const duplicarPresupuestoCajaSchema = z

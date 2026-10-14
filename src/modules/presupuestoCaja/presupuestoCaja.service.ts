@@ -2,7 +2,6 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import type {
-  AsignarBancoPresupuestoCajaDTO,
   CreatePresupuestoCajaDTO,
   DuplicarPresupuestoCajaDTO,
   UpdatePresupuestoCajaDTO,
@@ -98,7 +97,7 @@ export const presupuestoCajaService = {
     const existente = await prisma.presupuestoCaja.findUnique({ where: { id } });
     if (!existente) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
     if (existente.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede editar: esta remesa ya fue aprobada y asignada al banco.", 409);
+      throw new HttpError("No se puede editar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
     }
 
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
@@ -119,7 +118,7 @@ export const presupuestoCajaService = {
     if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
 
     if (presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede eliminar: esta remesa ya fue aprobada y asignada al banco.", 409);
+      throw new HttpError("No se puede eliminar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
     }
 
     const partidaIds = presupuesto.partidas.map((p) => p.id);
@@ -139,63 +138,6 @@ export const presupuestoCajaService = {
       data: { usuarioId: userId, accion: "DELETE_PRESUPUESTO_CAJA", data: { presupuestoId: id } },
     });
     logger.info({ userId, presupuestoId: id, action: "DELETE_PRESUPUESTO_CAJA" }, "Presupuesto (remesa) eliminado");
-  },
-
-  // Aprueba la remesa y la asigna a una cuenta bancaria de una sola vez: crea
-  // el ingreso por el total de sus partidas y deja la remesa marcada como
-  // asignada, para que el botón no se pueda volver a presionar (compare-and-
-  // swap con updateMany, igual que el cierre de rendiciones).
-  async asignarBanco(id: number, data: AsignarBancoPresupuestoCajaDTO, userId: number) {
-    const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id }, include: { partidas: true } });
-    if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
-    if (presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("Esta remesa ya fue aprobada y asignada al banco.", 409);
-    }
-
-    const cuentaBancaria = await prisma.cuentaBancariaCaja.findUnique({ where: { id: data.cuentaBancariaId } });
-    if (!cuentaBancaria) throw new HttpError("Cuenta bancaria no encontrada", 404);
-
-    const total = presupuesto.partidas.reduce((acc, p) => acc + Number(p.montoPresupuestado), 0);
-    if (total <= 0) throw new HttpError("Esta remesa no tiene partidas con monto para asignar.", 400);
-
-    const actualizado = await prisma.$transaction(async (tx) => {
-      const movimiento = await tx.movimientoBancoCaja.create({
-        data: {
-          cuentaBancariaId: cuentaBancaria.id,
-          tipo: "INGRESO",
-          fecha: new Date(),
-          formaPago: "DEPOSITO",
-          monto: total,
-          moneda: cuentaBancaria.monedaBase,
-          descripcion: `Presupuesto aprobado y asignado — ${presupuesto.nombre}`,
-          usuarioId: userId,
-        },
-      });
-
-      // Compare-and-swap: si otra petición ya asignó esta remesa entre el
-      // findUnique de arriba y este update, el where deja de matchear y
-      // count sale en 0 — así el botón nunca puede duplicar el ingreso.
-      const resultado = await tx.presupuestoCaja.updateMany({
-        where: { id, asignadoMovimientoBancoId: null },
-        data: { asignadoMovimientoBancoId: movimiento.id, asignadoEn: new Date() },
-      });
-      if (resultado.count === 0) {
-        throw new HttpError("Esta remesa ya fue aprobada y asignada al banco.", 409);
-      }
-
-      return tx.presupuestoCaja.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
-    });
-
-    await prisma.log.create({
-      data: { usuarioId: userId, accion: "ASIGNAR_BANCO_PRESUPUESTO_CAJA", data: { presupuestoId: id, monto: total } },
-    });
-    logger.info(
-      { userId, presupuestoId: id, action: "ASIGNAR_BANCO_PRESUPUESTO_CAJA" },
-      "Remesa aprobada y asignada al banco",
-    );
-
-    const [conDatos] = await conEjecucion([actualizado]);
-    return conDatos;
   },
 
   // Usa una remesa existente (de cualquier mes) como plantilla: clona su
