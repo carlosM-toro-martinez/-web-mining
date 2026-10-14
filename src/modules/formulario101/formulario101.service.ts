@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import { correlativoLiberadoDeLoteAnulado } from "../../utils/correlativo.js";
+import { correlativoDeLoteAnulado } from "../../utils/correlativo.js";
 import type {
   AnularFormulario101DTO,
   ReutilizarFormulario101DTO,
@@ -127,7 +127,10 @@ export const formulario101Service = {
   // (marcarPeticionEnviada() registra cuándo se hizo).
   async anular(id: string, data: AnularFormulario101DTO, userId: number) {
     return prisma.$transaction(async (tx) => {
-      const formulario101 = await tx.formulario101.findUnique({ where: { id }, include: { lote: true } });
+      const formulario101 = await tx.formulario101.findUnique({
+        where: { id },
+        include: { lote: { include: { pesaje: true } } },
+      });
       if (!formulario101) throw new HttpError("Formulario 101 no encontrado", 404);
       if (formulario101.estado === "ANULADO") throw new HttpError("El Formulario 101 ya está anulado", 409);
       if (formulario101.lote?.estadoLote === "LIQUIDADO") {
@@ -139,22 +142,35 @@ export const formulario101Service = {
         data: { formulario101Id: id, usuarioId: userId, motivo: data.motivo },
       });
 
-      if (formulario101.loteId && formulario101.lote && formulario101.lote.estadoLote !== "ANULADO") {
+      const lote = formulario101.lote;
+      if (lote && lote.estadoLote !== "ANULADO") {
+        const motivoLote = `Formulario 101 (${formulario101.codigo}) anulado: ${data.motivo}`;
         await tx.loteDespacho.update({
-          where: { id: formulario101.loteId },
+          where: { id: lote.id },
           data: {
             estadoLote: "ANULADO",
-            // Libera el número para el próximo lote del mes (ver correlativo.ts).
-            correlativo: await correlativoLiberadoDeLoteAnulado(tx, formulario101.lote.correlativo, formulario101.lote.anio),
+            correlativo: await correlativoDeLoteAnulado(tx, lote.correlativo, lote.anio),
           },
         });
         await tx.anulacionLote.create({
-          data: {
-            loteId: formulario101.loteId,
-            usuarioId: userId,
-            motivo: `Formulario 101 (${formulario101.codigo}) anulado: ${data.motivo}`,
-          },
+          data: { loteId: lote.id, usuarioId: userId, motivo: motivoLote },
         });
+        await tx.liquidacionDetalleLote.deleteMany({
+          where: { loteId: lote.id, liquidacion: { estado: "BORRADOR" } },
+        });
+        // Igual que anular el lote: un viaje sin pesar deja libre su vehículo.
+        if (!lote.pesaje) {
+          await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: "DISPONIBLE" } });
+          await tx.estadoFlotaHistorico.create({
+            data: {
+              vehiculoId: lote.vehiculoId,
+              estado: "DISPONIBLE",
+              motivo: `Lote ${lote.correlativo} anulado: ${motivoLote}`,
+              origenCambio: "MANUAL",
+              usuarioId: userId,
+            },
+          });
+        }
       }
 
       await tx.log.create({

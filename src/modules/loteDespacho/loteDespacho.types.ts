@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type {
   anularLoteSchema,
   avanzarEstadoLoteSchema,
+  corregirEstadoLoteSchema,
   createLoteDespachoSchema,
   registrarCombustibleEntregadoSchema,
   registrarPesajeSchema,
@@ -12,6 +13,7 @@ import type {
 export type CreateLoteDespachoDTO = z.infer<typeof createLoteDespachoSchema>;
 export type UpdateLoteDespachoDTO = z.infer<typeof updateLoteDespachoSchema>;
 export type AvanzarEstadoLoteDTO = z.infer<typeof avanzarEstadoLoteSchema>;
+export type CorregirEstadoLoteDTO = z.infer<typeof corregirEstadoLoteSchema>;
 export type RegistrarPesajeDTO = z.infer<typeof registrarPesajeSchema>;
 export type RegistrarCombustibleEntregadoDTO = z.infer<typeof registrarCombustibleEntregadoSchema>;
 export type AnularLoteDTO = z.infer<typeof anularLoteSchema>;

@@ -135,6 +135,19 @@ export const vehiculoService = {
       const vehiculo = await tx.vehiculo.findUnique({ where: { id } });
       if (!vehiculo) throw new HttpError("Vehículo no encontrado", 404);
 
+      // Con un lote en curso, mover solo la tarjeta dejaría ese lote colgado
+      // (y el vehículo libre para un segundo lote).
+      const loteEnCurso = await tx.loteDespacho.findFirst({
+        where: { vehiculoId: id, estadoLote: { in: ["EN_TRANSITO", "EN_BALANZA"] } },
+        select: { correlativo: true },
+      });
+      if (loteEnCurso) {
+        throw new HttpError(
+          `${vehiculo.placa} tiene el lote ${loteEnCurso.correlativo} en curso. Toca la tarjeta para registrar el pesaje, volver a En tránsito, transbordar o anular ese lote.`,
+          409,
+        );
+      }
+
       const actualizado = await tx.vehiculo.update({
         where: { id },
         data: { estadoActual: data.estado },

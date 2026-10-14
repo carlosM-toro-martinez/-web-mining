@@ -33,7 +33,7 @@ function formatearCorrelativoLote(numero: number, mes: number): string {
 // el menor número que nunca fue emitido (activo ni anulado).
 const SUFIJO_LOTE_ANULADO = " ANULADO";
 
-export async function correlativoLiberadoDeLoteAnulado(
+export async function correlativoDeLoteAnulado(
   tx: Prisma.TransactionClient,
   correlativo: string,
   anio: number,
@@ -47,10 +47,9 @@ export async function correlativoLiberadoDeLoteAnulado(
   return candidato;
 }
 
-// La serie de un mes es dinámica: los números que ocupan los lotes vigentes
-// de ese mes ("27/10"; los anulados llevan sufijo y no ocupan). El próximo
-// lote toma siempre el MENOR número libre — el que dejó una anulación o una
-// edición —, así la serie del Conocimiento nunca queda con huecos.
+// La serie de un mes la forman los números ya emitidos ese mes, vigentes o
+// anulados ("27/10", "27/10 ANULADO"). El próximo lote toma el MENOR número
+// nunca emitido (un hueco solo aparece si se editó el número de un lote).
 // Bloquea la serie hasta el fin de la transacción: dos altas/ediciones
 // simultáneas del mismo mes no pueden tomar el mismo número.
 async function leerSerieLote(tx: Prisma.TransactionClient, anio: number, mes: number, excluirLoteId?: string) {

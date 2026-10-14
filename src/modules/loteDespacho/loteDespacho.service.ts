@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import {
   asignarCorrelativoLoteManual,
-  correlativoLiberadoDeLoteAnulado,
+  correlativoDeLoteAnulado,
   generarCorrelativoLote,
 } from "../../utils/correlativo.js";
 import { logger } from "../../config/logger.js";
@@ -10,6 +10,7 @@ import { parseCuadroEnvioExcel } from "./loteDespachoImport.parser.js";
 import type {
   AnularLoteDTO,
   AvanzarEstadoLoteDTO,
+  CorregirEstadoLoteDTO,
   CreateLoteDespachoDTO,
   FilaImportLoteResultado,
   RegistrarCombustibleEntregadoDTO,
@@ -19,6 +20,7 @@ import type {
   UpdateLoteDespachoDTO,
 } from "./loteDespacho.types.js";
 import type { z } from "zod";
+import type { EstadoLoteDespacho } from "@prisma/client";
 import type { loteDespachoQuerySchema } from "./loteDespacho.schema.js";
 
 type LoteDespachoQuery = z.infer<typeof loteDespachoQuerySchema>;
@@ -353,46 +355,73 @@ export const loteDespachoService = {
     });
   },
 
-  // Corrección de estado por error humano: retrocede el lote a un estado
-  // anterior (ej. EN_BALANZA → EN_TRANSITO) y sincroniza el vehículo.
-  // Solo aplica a estados previos al pesaje — una vez que hay un pesaje
-  // registrado el camino es anular, no corregir hacia atrás.
-  async corregirEstado(id: string, data: { estado: string; motivo: string }, userId: number) {
-    const CORRECCIONES_VALIDAS: Record<string, string> = {
+  // Corrección de un paso marcado por error (sin anular el lote): retrocede
+  // UN paso y deja el vehículo como estaba en ese paso. ACOPIADO → EN_BALANZA
+  // borra el pesaje (caso típico: se pesó el lote de otro camión).
+  async corregirEstado(id: string, data: CorregirEstadoLoteDTO, userId: number) {
+    const PASO_ANTERIOR: Partial<Record<EstadoLoteDespacho, "EN_TRANSITO" | "EN_BALANZA">> = {
       EN_BALANZA: "EN_TRANSITO",
-      EN_TRANSITO: "REGISTRADO",
-    };
-    const ESTADO_VEHICULO: Record<string, string> = {
-      EN_TRANSITO: "EN_TRANSITO",
-      REGISTRADO: "DISPONIBLE",
+      ACOPIADO: "EN_BALANZA",
     };
 
     return prisma.$transaction(async (tx) => {
-      const lote = await tx.loteDespacho.findUnique({ where: { id }, include: { pesaje: true } });
+      const lote = await tx.loteDespacho.findUnique({
+        where: { id },
+        include: { pesaje: true, vehiculo: true },
+      });
       if (!lote) throw new HttpError("Lote no encontrado", 404);
       if (lote.estadoLote === "ANULADO") throw new HttpError("El lote está anulado", 409);
-      if (lote.pesaje) throw new HttpError("El lote ya tiene un pesaje — para corregirlo use Anular", 409);
+      if (lote.estadoLote === "LIQUIDADO") {
+        throw new HttpError("El lote ya está liquidado — primero hay que anular la liquidación", 409);
+      }
 
-      const estadoDestino = CORRECCIONES_VALIDAS[lote.estadoLote];
-      if (!estadoDestino || estadoDestino !== data.estado) {
+      const destino = PASO_ANTERIOR[lote.estadoLote];
+      if (!destino || destino !== data.estado) {
         throw new HttpError(
-          `Corrección no permitida: de ${lote.estadoLote} solo se puede retroceder a ${estadoDestino ?? "(ninguno)"}`,
+          destino
+            ? `Desde "${lote.estadoLote}" solo se puede volver a "${destino}"`
+            : `Un lote en estado "${lote.estadoLote}" no tiene un paso anterior que corregir`,
           409,
         );
       }
 
+      // El vehículo no puede quedar con dos viajes activos a la vez.
+      const otroViaje = await tx.loteDespacho.findFirst({
+        where: {
+          vehiculoId: lote.vehiculoId,
+          id: { not: id },
+          estadoLote: { in: ["EN_TRANSITO", "EN_BALANZA"] },
+        },
+        select: { correlativo: true },
+      });
+      if (otroViaje) {
+        throw new HttpError(
+          `El vehículo ${lote.vehiculo.placa} ya está en otro viaje (lote ${otroViaje.correlativo}). Termine o corrija ese lote primero.`,
+          409,
+        );
+      }
+
+      if (lote.estadoLote === "ACOPIADO") {
+        const enLiquidacion = await tx.liquidacionDetalleLote.findFirst({
+          where: { loteId: id, liquidacion: { estado: "BORRADOR" } },
+        });
+        if (enLiquidacion) {
+          throw new HttpError("El lote está en una liquidación en borrador — quítelo de la liquidación primero", 409);
+        }
+        if (lote.pesaje) await tx.pesajeIngenio.delete({ where: { loteId: id } });
+      }
+
       const actualizado = await tx.loteDespacho.update({
         where: { id },
-        data: { estadoLote: data.estado as any },
+        data: { estadoLote: destino },
       });
 
-      const estadoVehiculo = ESTADO_VEHICULO[data.estado]!;
-      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: estadoVehiculo as any } });
+      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: destino } });
       await tx.estadoFlotaHistorico.create({
         data: {
           vehiculoId: lote.vehiculoId,
-          estado: estadoVehiculo as any,
-          motivo: `Corrección de estado lote ${lote.correlativo}: ${data.motivo}`,
+          estado: destino,
+          motivo: `Corrección del lote ${lote.correlativo}: ${data.motivo}`,
           origenCambio: "MANUAL",
           usuarioId: userId,
         },
@@ -402,7 +431,19 @@ export const loteDespachoService = {
         data: {
           usuarioId: userId,
           accion: "CORREGIR_ESTADO_LOTE",
-          data: { loteId: id, estadoAnterior: lote.estadoLote, estadoNuevo: data.estado, motivo: data.motivo },
+          data: {
+            loteId: id,
+            estadoAnterior: lote.estadoLote,
+            estadoNuevo: destino,
+            motivo: data.motivo,
+            pesajeEliminado: lote.pesaje
+              ? {
+                  tonelajeBruto: Number(lote.pesaje.tonelajeBruto),
+                  tonelajeTara: Number(lote.pesaje.tonelajeTara),
+                  tonelajeNeto: Number(lote.pesaje.tonelajeNeto),
+                }
+              : null,
+          },
         },
       });
 
@@ -506,10 +547,8 @@ export const loteDespachoService = {
     return actualizado;
   },
 
-  // Anular el lote NO anula su Formulario 101 (el papel del Municipio
-  // sigue siendo válido): si tenía uno vinculado, se libera (queda
-  // DISPONIBLE) para poder reutilizarlo en otro lote — es el camino
-  // contrario a anularFormulario101(), que si arrastra al lote consigo.
+  // Anular el lote anula también su Formulario 101 (confirmado con la
+  // cliente: conocimiento y F101 se anulan juntos y ninguno se reutiliza).
   async anular(id: string, data: AnularLoteDTO, userId: number) {
     return prisma.$transaction(async (tx) => {
       const lote = await tx.loteDespacho.findUnique({
@@ -529,7 +568,7 @@ export const loteDespachoService = {
         where: { id },
         data: {
           estadoLote: "ANULADO",
-          correlativo: await correlativoLiberadoDeLoteAnulado(tx, lote.correlativo, lote.anio),
+          correlativo: await correlativoDeLoteAnulado(tx, lote.correlativo, lote.anio),
         },
       });
 
@@ -785,15 +824,22 @@ export const loteDespachoService = {
 
         const correlativo = `${f.correlativoNumero}/${f.correlativoMes}`;
 
-        const existente = await prisma.loteDespacho.findUnique({
-          where: { correlativo_anio: { correlativo, anio } },
+        // Un número anulado ("30/10 ANULADO") sigue consumido: no se recrea.
+        const existente = await prisma.loteDespacho.findFirst({
+          where: {
+            anio,
+            OR: [{ correlativo }, { correlativo: { startsWith: `${correlativo} ANULADO` } }],
+          },
         });
         if (existente) {
           resultados.push({
             fila: f.fila,
             correlativo,
             accion: "omitido",
-            mensaje: `Ya existe (estado ${existente.estadoLote})`,
+            mensaje:
+              existente.estadoLote === "ANULADO"
+                ? "Ese N° de conocimiento fue anulado — no se vuelve a usar"
+                : `Ya existe (estado ${existente.estadoLote})`,
           });
           continue;
         }
