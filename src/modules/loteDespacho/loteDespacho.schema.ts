@@ -2,6 +2,13 @@ import { z } from "zod";
 
 export const tipoCombustibleViajeSchema = z.enum(["CON_COMBUSTIBLE", "SIN_COMBUSTIBLE"]);
 
+// Únicos valores válidos: el Cuadro Mensual suma el peso por nivel con
+// coincidencia exacta, así que "MOSA" o "0" quedaban fuera de toda columna.
+export const NIVELES_LOTE = ["La Moza", "Nivel 0", "Nivel 40", "Nivel 80"] as const;
+export const nivelLoteSchema = z.enum(NIVELES_LOTE, {
+  message: `El nivel debe ser uno de: ${NIVELES_LOTE.join(", ")}`,
+});
+
 export const estadoLoteDespachoSchema = z.enum([
   "REGISTRADO",
   "EN_TRANSITO",
@@ -25,7 +32,7 @@ export const createLoteDespachoSchema = z
     choferId: z.number().int().positive(),
     tipoMineralId: z.number().int().positive(),
     destinoIngenioId: z.number().int().positive(),
-    nivel: z.string().trim().optional(),
+    nivel: nivelLoteSchema,
     // Si la empresa puso el combustible de ESTE viaje o no — decide la
     // tarifa que se le aplica al liquidar (ver buscarTarifaAplicable).
     incluyeCombustible: tipoCombustibleViajeSchema.default("SIN_COMBUSTIBLE"),
@@ -75,7 +82,7 @@ export const updateLoteDespachoSchema = z
     choferId: z.number().int().positive().optional(),
     tipoMineralId: z.number().int().positive().optional(),
     destinoIngenioId: z.number().int().positive().optional(),
-    nivel: z.string().trim().nullable().optional(),
+    nivel: nivelLoteSchema.nullable().optional(),
     incluyeCombustible: tipoCombustibleViajeSchema.optional(),
     combustibleAsignadoLitros: z.number().nonnegative().nullable().optional(),
     fechaDespachoReal: z.coerce.date().optional(),
@@ -114,6 +121,11 @@ export const loteDespachoQuerySchema = z
     // aparecería nunca).
     search: z.string().trim().min(1).optional(),
     conObservaciones: z.coerce.boolean().optional(),
+    // SIN_ENTREGA = con combustible de la empresa pero sin litros entregados registrados.
+    combustible: z.enum(["CON_COMBUSTIBLE", "SIN_COMBUSTIBLE", "SIN_ENTREGA"]).optional(),
+    f101: z.enum(["CON", "SIN"]).optional(),
+    pesaje: z.enum(["CON", "SIN"]).optional(),
+    nivel: z.union([nivelLoteSchema, z.literal("SIN_NIVEL")]).optional(),
   })
   .strict();
 

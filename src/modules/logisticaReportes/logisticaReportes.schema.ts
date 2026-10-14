@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nivelLoteSchema } from "../loteDespacho/loteDespacho.schema.js";
 
 export const cuadroMensualQuerySchema = z
   .object({
@@ -6,9 +7,8 @@ export const cuadroMensualQuerySchema = z
     municipioId: z.coerce.number().int().positive().optional(),
     anio: z.coerce.number().int().positive(),
     mes: z.coerce.number().int().min(1).max(12),
-    // "Nivel 40" / "Nivel 0" / "Nivel 80" / "La Moza", tal cual se guarda en
-    // LoteDespacho.nivel — si se omite, trae todos los niveles.
-    nivel: z.string().trim().min(1).optional(),
+    // Si se omite, trae todos los niveles.
+    nivel: nivelLoteSchema.optional(),
   })
   .strict();
 

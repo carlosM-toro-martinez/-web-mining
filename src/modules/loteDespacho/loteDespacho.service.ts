@@ -82,6 +82,15 @@ export const loteDespachoService = {
     if (query.conObservaciones) {
       where.conocimientoCarga = { AND: [{ observaciones: { not: null } }, { observaciones: { not: "" } }] };
     }
+    if (query.combustible === "SIN_ENTREGA") {
+      where.incluyeCombustible = "CON_COMBUSTIBLE";
+      where.combustibleEntregadoLitros = null;
+    } else if (query.combustible) {
+      where.incluyeCombustible = query.combustible;
+    }
+    if (query.f101) where.formulario101 = query.f101 === "CON" ? { isNot: null } : { is: null };
+    if (query.pesaje) where.pesaje = query.pesaje === "CON" ? { isNot: null } : { is: null };
+    if (query.nivel) where.nivel = query.nivel === "SIN_NIVEL" ? null : query.nivel;
 
     const [lotes, total] = await Promise.all([
       prisma.loteDespacho.findMany({
