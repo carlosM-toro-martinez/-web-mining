@@ -5,6 +5,7 @@ import { validate, validateQuery, validateParams } from "../../middleware/valida
 import {
   anularLoteSchema,
   avanzarEstadoLoteSchema,
+  corregirEstadoLoteSchema,
   createLoteDespachoSchema,
   loteDespachoQuerySchema,
   registrarCombustibleEntregadoSchema,
@@ -12,7 +13,8 @@ import {
   transbordarLoteSchema,
   updateLoteDespachoSchema,
 } from "./loteDespacho.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requireModulo, requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -33,13 +35,16 @@ const upload = multer({
 const router = Router();
 
 router.use(authenticate);
+// Leer requiere algún permiso de logística; cada acción, su permiso propio
+// (ver src/modules/roles/permisos.catalogo.ts).
+router.use(requireModulo("logistica"));
 
 // POST /api/lotes-despacho/importar-historico
 // Carga masiva de lotes YA COMPLETADOS desde el Cuadro de Envío en Excel
 // (ver loteDespachoImport.parser.ts para el formato esperado).
 router.post(
   "/importar-historico",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("logistica.lotes", "importar"),
   upload.single("file"),
   loteDespachoController.importarHistorico,
 );
@@ -49,14 +54,14 @@ router.get("/:id", validateParams(idSchema), loteDespachoController.getById);
 
 router.post(
   "/",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "crear"),
   validate(createLoteDespachoSchema),
   loteDespachoController.create,
 );
 
 router.patch(
   "/:id",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "editar"),
   validateParams(idSchema),
   validate(updateLoteDespachoSchema),
   loteDespachoController.update,
@@ -64,15 +69,23 @@ router.patch(
 
 router.patch(
   "/:id/estado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "editar"),
   validateParams(idSchema),
   validate(avanzarEstadoLoteSchema),
   loteDespachoController.avanzarEstado,
 );
 
+router.patch(
+  "/:id/corregir-estado",
+  requirePermiso("logistica.lotes", "editar"),
+  validateParams(idSchema),
+  validate(corregirEstadoLoteSchema),
+  loteDespachoController.corregirEstado,
+);
+
 router.post(
   "/:id/pesaje",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "editar"),
   validateParams(idSchema),
   validate(registrarPesajeSchema),
   loteDespachoController.registrarPesaje,
@@ -80,7 +93,7 @@ router.post(
 
 router.post(
   "/:id/combustible-entregado",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "editar"),
   validateParams(idSchema),
   validate(registrarCombustibleEntregadoSchema),
   loteDespachoController.registrarCombustibleEntregado,
@@ -88,7 +101,7 @@ router.post(
 
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "anular"),
   validateParams(idSchema),
   validate(anularLoteSchema),
   loteDespachoController.anular,
@@ -96,7 +109,7 @@ router.post(
 
 router.post(
   "/:id/transbordo",
-  authorize("ADMIN", "SUPERINTENDENTE", "ASISTENTE_ADMINISTRATIVO"),
+  requirePermiso("logistica.lotes", "editar"),
   validateParams(idSchema),
   validate(transbordarLoteSchema),
   loteDespachoController.transbordar,

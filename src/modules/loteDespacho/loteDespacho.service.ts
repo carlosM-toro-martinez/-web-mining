@@ -353,6 +353,63 @@ export const loteDespachoService = {
     });
   },
 
+  // Corrección de estado por error humano: retrocede el lote a un estado
+  // anterior (ej. EN_BALANZA → EN_TRANSITO) y sincroniza el vehículo.
+  // Solo aplica a estados previos al pesaje — una vez que hay un pesaje
+  // registrado el camino es anular, no corregir hacia atrás.
+  async corregirEstado(id: string, data: { estado: string; motivo: string }, userId: number) {
+    const CORRECCIONES_VALIDAS: Record<string, string> = {
+      EN_BALANZA: "EN_TRANSITO",
+      EN_TRANSITO: "REGISTRADO",
+    };
+    const ESTADO_VEHICULO: Record<string, string> = {
+      EN_TRANSITO: "EN_TRANSITO",
+      REGISTRADO: "DISPONIBLE",
+    };
+
+    return prisma.$transaction(async (tx) => {
+      const lote = await tx.loteDespacho.findUnique({ where: { id }, include: { pesaje: true } });
+      if (!lote) throw new HttpError("Lote no encontrado", 404);
+      if (lote.estadoLote === "ANULADO") throw new HttpError("El lote está anulado", 409);
+      if (lote.pesaje) throw new HttpError("El lote ya tiene un pesaje — para corregirlo use Anular", 409);
+
+      const estadoDestino = CORRECCIONES_VALIDAS[lote.estadoLote];
+      if (!estadoDestino || estadoDestino !== data.estado) {
+        throw new HttpError(
+          `Corrección no permitida: de ${lote.estadoLote} solo se puede retroceder a ${estadoDestino ?? "(ninguno)"}`,
+          409,
+        );
+      }
+
+      const actualizado = await tx.loteDespacho.update({
+        where: { id },
+        data: { estadoLote: data.estado as any },
+      });
+
+      const estadoVehiculo = ESTADO_VEHICULO[data.estado]!;
+      await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: estadoVehiculo as any } });
+      await tx.estadoFlotaHistorico.create({
+        data: {
+          vehiculoId: lote.vehiculoId,
+          estado: estadoVehiculo as any,
+          motivo: `Corrección de estado lote ${lote.correlativo}: ${data.motivo}`,
+          origenCambio: "MANUAL",
+          usuarioId: userId,
+        },
+      });
+
+      await tx.log.create({
+        data: {
+          usuarioId: userId,
+          accion: "CORREGIR_ESTADO_LOTE",
+          data: { loteId: id, estadoAnterior: lote.estadoLote, estadoNuevo: data.estado, motivo: data.motivo },
+        },
+      });
+
+      return actualizado;
+    });
+  },
+
   // El neto se calcula en el service (nunca columna generada en DB) salvo
   // que el usuario lo corrija a mano (ver netoDelPesaje). Al pesar, el
   // lote pasa directo a ACOPIADO (la ley del mineral ya se confirmó al

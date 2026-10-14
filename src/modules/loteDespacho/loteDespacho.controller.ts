@@ -75,6 +75,16 @@ export const loteDespachoController = {
     }
   },
 
+  async corregirEstado(req: AuthRequest, res: Response) {
+    try {
+      const lote = await loteDespachoService.corregirEstado(req.params.id as string, req.body, req.user!.id);
+      res.json({ success: true, data: lote });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async registrarPesaje(req: AuthRequest, res: Response) {
     try {
       const lote = await loteDespachoService.registrarPesaje(req.params.id as string, req.body, req.user!.id);

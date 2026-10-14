@@ -123,6 +123,13 @@ export const avanzarEstadoLoteSchema = z
   })
   .strict();
 
+export const corregirEstadoLoteSchema = z
+  .object({
+    estado: z.enum(["REGISTRADO", "EN_TRANSITO", "EN_BALANZA"]),
+    motivo: z.string().trim().min(5, "El motivo debe tener al menos 5 caracteres"),
+  })
+  .strict();
+
 export const registrarPesajeSchema = z
   .object({
     tonelajeBruto: z.number().positive(),
