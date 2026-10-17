@@ -7,6 +7,32 @@ import { HttpError } from "../../errors/http.error.js";
 
 type TransportistaQuery = z.infer<typeof transportistaQuerySchema>;
 
+// Misma persona aunque cambien mayúsculas, tildes o espacios de más
+// ("Roger  Quispe " = "ROGER QUISPE").
+function normalizarNombre(nombre: string) {
+  return nombre
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+// Evita que el mismo transportista quede cargado dos veces (así pasó con
+// "ROGER QUISPE" y "ROGER QUISPE MIRANDA": dos filas, vehículos y lotes
+// repartidos entre ambas).
+async function validarNombreUnico(nombre: string, excluirId?: number) {
+  const buscado = normalizarNombre(nombre);
+  const todos = await prisma.transportista.findMany({ select: { id: true, nombreORazonSocial: true } });
+  const repetido = todos.find((t) => t.id !== excluirId && normalizarNombre(t.nombreORazonSocial) === buscado);
+  if (repetido) {
+    throw new HttpError(
+      `Ya existe el transportista "${repetido.nombreORazonSocial}". Si es el mismo, usa ese en vez de crear otro.`,
+      409,
+    );
+  }
+}
+
 export const transportistaService = {
   async getAll(query: TransportistaQuery) {
     const where: any = {};
@@ -32,6 +58,8 @@ export const transportistaService = {
   },
 
   async create(data: CreateTransportistaDTO, userId: number) {
+    await validarNombreUnico(data.nombreORazonSocial);
+
     const transportista = await prisma.transportista.create({
       data: {
         tipoEntidad: data.tipoEntidad,
@@ -58,6 +86,10 @@ export const transportistaService = {
       Object.entries(data).filter(([, v]) => v !== undefined),
     ) as any;
 
+    if (typeof cleanData.nombreORazonSocial === "string") {
+      await validarNombreUnico(cleanData.nombreORazonSocial, id);
+    }
+
     const transportista = await prisma.transportista.update({ where: { id }, data: cleanData });
 
     await prisma.log.create({
@@ -72,10 +104,15 @@ export const transportistaService = {
   // Se prefiere desactivar (activo: false) antes que eliminar; solo se
   // permite el borrado físico si el transportista nunca llegó a usarse.
   async remove(id: number, userId: number) {
-    const enUso = await prisma.vehiculo.count({ where: { propietarioId: id } });
-    if (enUso > 0) {
+    const [vehiculos, lotes, liquidaciones, tarifas] = await Promise.all([
+      prisma.vehiculo.count({ where: { propietarioId: id } }),
+      prisma.loteDespacho.count({ where: { transportistaId: id } }),
+      prisma.liquidacionPeriodo.count({ where: { transportistaId: id } }),
+      prisma.tarifaLiquidacion.count({ where: { transportistaId: id } }),
+    ]);
+    if (vehiculos + lotes + liquidaciones + tarifas > 0) {
       throw new HttpError(
-        "No se puede eliminar: el transportista tiene vehículos asociados. Desactívalo en su lugar.",
+        "No se puede eliminar: el transportista tiene vehículos, lotes, liquidaciones o tarifas asociados. Desactívalo en su lugar.",
         409,
       );
     }
