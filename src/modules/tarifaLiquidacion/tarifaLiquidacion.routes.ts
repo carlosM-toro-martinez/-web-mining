@@ -3,6 +3,7 @@ import { tarifaLiquidacionController } from "./tarifaLiquidacion.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
 import {
   createTarifaLiquidacionSchema,
+  tarifaAplicableQuerySchema,
   tarifaLiquidacionQuerySchema,
 } from "./tarifaLiquidacion.schema.js";
 import { authenticate } from "../../middleware/auth.middleware.js";
@@ -21,6 +22,7 @@ router.use(authenticate);
 router.use(requireModulo("logistica"));
 
 router.get("/", validateQuery(tarifaLiquidacionQuerySchema), tarifaLiquidacionController.getAll);
+router.get("/aplicable", validateQuery(tarifaAplicableQuerySchema), tarifaLiquidacionController.aplicable);
 router.get("/:id", validateParams(idSchema), tarifaLiquidacionController.getById);
 
 router.post(

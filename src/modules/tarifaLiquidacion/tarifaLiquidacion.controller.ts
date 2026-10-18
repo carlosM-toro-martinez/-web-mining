@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { tarifaLiquidacionService } from "./tarifaLiquidacion.service.js";
-import { tarifaLiquidacionQuerySchema } from "./tarifaLiquidacion.schema.js";
+import { tarifaAplicableQuerySchema, tarifaLiquidacionQuerySchema } from "./tarifaLiquidacion.schema.js";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 
@@ -15,6 +15,18 @@ export const tarifaLiquidacionController = {
       res.json({ success: true, data });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  // Express 5: se vuelve a parsear aquí (ver getAll).
+  async aplicable(req: AuthRequest, res: Response) {
+    try {
+      const query = tarifaAplicableQuerySchema.parse(req.query);
+      const data = await tarifaLiquidacionService.aplicable(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },

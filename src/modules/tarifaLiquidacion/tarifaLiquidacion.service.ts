@@ -1,13 +1,47 @@
 import { prisma } from "../../config/prisma.js";
 import type { CreateTarifaLiquidacionDTO } from "./tarifaLiquidacion.types.js";
 import type { z } from "zod";
-import type { tarifaLiquidacionQuerySchema } from "./tarifaLiquidacion.schema.js";
+import type { tarifaAplicableQuerySchema, tarifaLiquidacionQuerySchema } from "./tarifaLiquidacion.schema.js";
+import { buscarTarifaAplicable } from "../liquidacion/liquidacion.service.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 
 type TarifaLiquidacionQuery = z.infer<typeof tarifaLiquidacionQuerySchema>;
+type TarifaAplicableQuery = z.infer<typeof tarifaAplicableQuerySchema>;
+
+const INCLUDE_TARIFA = {
+  tipoMineral: true,
+  transportista: { select: { id: true, nombreORazonSocial: true } },
+} as const;
 
 export const tarifaLiquidacionService = {
+  // Misma búsqueda (y mismo orden de prioridad) que usa la liquidación real
+  // — buscarTarifaAplicable — para poder mostrar "con este transportista, con
+  // o sin combustible, se pagaría tanto" sin crear nada.
+  async aplicable(query: TarifaAplicableQuery) {
+    const transportista = await prisma.transportista.findUnique({ where: { id: query.transportistaId } });
+    if (!transportista) throw new HttpError("Transportista no encontrado", 404);
+
+    const tipoMineralId =
+      query.tipoMineralId ??
+      (await prisma.tipoMineral.findFirst({ where: { activo: true }, orderBy: { id: "asc" } }))?.id;
+    if (!tipoMineralId) throw new HttpError("No hay un tipo de mineral registrado", 409);
+
+    const fecha = query.fecha ?? new Date(new Date().toISOString().slice(0, 10));
+    const encontrada = await buscarTarifaAplicable(
+      transportista.tipoEntidad,
+      transportista.id,
+      tipoMineralId,
+      query.incluyeCombustible,
+      fecha,
+    );
+
+    const tarifa = encontrada
+      ? await prisma.tarifaLiquidacion.findUnique({ where: { id: encontrada.id }, include: INCLUDE_TARIFA })
+      : null;
+    return { transportista, fecha, tarifa };
+  },
+
   async getAll(query: TarifaLiquidacionQuery) {
     const where: any = {};
 
@@ -19,13 +53,13 @@ export const tarifaLiquidacionService = {
 
     return prisma.tarifaLiquidacion.findMany({
       where,
-      include: { tipoMineral: true },
+      include: INCLUDE_TARIFA,
       orderBy: { vigenteDesde: "desc" },
     });
   },
 
   async getById(id: number) {
-    return prisma.tarifaLiquidacion.findUnique({ where: { id }, include: { tipoMineral: true } });
+    return prisma.tarifaLiquidacion.findUnique({ where: { id }, include: INCLUDE_TARIFA });
   },
 
   // Igual que las alícuotas: nunca se edita, crear una nueva cierra la
@@ -65,7 +99,7 @@ export const tarifaLiquidacionService = {
           tipoMineralId: data.tipoMineralId ?? null,
           incluyeCombustible: data.incluyeCombustible ?? null,
         },
-        include: { tipoMineral: true },
+        include: INCLUDE_TARIFA,
       });
     });
 

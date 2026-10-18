@@ -19,6 +19,18 @@ export const createTarifaLiquidacionSchema = z
   })
   .strict();
 
+// "¿Cuánto se pagaría?": la misma búsqueda que hace la liquidación real,
+// para probarla sin crear nada. Si no se manda fecha usa hoy; si no se manda
+// mineral usa el primero activo (hoy hay uno solo: Carga Chami).
+export const tarifaAplicableQuerySchema = z
+  .object({
+    transportistaId: z.coerce.number().int().positive(),
+    incluyeCombustible: tipoCombustibleViajeSchema,
+    fecha: z.coerce.date().optional(),
+    tipoMineralId: z.coerce.number().int().positive().optional(),
+  })
+  .strict();
+
 export const tarifaLiquidacionQuerySchema = z
   .object({
     tipoEntidad: tipoEntidadTransportistaSchema.optional(),

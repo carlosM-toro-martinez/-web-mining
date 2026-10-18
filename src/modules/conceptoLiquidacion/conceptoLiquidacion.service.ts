@@ -6,6 +6,7 @@ import type {
 import type { z } from "zod";
 import type { conceptoLiquidacionQuerySchema } from "./conceptoLiquidacion.schema.js";
 import { logger } from "../../config/logger.js";
+import { HttpError } from "../../errors/http.error.js";
 
 type ConceptoLiquidacionQuery = z.infer<typeof conceptoLiquidacionQuerySchema>;
 
@@ -77,6 +78,14 @@ export const conceptoLiquidacionService = {
   // validar que el concepto no esté en uso antes de eliminarlo. Mientras tanto,
   // preferir desactivar (activo: false) en vez de eliminar.
   async remove(id: number, userId: number) {
+    const enUso = await prisma.liquidacionItemConcepto.count({ where: { conceptoId: id } });
+    if (enUso > 0) {
+      throw new HttpError(
+        `No se puede eliminar: ya se usó en ${enUso} renglón${enUso === 1 ? "" : "es"} de liquidaciones. Cambia su nombre en lugar de eliminarlo.`,
+        409,
+      );
+    }
+
     await prisma.conceptoLiquidacion.delete({ where: { id } });
 
     await prisma.log.create({

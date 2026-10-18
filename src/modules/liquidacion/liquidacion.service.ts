@@ -46,7 +46,7 @@ const INCLUDE_DETALLE = {
 //   verdad quiere cobrar distinto según si la empresa puso el combustible.
 //
 // La primera que exista y esté vigente en la fecha gana.
-async function buscarTarifaAplicable(
+export async function buscarTarifaAplicable(
   tipoEntidad: string,
   transportistaId: number,
   tipoMineralId: number,
