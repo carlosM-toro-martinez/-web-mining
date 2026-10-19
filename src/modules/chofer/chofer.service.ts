@@ -3,8 +3,17 @@ import type { CreateChoferDTO, UpdateChoferDTO } from "./chofer.types.js";
 import type { z } from "zod";
 import type { choferQuerySchema } from "./chofer.schema.js";
 import { logger } from "../../config/logger.js";
+import { HttpError } from "../../errors/http.error.js";
 
 type ChoferQuery = z.infer<typeof choferQuerySchema>;
+
+// El CI es único: se avisa con claridad en vez de dejar pasar el error de la base.
+async function validarCiLibre(ci: string, excluirId?: number) {
+  const otro = await prisma.chofer.findUnique({ where: { ci } });
+  if (otro && otro.id !== excluirId) {
+    throw new HttpError(`Ya existe un chofer con el CI ${ci} (${otro.nombre}).`, 409);
+  }
+}
 
 export const choferService = {
   async getAll(query: ChoferQuery) {
@@ -27,6 +36,7 @@ export const choferService = {
   },
 
   async create(data: CreateChoferDTO, userId: number) {
+    await validarCiLibre(data.ci.trim());
     const chofer = await prisma.chofer.create({
       data: {
         nombre: data.nombre,
@@ -49,6 +59,14 @@ export const choferService = {
     const cleanData = Object.fromEntries(
       Object.entries(data).filter(([, v]) => v !== undefined),
     ) as any;
+
+    const existente = await prisma.chofer.findUnique({ where: { id } });
+    if (!existente) throw new HttpError("Chofer no encontrado", 404);
+    if (typeof cleanData.nombre === "string") cleanData.nombre = cleanData.nombre.trim();
+    if (typeof cleanData.ci === "string") {
+      cleanData.ci = cleanData.ci.trim();
+      await validarCiLibre(cleanData.ci, id);
+    }
 
     const chofer = await prisma.chofer.update({ where: { id }, data: cleanData });
 

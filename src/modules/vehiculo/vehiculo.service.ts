@@ -11,6 +11,14 @@ import { HttpError } from "../../errors/http.error.js";
 
 type VehiculoQuery = z.infer<typeof vehiculoQuerySchema>;
 
+// La placa es única: se avisa con claridad en vez de dejar pasar el error de la base.
+async function validarPlacaLibre(placa: string, excluirId?: number) {
+  const otro = await prisma.vehiculo.findUnique({ where: { placa } });
+  if (otro && otro.id !== excluirId) {
+    throw new HttpError(`Ya existe un vehículo con la placa ${placa}.`, 409);
+  }
+}
+
 export const vehiculoService = {
   // Devuelve la lista completa (con su estadoActual); el frontend agrupa
   // por columna del tablero — no hace falta un endpoint de agregación aparte.
@@ -52,6 +60,7 @@ export const vehiculoService = {
   },
 
   async create(data: CreateVehiculoDTO, userId: number) {
+    await validarPlacaLibre(data.placa.trim().toUpperCase());
     if (data.propietarioId) {
       const transportista = await prisma.transportista.findUnique({ where: { id: data.propietarioId } });
       if (!transportista) throw new HttpError("Transportista propietario no encontrado", 404);
@@ -60,7 +69,7 @@ export const vehiculoService = {
     const vehiculo = await prisma.$transaction(async (tx) => {
       const creado = await tx.vehiculo.create({
         data: {
-          placa: data.placa.toUpperCase(),
+          placa: data.placa.trim().toUpperCase(),
           tipo: data.tipo,
           capacidadTon: data.capacidadTon,
           propietarioId: data.propietarioId ?? null,
@@ -95,8 +104,16 @@ export const vehiculoService = {
       Object.entries(data).filter(([, v]) => v !== undefined),
     ) as any;
 
+    const existente = await prisma.vehiculo.findUnique({ where: { id } });
+    if (!existente) throw new HttpError("Vehículo no encontrado", 404);
+
     if (cleanData.placa) {
-      cleanData.placa = String(cleanData.placa).toUpperCase();
+      cleanData.placa = String(cleanData.placa).trim().toUpperCase();
+      await validarPlacaLibre(cleanData.placa, id);
+    }
+    if (cleanData.propietarioId) {
+      const transportista = await prisma.transportista.findUnique({ where: { id: cleanData.propietarioId } });
+      if (!transportista) throw new HttpError("Transportista propietario no encontrado", 404);
     }
 
     const vehiculo = await prisma.vehiculo.update({ where: { id }, data: cleanData });
