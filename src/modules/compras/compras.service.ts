@@ -846,6 +846,7 @@ export const comprasService = {
         compra: {
           select: {
             id: true,
+            estado: true,
             createdAt: true,
             numeroFactura: true,
             proveedor: { select: { id: true, nombre: true } },
