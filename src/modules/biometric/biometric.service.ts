@@ -319,7 +319,7 @@ export async function getAttendanceLogs(query: AttendanceQuery) {
       take: limit,
       orderBy: { fecha: "desc" },
       include: {
-        employee: { select: { id: true, nombre: true, cargo: true } },
+        employee: { select: { id: true, nombre: true, cargo: true, tipoPersonal: true } },
       },
     }),
     prisma.asistenciaLog.count({ where }),
@@ -336,6 +336,7 @@ export async function getAttendanceLogs(query: AttendanceQuery) {
             id: l.employee.id,
             nombre: l.employee.nombre,
             cargo: (l.employee as Record<string, unknown>)["cargo"] as string | null ?? null,
+            tipoPersonal: l.employee.tipoPersonal,
           }
         : null,
     })),

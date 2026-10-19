@@ -466,6 +466,8 @@ model Employee {
   syncStatus   SyncStatus         @default(PENDING)
   cargo        String?
   tipoPersonal TipoPersonal       @default(OBRERO)
+  // PLANTA entra al Rayador de mitas; CONTRATO no (se lleva aparte)
+  contratacion TipoContratacion   @default(PLANTA)
   logs         AsistenciaLog[]
   ausencias    AusenciaEmpleado[]
   horarios     EmpleadoHorario[]
@@ -1313,6 +1315,11 @@ enum SyncStatus {
   PENDING
   SYNCED
   ERROR
+}
+
+enum TipoContratacion {
+  PLANTA
+  CONTRATO
 }
 
 enum TipoPersonal {

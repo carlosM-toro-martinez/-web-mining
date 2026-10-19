@@ -20,6 +20,7 @@ function toResponse(emp: any): EmployeeResponse {
     documento: emp.documento,
     cargo: emp.cargo ?? null,
     tipoPersonal: emp.tipoPersonal ?? "OBRERO",
+    contratacion: emp.contratacion ?? "PLANTA",
     deviceUserId: emp.deviceUserId,
     activo: emp.activo,
     syncStatus: emp.syncStatus as EmployeeResponse["syncStatus"],
@@ -77,6 +78,7 @@ export async function createEmployee(data: CreateEmployeeInput): Promise<Employe
       documento: data.documento ?? null,
       cargo: data.cargo ?? null,
       tipoPersonal: data.tipoPersonal ?? "OBRERO",
+      contratacion: data.contratacion ?? "PLANTA",
       deviceUserId,
       syncStatus: "PENDING",
     },
@@ -110,6 +112,9 @@ export async function getAllEmployees(query: EmployeeQuery): Promise<{
   }
   if (query.tipoPersonal !== undefined) {
     where["tipoPersonal"] = query.tipoPersonal;
+  }
+  if (query.contratacion !== undefined) {
+    where["contratacion"] = query.contratacion;
   }
 
   const [employees, total] = await Promise.all([
@@ -157,6 +162,7 @@ export async function updateEmployee(
       ...(data.documento !== undefined && { documento: data.documento }),
       ...(data.cargo !== undefined && { cargo: data.cargo }),
       ...(data.tipoPersonal !== undefined && { tipoPersonal: data.tipoPersonal }),
+      ...(data.contratacion !== undefined && { contratacion: data.contratacion }),
       ...(data.activo !== undefined && { activo: data.activo }),
     },
   });
