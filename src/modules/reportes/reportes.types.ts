@@ -9,9 +9,15 @@ export interface BinCardItem {
   stockAntes: number;
   stockDespues: number;
   usuarioNombre: string;
+  solicitanteNombre: string | null;
   referencia: string | null;
   referenciaId: string | null;
   productoNombre: string;
+  productoId: number;
+  productoCodigo: string;
+  esRetroactivo?: boolean;
+  periodoAnio?: number;
+  periodoMes?: number;
 }
 
 export interface BinCardValoradoItem extends BinCardItem {

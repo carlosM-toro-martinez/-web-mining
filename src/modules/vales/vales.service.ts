@@ -229,9 +229,12 @@ export const valesService = {
     return { vales, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
-  async getHistorialSolicitante(solicitanteId: number, page = 1, limit = 10) {
+  async getHistorialSolicitante(solicitanteId: number, page = 1, limit = 10, productoId?: number) {
     const skip = (page - 1) * limit;
-    const where = { solicitanteId };
+    const where = {
+      solicitanteId,
+      ...(productoId ? { items: { some: { productoId } } } : {}),
+    };
 
     const [vales, total] = await Promise.all([
       prisma.vale.findMany({

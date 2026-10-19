@@ -7,6 +7,7 @@ import { HttpError } from "../../errors/http.error.js";
 import { verificarMesAbierto } from "../../utils/periodoRetroactivo.js";
 import { assertCppMovilInactivo, assertMesSinCppMovil, esMesCppMovil } from "../../utils/cppMovil.js";
 import { acumularSaldo, contadorPorMovimiento, redondearBs, redondearPrecio } from "../kardex/kardexMovil.calc.js";
+import { productosConMovimientosEnMes, reconstruirCadenaProductoMes } from "../kardex/binCardCadena.js";
 import { productoService } from "../producto/producto.service.js";
 import type {
   CatalogoImportResult,
@@ -1808,6 +1809,20 @@ export async function cerrarMes(anio: number, mes: number, userId: number, force
     }
   }
 
+  // Deja una sola cadena de stock coherente (retroactivos y normales juntos, en orden cronológico).
+  // Solo reescribe stockAntes/stockDespues/saldoBs: no toca precios, importes, SaldoMensual ni Stock.
+  try {
+    for (const productoId of await productosConMovimientosEnMes(prisma, anio, mes)) {
+      try {
+        await reconstruirCadenaProductoMes(prisma, productoId, anio, mes, true);
+      } catch (err) {
+        logger.warn({ anio, mes, productoId, err }, "No se pudo reconstruir la cadena del bin-card de un producto al cerrar el mes");
+      }
+    }
+  } catch (err) {
+    logger.warn({ anio, mes, err }, "No se pudo reconstruir la cadena del bin-card al cerrar el mes");
+  }
+
   const cierre = await prisma.cierreMes.create({ data: { anio, mes, usuarioId: userId } });
 
   await prisma.log.create({
@@ -2323,195 +2338,6 @@ export async function diagnosticarSaldos(anio: number, mes: number) {
     discrepanciasCount: discrepancias.length,
     discrepancias,
   };
-}
-
-// ─── Limpiar mes (eliminar vales y compras no-retroactivos) ──────────────────
-
-export async function getLimpiarMesPreview(anio: number, mes: number) {
-  const startOfMonth = new Date(Date.UTC(anio, mes - 1, 1));
-  const endOfMonth   = new Date(Date.UTC(anio, mes, 1));
-
-  // Vales no-retroactivos: tienen movimiento VALE con periodoAnio=null creado en el mes
-  const valeMovs = await prisma.movimiento.findMany({
-    where: {
-      referencia: "VALE",
-      periodoAnio: null,
-      createdAt: { gte: startOfMonth, lt: endOfMonth },
-    },
-    select: { referenciaId: true },
-    distinct: ["referenciaId"],
-  });
-  const valeIds = valeMovs.map((m) => m.referenciaId).filter(Boolean) as string[];
-
-  const vales = await prisma.vale.findMany({
-    where: { id: { in: valeIds } },
-    include: {
-      items: {
-        include: { producto: { select: { id: true, codigo: true, nombre: true, unidad: true } } },
-      },
-      solicitante: { select: { id: true, nombre: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-
-  // Compras no-retroactivas: tienen movimiento COMPRA con periodoAnio=null creado en el mes
-  const compraMovs = await prisma.movimiento.findMany({
-    where: {
-      referencia: "COMPRA",
-      periodoAnio: null,
-      createdAt: { gte: startOfMonth, lt: endOfMonth },
-    },
-    select: { referenciaId: true },
-    distinct: ["referenciaId"],
-  });
-  const compraIds = compraMovs.map((m) => m.referenciaId).filter(Boolean) as string[];
-
-  const compras = await prisma.compra.findMany({
-    where: { id: { in: compraIds } },
-    include: {
-      items: {
-        include: { producto: { select: { id: true, codigo: true, nombre: true, unidad: true } } },
-      },
-      proveedor: { select: { id: true, nombre: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-
-  return {
-    anio,
-    mes,
-    vales: vales.map((v) => ({
-      id: v.id,
-      fecha: v.createdAt,
-      estado: v.estado,
-      solicitante: (v.solicitante as { nombre: string } | null)?.nombre ?? "-",
-      items: v.items.map((i) => ({
-        productoId: i.productoId,
-        productoCodigo: i.producto.codigo,
-        productoNombre: i.producto.nombre,
-        unidad: i.producto.unidad,
-        cantidadSolicitada: Number(i.cantidadSolicitada ?? 0),
-        cantidadEntregada: Number(i.cantidadEntregada ?? 0),
-      })),
-    })),
-    compras: compras.map((c) => ({
-      id: c.id,
-      fecha: (c as any).recibidoAt ?? c.createdAt,
-      estado: c.estado,
-      proveedor: (c.proveedor as { nombre: string } | null)?.nombre ?? "-",
-      items: c.items.map((i) => ({
-        productoId: i.productoId,
-        productoCodigo: i.producto.codigo,
-        productoNombre: i.producto.nombre,
-        unidad: i.producto.unidad,
-        cantidadRecibida: Number((i as any).cantidadRecibida ?? 0),
-        precioUnit: Number(i.precioUnit),
-      })),
-    })),
-  };
-}
-
-export async function ejecutarLimpiarMes(anio: number, mes: number, userId: number) {
-  assertMesSinCppMovil(anio, mes, "Limpiar el mes");
-  const preview = await getLimpiarMesPreview(anio, mes);
-
-  let valesEliminados = 0;
-  let comprasEliminadas = 0;
-
-  await prisma.$transaction(
-    async (tx) => {
-      // ── Eliminar vales ──────────────────────────────────────────────────────
-      for (const valePreview of preview.vales) {
-        const vale = await tx.vale.findUnique({
-          where: { id: valePreview.id },
-          include: {
-            items: { include: { producto: { include: { stock: true } } } },
-          },
-        });
-        if (!vale) continue;
-
-        // Restaurar stock por cantidades entregadas
-        for (const item of vale.items) {
-          const entregado = new Prisma.Decimal(item.cantidadEntregada ?? 0);
-          if (entregado.gt(0)) {
-            await tx.stock.update({
-              where: { productoId: item.productoId },
-              data: { cantidad: { increment: entregado } },
-            });
-          }
-        }
-
-        // Liberar reservas si estaba APROBADO
-        if (vale.estado === "APROBADO") {
-          for (const item of vale.items) {
-            const stock = item.producto.stock;
-            if (!stock) continue;
-            await tx.stock.update({
-              where: { productoId: item.productoId },
-              data: {
-                cantidadReservada: {
-                  decrement: Prisma.Decimal.min(
-                    new Prisma.Decimal(item.cantidadSolicitada),
-                    stock.cantidadReservada,
-                  ),
-                },
-              },
-            });
-          }
-        }
-
-        await tx.movimiento.deleteMany({
-          where: { referencia: { in: ["VALE", "ANULACION_VALE"] }, referenciaId: vale.id },
-        });
-        await tx.anulacionVale.deleteMany({ where: { valeId: vale.id } });
-        await tx.valeItem.deleteMany({ where: { valeId: vale.id } });
-        await tx.vale.delete({ where: { id: vale.id } });
-        valesEliminados++;
-      }
-
-      // ── Eliminar compras ────────────────────────────────────────────────────
-      for (const compraPreview of preview.compras) {
-        const compra = await tx.compra.findUnique({
-          where: { id: compraPreview.id },
-          include: { items: true },
-        });
-        if (!compra) continue;
-
-        // Revertir stock solo si no está anulada (la anulación ya lo revirtió)
-        if (compra.estado !== "ANULADA") {
-          for (const item of compra.items) {
-            const recibido = new Prisma.Decimal((item as any).cantidadRecibida ?? 0);
-            if (recibido.gt(0)) {
-              await tx.stock.update({
-                where: { productoId: item.productoId },
-                data: { cantidad: { decrement: recibido } },
-              });
-            }
-          }
-        }
-
-        await tx.movimiento.deleteMany({
-          where: { referencia: { in: ["COMPRA", "ANULACION_COMPRA"] }, referenciaId: compra.id },
-        });
-        await tx.anulacionCompra.deleteMany({ where: { compraId: compra.id } });
-        await tx.compraItem.deleteMany({ where: { compraId: compra.id } });
-        await tx.compra.delete({ where: { id: compra.id } });
-        comprasEliminadas++;
-      }
-    },
-    { timeout: 60_000 },
-  );
-
-  await prisma.log.create({
-    data: {
-      usuarioId: userId,
-      accion: "LIMPIAR_MES",
-      data: { anio, mes, valesEliminados, comprasEliminadas } as Prisma.JsonObject,
-    },
-  });
-
-  logger.info({ userId, anio, mes, valesEliminados, comprasEliminadas }, "Limpiar mes ejecutado");
-  return { anio, mes, valesEliminados, comprasEliminadas };
 }
 
 // ─── Recalcular stock histórico ───────────────────────────────────────────────

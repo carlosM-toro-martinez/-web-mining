@@ -34,7 +34,13 @@ export const valesController = {
       }
       const page = req.query.page ? parseInt(String(req.query.page)) : 1;
       const limit = req.query.limit ? parseInt(String(req.query.limit)) : 10;
-      const result = await valesService.getHistorialSolicitante(solicitanteId, page, limit);
+      const productoId = req.query.productoId ? parseInt(String(req.query.productoId)) : undefined;
+      const result = await valesService.getHistorialSolicitante(
+        solicitanteId,
+        page,
+        limit,
+        productoId && !isNaN(productoId) ? productoId : undefined,
+      );
       res.json({ success: true, data: result.vales, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

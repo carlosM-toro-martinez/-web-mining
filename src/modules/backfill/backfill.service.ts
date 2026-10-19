@@ -125,8 +125,23 @@ async function procesarProductoMes(
   for (const mov of movimientos) {
     const qty = new Prisma.Decimal(mov.cantidad);
 
-    if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA") {
-      const precioConIva = ciMap.get(mov.referenciaId as string) ?? Number(mov.precioUnit);
+    if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA" && !ciMap.has(mov.referenciaId as string)) {
+      // Entrada de una compra anulada (o sin ítem recibido): su valor ya está guardado sin IVA.
+      // Antes se le volvía a aplicar el factor de IVA en cada ejecución, reduciéndolo cada vez.
+      const newStock = currentStock.add(qty);
+
+      updates.push(prisma.movimiento.update({
+        where: { id: mov.id },
+        data: {
+          saldoBs: newStock.isNegative() ? new Prisma.Decimal(0) : newStock.mul(periodCPP),
+        },
+      }));
+
+      currentStock = newStock;
+      movActualizados++;
+
+    } else if (mov.tipo === "ENTRADA" && mov.referencia === "COMPRA") {
+      const precioConIva = ciMap.get(mov.referenciaId as string) as number;
       const tieneIva     = ciTieneIvaMap.get(mov.referenciaId as string) ?? true;
       const esGas        = ciEsGasMap.get(mov.referenciaId as string) ?? (productoId === gasolinaId || productoId === dieselId);
       const factor       = !tieneIva ? "1" : esGas ? "0.909" : "0.87";

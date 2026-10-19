@@ -22,10 +22,11 @@ router.post(
   movimientoController.createEntrada,
 );
 
+// Rehace solo stockAntes/stockDespues/saldoBs del mes en orden cronológico (simulación por defecto).
 router.post(
-  "/reordenar",
+  "/reconstruir-cadena",
   authorize("ADMIN"),
-  movimientoController.reordenarMovimientos,
+  movimientoController.reconstruirCadena,
 );
 
 export default router;

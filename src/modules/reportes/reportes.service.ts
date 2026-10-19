@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { cppMovilActivo, esMesCppMovil } from "../../utils/cppMovil.js";
+import { momentosDeRegistro, ordenarMovimientos, simularCadenasReporte } from "../kardex/binCardCadena.js";
 import type {
   BinCardQueryDTO,
   StockQueryDTO,
@@ -64,105 +65,138 @@ function precioUnitSinIvaRaw(precio: number, esGasEspecial: boolean, tieneIva = 
 }
 
 
+// Solicitante de cada movimiento: el del vale (también en su anulación) o quien recibió en una entrega sin vale.
+async function solicitantesBinCard(movs: Array<{ id: string; referencia: string | null; referenciaId: string | null; usuarioRecibido?: { nombre: string } | null }>) {
+  const valeIds = [...new Set(movs.filter((m) => (m.referencia === "VALE" || m.referencia === "ANULACION_VALE") && m.referenciaId).map((m) => m.referenciaId as string))];
+  const vales = valeIds.length
+    ? await prisma.vale.findMany({ where: { id: { in: valeIds } }, select: { id: true, solicitante: { select: { nombre: true } } } })
+    : [];
+  const porVale = new Map(vales.map((v) => [v.id, v.solicitante?.nombre ?? null]));
+  return new Map(
+    movs.map((m) => [m.id, (m.referenciaId ? porVale.get(m.referenciaId) : null) ?? m.usuarioRecibido?.nombre ?? null] as const),
+  );
+}
+
+const includeBinCard = {
+  usuarioEntrega: { select: { nombre: true } },
+  usuarioRecibido: { select: { nombre: true } },
+  usuario: { select: { nombre: true } },
+  producto: { select: { nombre: true, codigo: true } },
+} as const;
+
+// "Usuario": quien entregó; en las anulaciones y otros movimientos sin entrega, quien los registró.
+const nombreUsuarioBinCard = (mov: any): string => mov.usuarioEntrega?.nombre || mov.usuario?.nombre || "Desconocido";
+
+// Solo se marcan las filas que pertenecen a un período distinto al mes de su fecha (p. ej. una anulación
+// registrada en octubre de un vale de septiembre). Las retroactivas del propio mes no se marcan.
+function periodoAjenoBinCard(mov: any) {
+  const ajeno =
+    !!mov.esRetroactivo &&
+    !!mov.periodoAnio &&
+    !!mov.periodoMes &&
+    (mov.periodoAnio !== mov.createdAt.getUTCFullYear() || mov.periodoMes !== mov.createdAt.getUTCMonth() + 1);
+  return ajeno
+    ? { esRetroactivo: true, periodoAnio: mov.periodoAnio as number, periodoMes: mov.periodoMes as number }
+    : {};
+}
+
+// Vista simulada: recalcula en memoria la cadena de stock en orden cronológico. No escribe nada en la base.
+async function aplicarSimulacion(movimientos: any[], activar: boolean) {
+  const vacio = new Map<string, { stockAntes: number; stockDespues: number; saldoBs: number }>();
+  if (!activar || movimientos.length === 0) return { valores: vacio, simulacion: undefined };
+  const { filas, sinSimular } = await simularCadenasReporte(prisma, movimientos);
+  const codigoPorId = new Map<number, string>(movimientos.map((m) => [m.productoId as number, m.producto?.codigo as string]));
+  let filasAjustadas = 0;
+  for (const m of movimientos) {
+    const f = filas.get(m.id);
+    if (f && (f.stockAntes !== Number(m.stockAntes) || f.stockDespues !== Number(m.stockDespues) || f.saldoBs !== Number(m.saldoBs))) filasAjustadas++;
+  }
+  const productosSinSimular = [...new Set(sinSimular.map((s) => codigoPorId.get(s.productoId) ?? String(s.productoId)))];
+  return { valores: filas, simulacion: { activa: true, filasAjustadas, productosSinSimular } };
+}
+
+async function consultarBinCard(query: BinCardQueryDTO) {
+  const consulta = await consultarBinCardBase(query);
+  const { valores, simulacion } = await aplicarSimulacion(consulta.movimientos, !!query.ordenado);
+  return { ...consulta, valores, simulacion };
+}
+
+async function consultarBinCardBase(query: BinCardQueryDTO) {
+  const where: any = {};
+  if (query.productoId) where.productoId = query.productoId;
+  const dateRange = buildDateRange(query);
+  if (dateRange) where.createdAt = dateRange;
+
+  if (query.sinPaginar) {
+    const crudos = await prisma.movimiento.findMany({ where, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: includeBinCard });
+    const registro = await momentosDeRegistro(prisma, crudos as any);
+    const movimientos = ordenarMovimientos(crudos as any[], registro) as typeof crudos;
+    return { movimientos, solicitantes: await solicitantesBinCard(movimientos), meta: { total: movimientos.length } };
+  }
+
+  const page = query.page || 1;
+  const limit = query.limit || 50;
+  const skip = (page - 1) * limit;
+  const [movimientos, total] = await Promise.all([
+    prisma.movimiento.findMany({ where, skip, take: limit, orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: includeBinCard }),
+    prisma.movimiento.count({ where }),
+  ]);
+  return {
+    movimientos,
+    solicitantes: await solicitantesBinCard(movimientos),
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
 export const reportesService = {
   async getBinCard(query: BinCardQueryDTO) {
-    const where: any = {};
-    if (query.productoId) where.productoId = query.productoId;
-    const dateRange = buildDateRange(query);
-    if (dateRange) where.createdAt = dateRange;
-
-    const include = {
-      usuarioEntrega: { select: { nombre: true } },
-      producto: { select: { nombre: true } },
-    };
-
-    const mapMov = (mov: any): BinCardItem => ({
+    const { movimientos, solicitantes, meta, valores, simulacion } = await consultarBinCard(query);
+    const items = movimientos.map((mov: any): BinCardItem => ({
       id: mov.id,
       operationId: mov.operationId,
       fecha: mov.createdAt,
       tipo: mov.tipo,
       cantidad: Number(mov.cantidad),
-      stockAntes: Number(mov.stockAntes),
-      stockDespues: Number(mov.stockDespues),
-      usuarioNombre: mov.usuarioEntrega?.nombre || "Desconocido",
+      stockAntes: valores.get(mov.id)?.stockAntes ?? Number(mov.stockAntes),
+      stockDespues: valores.get(mov.id)?.stockDespues ?? Number(mov.stockDespues),
+      usuarioNombre: nombreUsuarioBinCard(mov),
+      solicitanteNombre: solicitantes.get(mov.id) ?? null,
       referencia: mov.referencia,
       referenciaId: mov.referenciaId,
       productoNombre: mov.producto.nombre,
-    });
-
-    if (query.sinPaginar) {
-      const movimientos = await prisma.movimiento.findMany({
-        where, orderBy: { createdAt: "asc" }, include,
-      });
-      const items = movimientos.map(mapMov);
-      logger.info({ query }, "Bin Card sin paginación generado");
-      return { items, meta: { total: items.length } };
-    }
-
-    const page = query.page || 1;
-    const limit = query.limit || 50;
-    const skip = (page - 1) * limit;
-
-    const [movimientos, total] = await Promise.all([
-      prisma.movimiento.findMany({ where, skip, take: limit, orderBy: { createdAt: "asc" }, include }),
-      prisma.movimiento.count({ where }),
-    ]);
-
-    const items = movimientos.map(mapMov);
-    logger.info({ query, page, limit }, "Bin Card generado");
-    return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+      productoId: mov.productoId,
+      productoCodigo: mov.producto.codigo,
+      ...periodoAjenoBinCard(mov),
+    }));
+    logger.info({ query }, "Bin Card generado");
+    return { items, meta, ...(simulacion ? { simulacion } : {}) };
   },
 
   async getBinCardValorado(query: BinCardQueryDTO) {
-    const where: any = {};
-    if (query.productoId) where.productoId = query.productoId;
-    const dateRange = buildDateRange(query);
-    if (dateRange) where.createdAt = dateRange;
-
-    const include = {
-      usuarioEntrega: { select: { nombre: true } },
-      producto: { select: { nombre: true } },
-    };
-
-    const mapMov = (mov: any): BinCardValoradoItem => ({
+    const { movimientos, solicitantes, meta, valores, simulacion } = await consultarBinCard(query);
+    const items = movimientos.map((mov: any): BinCardValoradoItem => ({
       id: mov.id,
       operationId: mov.operationId,
       fecha: mov.createdAt,
       tipo: mov.tipo,
       cantidad: Number(mov.cantidad),
-      stockAntes: Number(mov.stockAntes),
-      stockDespues: Number(mov.stockDespues),
+      stockAntes: valores.get(mov.id)?.stockAntes ?? Number(mov.stockAntes),
+      stockDespues: valores.get(mov.id)?.stockDespues ?? Number(mov.stockDespues),
       precioUnit: Number(mov.precioUnit),
       entradaBs: Number(mov.entradaBs),
       salidaBs: Number(mov.salidaBs),
-      saldoBs: Number(mov.saldoBs),
-      usuarioNombre: mov.usuarioEntrega?.nombre || "Desconocido",
+      saldoBs: valores.get(mov.id)?.saldoBs ?? Number(mov.saldoBs),
+      usuarioNombre: nombreUsuarioBinCard(mov),
+      solicitanteNombre: solicitantes.get(mov.id) ?? null,
       referencia: mov.referencia,
       referenciaId: mov.referenciaId,
       productoNombre: mov.producto.nombre,
-    });
-
-    if (query.sinPaginar) {
-      const movimientos = await prisma.movimiento.findMany({
-        where, orderBy: { createdAt: "asc" }, include,
-      });
-      const items = movimientos.map(mapMov);
-      logger.info({ query }, "Bin Card Valorado sin paginación generado");
-      return { items, meta: { total: items.length } };
-    }
-
-    const page = query.page || 1;
-    const limit = query.limit || 50;
-    const skip = (page - 1) * limit;
-
-    const [movimientos, total] = await Promise.all([
-      prisma.movimiento.findMany({ where, skip, take: limit, orderBy: { createdAt: "asc" }, include }),
-      prisma.movimiento.count({ where }),
-    ]);
-
-    const items = movimientos.map(mapMov);
-    logger.info({ query, page, limit }, "Bin Card Valorado generado");
-    return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+      productoId: mov.productoId,
+      productoCodigo: mov.producto.codigo,
+      ...periodoAjenoBinCard(mov),
+    }));
+    logger.info({ query }, "Bin Card Valorado generado");
+    return { items, meta, ...(simulacion ? { simulacion } : {}) };
   },
 
   async getStockActual(query: StockQueryDTO) {

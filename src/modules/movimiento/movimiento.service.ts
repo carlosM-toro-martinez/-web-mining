@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import { assertMesSinCppMovil, esFechaCppMovil } from "../../utils/cppMovil.js";
+import { esFechaCppMovil } from "../../utils/cppMovil.js";
 import { registrarMovimientoMovil } from "../kardex/kardexMovil.service.js";
 import type { CreateSalidaDTO, CreateEntradaDTO } from "./movimiento.types.js";
 
@@ -56,91 +56,6 @@ async function validarUsuarios(
   if (!usuarioRecibido) {
     throw new HttpError("Usuario que recibe no encontrado", 404);
   }
-}
-
-async function reordenarMovimientosProductoMes(
-  productoId: number,
-  anio: number,
-  mes: number,
-): Promise<{ movimientosActualizados: number; ordenCorregido: boolean }> {
-  const desde = new Date(Date.UTC(anio, mes - 1, 1));
-  const hasta  = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1));
-
-  const saldo = await (prisma.saldoMensual.findUnique as any)({
-    where: { productoId_anio_mes: { productoId, anio, mes } },
-    select: { saldoInicial: true, precioUnitProm: true },
-  });
-
-  if (!saldo) return { movimientosActualizados: 0, ordenCorregido: false };
-
-  const movimientos = await prisma.movimiento.findMany({
-    where: {
-      productoId,
-      OR: [
-        { esRetroactivo: true,  periodoAnio: anio, periodoMes: mes },
-        { esRetroactivo: false, createdAt: { gte: desde, lt: hasta } },
-      ],
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true, tipo: true, cantidad: true, createdAt: true, esRetroactivo: true },
-  });
-
-  if (movimientos.length === 0) return { movimientosActualizados: 0, ordenCorregido: false };
-
-  const entradas = movimientos.filter(m => m.tipo === "ENTRADA");
-  const salidas  = movimientos.filter(m => m.tipo === "SALIDA");
-  const ordenLogico = [...entradas, ...salidas];
-
-  // Build timestamp pool: retroactive movements get a synthetic timestamp at the very
-  // start of the period month so they stay within the period's date range for bin-card
-  // queries. Their original createdAt belongs to a different month and would make them
-  // invisible in the period's bin-card.
-  let retroSynIdx = 0;
-  const timestamps = [...movimientos]
-    .map(m => ({
-      id: m.id,
-      ts: m.esRetroactivo ? new Date(desde.getTime() + retroSynIdx++) : m.createdAt,
-    }))
-    .sort((a, b) => a.ts.getTime() - b.ts.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map(m => m.ts);
-
-  const periodCPP = new Prisma.Decimal(saldo.precioUnitProm ?? 0);
-  let currentStock = new Prisma.Decimal(saldo.saldoInicial ?? 0);
-  let movActualizados = 0;
-
-  await prisma.$transaction(async (tx) => {
-    for (let i = 0; i < ordenLogico.length; i++) {
-      const mov        = ordenLogico[i]!;
-      const qty        = new Prisma.Decimal(mov.cantidad);
-      const stockAntes = currentStock;
-
-      if (mov.tipo === "ENTRADA") {
-        currentStock = currentStock.add(qty);
-      } else {
-        currentStock = currentStock.sub(qty);
-      }
-
-      const stockDespues = currentStock;
-      const saldoBs = currentStock.isNegative()
-        ? new Prisma.Decimal(0)
-        : currentStock.mul(periodCPP);
-
-      const data: any = { stockAntes, stockDespues, saldoBs, createdAt: timestamps[i]! };
-
-      // Recalculate SALIDA Bs fields using periodCPP for internal consistency
-      // with saldoBs (which also uses periodCPP). ENTRADA keeps original precioUnit/entradaBs.
-      if (mov.tipo === "SALIDA") {
-        data.precioUnit = periodCPP;
-        data.salidaBs   = qty.mul(periodCPP);
-        data.entradaBs  = new Prisma.Decimal(0);
-      }
-
-      await tx.movimiento.update({ where: { id: mov.id }, data });
-      movActualizados++;
-    }
-  });
-
-  return { movimientosActualizados: movActualizados, ordenCorregido: true };
 }
 
 export const movimientoService = {
@@ -430,49 +345,4 @@ export const movimientoService = {
     return result;
   },
 
-  async reordenarMovimientos({ productoId, anio, mes }: { productoId?: number; anio: number; mes: number }) {
-    // Reordenar pone entradas antes que salidas y cambia fechas: destruiría el kardex cronológico.
-    assertMesSinCppMovil(anio, mes, "Reordenar movimientos");
-    const desde = new Date(Date.UTC(anio, mes - 1, 1));
-    const hasta  = new Date(Date.UTC(mes === 12 ? anio + 1 : anio, mes === 12 ? 0 : mes, 1));
-
-    // Determine which products to process
-    let productoIds: number[];
-    if (productoId) {
-      productoIds = [productoId];
-    } else {
-      const saldos = await prisma.saldoMensual.findMany({
-        where: { anio, mes },
-        select: { productoId: true },
-      });
-      productoIds = saldos.map(s => s.productoId);
-    }
-
-    const resultados: { productoId: number; movimientosActualizados: number }[] = [];
-    const errores: { productoId: number; error: string }[] = [];
-    let totalMovs = 0;
-
-    for (const pid of productoIds) {
-      try {
-        const r = await reordenarMovimientosProductoMes(pid, anio, mes);
-        if (r.movimientosActualizados > 0) {
-          resultados.push({ productoId: pid, movimientosActualizados: r.movimientosActualizados });
-          totalMovs += r.movimientosActualizados;
-        }
-      } catch (err) {
-        errores.push({ productoId: pid, error: String(err) });
-      }
-    }
-
-    logger.info({ anio, mes, productoId, totalMovs }, "Movimientos reordenados");
-    return {
-      anio,
-      mes,
-      productoId: productoId ?? null,
-      productosReordenados: resultados.length,
-      movimientosActualizados: totalMovs,
-      resultados,
-      errores,
-    };
-  },
 };
