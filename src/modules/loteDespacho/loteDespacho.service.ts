@@ -87,6 +87,7 @@ export const loteDespachoService = {
         { transportista: { nombreORazonSocial: { contains: texto, mode: "insensitive" as const } } },
         { vehiculo: { placa: { contains: texto, mode: "insensitive" as const } } },
         { formulario101: { codigo: { contains: texto, mode: "insensitive" as const } } },
+        { codigoIngenio: { contains: texto, mode: "insensitive" as const } },
       ];
     }
     if (query.conObservaciones) {
@@ -100,6 +101,8 @@ export const loteDespachoService = {
     }
     if (query.f101) where.formulario101 = query.f101 === "CON" ? { isNot: null } : { is: null };
     if (query.pesaje) where.pesaje = query.pesaje === "CON" ? { isNot: null } : { is: null };
+    if (query.codigoIngenio === "CON") where.AND = [...(where.AND ?? []), { codigoIngenio: { not: null } }, { NOT: { codigoIngenio: "" } }];
+    if (query.codigoIngenio === "SIN") where.AND = [...(where.AND ?? []), { OR: [{ codigoIngenio: null }, { codigoIngenio: "" }] }];
     if (query.nivel) where.nivel = query.nivel === "SIN_NIVEL" ? null : query.nivel;
 
     const [lotes, total] = await Promise.all([
@@ -270,6 +273,9 @@ export const loteDespachoService = {
       numeroCorrelativo,
       ...camposLote
     } = data;
+
+    // Un código en blanco significa "sin código".
+    if (typeof camposLote.codigoIngenio === "string") camposLote.codigoIngenio = camposLote.codigoIngenio.trim() || null;
 
     const loteData: Record<string, unknown> = {};
     for (const [clave, valor] of Object.entries(camposLote)) {
@@ -460,9 +466,12 @@ export const loteDespachoService = {
         throw new HttpError(`No se puede pasar de ${lote.estadoLote} a ${data.estado}`, 409);
       }
 
+      // El código del ingenio solo se guarda si se escribió uno: dejarlo en blanco
+      // no borra el que ya tuviera el lote.
+      const codigoIngenio = data.estado === "EN_BALANZA" ? data.codigoIngenio?.trim() : undefined;
       const actualizado = await tx.loteDespacho.update({
         where: { id },
-        data: { estadoLote: data.estado },
+        data: { estadoLote: data.estado, ...(codigoIngenio ? { codigoIngenio } : {}) },
       });
 
       await tx.vehiculo.update({ where: { id: lote.vehiculoId }, data: { estadoActual: data.estado } });
@@ -477,7 +486,7 @@ export const loteDespachoService = {
       });
 
       await tx.log.create({
-        data: { usuarioId: userId, accion: "AVANZAR_ESTADO_LOTE", data: { loteId: id, estado: data.estado } },
+        data: { usuarioId: userId, accion: "AVANZAR_ESTADO_LOTE", data: { loteId: id, estado: data.estado, ...(codigoIngenio ? { codigoIngenio } : {}) } },
       });
 
       return actualizado;
@@ -607,9 +616,10 @@ export const loteDespachoService = {
         },
       });
 
+      const codigoIngenio = data.codigoIngenio?.trim();
       const actualizado = await tx.loteDespacho.update({
         where: { id },
-        data: { estadoLote: "ACOPIADO" },
+        data: { estadoLote: "ACOPIADO", ...(codigoIngenio ? { codigoIngenio } : {}) },
       });
 
       // No pasa a DISPONIBLE directo: entregó y se pesó, pero todavía tiene

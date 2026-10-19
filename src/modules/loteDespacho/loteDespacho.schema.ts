@@ -7,6 +7,11 @@ export const tipoCombustibleViajeSchema = z.enum(["CON_COMBUSTIBLE", "SIN_COMBUS
 export const NIVELES_LOTE = ["La Moza", "Nivel 0", "Nivel 40", "Nivel 80"] as const;
 export const nivelLoteSchema = z.enum(NIVELES_LOTE);
 
+// Código que el ingenio le asigna al viaje en su balanza. Llega al pasar a
+// "En balanza" o al registrar el pesaje, o se agrega/corrige después editando
+// el lote. Vacío = sin código.
+export const codigoIngenioSchema = z.string().trim().max(60);
+
 export const estadoLoteDespachoSchema = z.enum([
   "REGISTRADO",
   "EN_TRANSITO",
@@ -81,6 +86,7 @@ export const updateLoteDespachoSchema = z
     tipoMineralId: z.number().int().positive().optional(),
     destinoIngenioId: z.number().int().positive().optional(),
     nivel: nivelLoteSchema.nullable().optional(),
+    codigoIngenio: codigoIngenioSchema.nullable().optional(),
     incluyeCombustible: tipoCombustibleViajeSchema.optional(),
     combustibleAsignadoLitros: z.number().nonnegative().nullable().optional(),
     fechaDespachoReal: z.coerce.date().optional(),
@@ -123,6 +129,8 @@ export const loteDespachoQuerySchema = z
     combustible: z.enum(["CON_COMBUSTIBLE", "SIN_COMBUSTIBLE", "SIN_ENTREGA"]).optional(),
     f101: z.enum(["CON", "SIN"]).optional(),
     pesaje: z.enum(["CON", "SIN"]).optional(),
+    // Con o sin código de ingenio anotado.
+    codigoIngenio: z.enum(["CON", "SIN"]).optional(),
     nivel: z.union([nivelLoteSchema, z.literal("SIN_NIVEL")]).optional(),
   })
   .strict();
@@ -130,6 +138,8 @@ export const loteDespachoQuerySchema = z
 export const avanzarEstadoLoteSchema = z
   .object({
     estado: z.enum(["EN_TRANSITO", "EN_BALANZA"]),
+    // Solo se usa al pasar a EN_BALANZA (el ingenio lo asigna en su balanza).
+    codigoIngenio: codigoIngenioSchema.optional(),
   })
   .strict();
 
@@ -149,6 +159,8 @@ export const registrarPesajeSchema = z
     // veces difiere del cálculo en algún decimal.
     tonelajeNeto: z.number().positive().optional(),
     observaciones: z.string().trim().optional(),
+    // Si no se anotó al pasar a balanza, se puede anotar aquí.
+    codigoIngenio: codigoIngenioSchema.optional(),
   })
   .strict()
   .refine((data) => data.tonelajeBruto > data.tonelajeTara, {

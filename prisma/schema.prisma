@@ -734,6 +734,9 @@ model LoteDespacho {
   tipoMineralId         Int
   destinoIngenioId      Int
   nivel                 String?
+  // Código que el ingenio le asigna al viaje en su balanza (se anota al pasar a
+  // balanza o después, editando el lote).
+  codigoIngenio         String?
   // Decidido viaje por viaje (el mismo transportista puede alternar): si la
   // empresa puso el combustible de este viaje o no — buscarTarifaAplicable en
   // liquidacion.service.ts lo usa para elegir, entre las tarifas vigentes del
@@ -769,6 +772,7 @@ model LoteDespacho {
   @@index([transportistaId])
   @@index([vehiculoId])
   @@index([estadoLote])
+  @@index([codigoIngenio])
 }
 
 model ConocimientoCarga {

@@ -153,6 +153,7 @@ async function calcularCombustibleSugerido(
 interface LoteElegible {
   loteId: string;
   correlativo: string;
+  codigoIngenio?: string | null;
   fechaDespachoReal: Date;
   vehiculoId: number;
   vehiculoPlaca: string;
@@ -272,6 +273,7 @@ async function construirElegibles(transportistaId: number, fechaInicio: Date, fe
     elegibles.push({
       loteId: lote.id,
       correlativo: lote.correlativo,
+      codigoIngenio: lote.codigoIngenio,
       fechaDespachoReal: lote.fechaDespachoReal,
       vehiculoId: lote.vehiculoId,
       vehiculoPlaca: lote.vehiculo.placa,
