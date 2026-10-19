@@ -239,6 +239,19 @@ export const loteDespachoService = {
     if (data.tipoMineralId && !tipoMineral) throw new HttpError("Tipo de mineral no encontrado", 404);
     if (data.destinoIngenioId && !ingenio) throw new HttpError("Ingenio destino no encontrado", 404);
 
+    // Cambiar la volqueta de un viaje que todavía está en curso: el vehículo
+    // nuevo tiene que estar libre y los dos tableros se ajustan juntos. Antes solo
+    // cambiaba el dato del lote y la volqueta vieja quedaba "En tránsito" para
+    // siempre, sin ningún lote que gestionar.
+    const loteEnCurso = ["REGISTRADO", "EN_TRANSITO", "EN_BALANZA"].includes(existente.estadoLote);
+    const cambiaVehiculo = data.vehiculoId !== undefined && data.vehiculoId !== existente.vehiculoId;
+    if (cambiaVehiculo && loteEnCurso && vehiculo && vehiculo.estadoActual !== "DISPONIBLE") {
+      throw new HttpError(
+        `El vehículo ${vehiculo.placa} no está disponible (estado actual: ${vehiculo.estadoActual}); no se puede pasar este viaje a esa volqueta.`,
+        409,
+      );
+    }
+
     const incluyeCombustible = data.incluyeCombustible ?? existente.incluyeCombustible;
     const combustibleAsignadoLitros =
       incluyeCombustible === "SIN_COMBUSTIBLE"
@@ -278,6 +291,33 @@ export const loteDespachoService = {
       }
 
       const actualizado = await tx.loteDespacho.update({ where: { id }, data: loteData });
+
+      if (cambiaVehiculo && loteEnCurso) {
+        const estadoViaje = existente.estadoLote === "EN_BALANZA" ? "EN_BALANZA" : "EN_TRANSITO";
+        const anterior = await tx.vehiculo.findUnique({ where: { id: existente.vehiculoId } });
+        if (anterior && ["EN_TRANSITO", "EN_BALANZA"].includes(anterior.estadoActual)) {
+          await tx.vehiculo.update({ where: { id: anterior.id }, data: { estadoActual: "DISPONIBLE" } });
+          await tx.estadoFlotaHistorico.create({
+            data: {
+              vehiculoId: anterior.id,
+              estado: "DISPONIBLE",
+              motivo: `El lote ${existente.correlativo} pasó a otra volqueta`,
+              origenCambio: "MANUAL",
+              usuarioId: userId,
+            },
+          });
+        }
+        await tx.vehiculo.update({ where: { id: data.vehiculoId! }, data: { estadoActual: estadoViaje } });
+        await tx.estadoFlotaHistorico.create({
+          data: {
+            vehiculoId: data.vehiculoId!,
+            estado: estadoViaje,
+            motivo: `Recibe el lote ${existente.correlativo}`,
+            origenCambio: "MANUAL",
+            usuarioId: userId,
+          },
+        });
+      }
 
       if (detalleCarga !== undefined || descripcion !== undefined || observaciones !== undefined) {
         await tx.conocimientoCarga.update({
