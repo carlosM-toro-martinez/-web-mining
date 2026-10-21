@@ -4,6 +4,7 @@ import { HttpError } from "../../errors/http.error.js";
 import { correlativoDeLoteAnulado } from "../../utils/correlativo.js";
 import type {
   AnularFormulario101DTO,
+  EditarFormulario101DTO,
   ReutilizarFormulario101DTO,
   VincularFormulario101DTO,
 } from "./formulario101.types.js";
@@ -34,6 +35,60 @@ export const formulario101Service = {
 
   async getById(id: string) {
     return prisma.formulario101.findUnique({ where: { id }, include: INCLUDE_DETALLE });
+  },
+
+  // Corrige el código y/o la fecha de un F101 vinculado sin anular nada. Se
+  // mantienen las reglas de vincular: código único y fecha igual a la del
+  // Conocimiento. No se toca si el F101 está anulado o el lote ya se liquidó.
+  async editar(id: string, data: EditarFormulario101DTO, userId: number) {
+    return prisma.$transaction(async (tx) => {
+      const f = await tx.formulario101.findUnique({
+        where: { id },
+        include: { lote: { include: { conocimientoCarga: true } } },
+      });
+      if (!f) throw new HttpError("Formulario 101 no encontrado", 404);
+      if (f.estado === "ANULADO") throw new HttpError("No se puede editar un Formulario 101 anulado", 409);
+      const lote = f.lote;
+      if (lote?.estadoLote === "ANULADO" || lote?.estadoLote === "LIQUIDADO") {
+        throw new HttpError(
+          `No se puede editar: el lote vinculado está ${lote.estadoLote === "LIQUIDADO" ? "liquidado" : "anulado"}`,
+          409,
+        );
+      }
+
+      const codigo = data.codigo ?? f.codigo;
+      const fecha = data.fecha ?? f.fecha;
+
+      if (codigo !== f.codigo) {
+        const otro = await tx.formulario101.findUnique({ where: { codigo } });
+        if (otro && otro.id !== id) throw new HttpError("Ya existe otro Formulario 101 con ese código", 409);
+      }
+      if (lote?.conocimientoCarga && !mismaFechaCalendario(fecha, lote.conocimientoCarga.fecha)) {
+        throw new HttpError(
+          `La fecha del Formulario 101 (${fecha.toISOString().slice(0, 10)}) debe coincidir con la fecha del Conocimiento (${lote.conocimientoCarga.fecha.toISOString().slice(0, 10)})`,
+          409,
+        );
+      }
+
+      await tx.formulario101.update({ where: { id }, data: { codigo, fecha } });
+      await tx.log.create({
+        data: {
+          usuarioId: userId,
+          accion: "EDITAR_FORMULARIO_101",
+          data: {
+            formulario101Id: id,
+            loteId: f.loteId,
+            codigoAnterior: f.codigo,
+            codigoNuevo: codigo,
+            fechaAnterior: f.fecha.toISOString().slice(0, 10),
+            fechaNueva: fecha.toISOString().slice(0, 10),
+          },
+        },
+      });
+      logger.info({ userId, formulario101Id: id, action: "EDITAR_FORMULARIO_101" }, "Formulario 101 editado");
+
+      return tx.formulario101.findUniqueOrThrow({ where: { id }, include: INCLUDE_DETALLE });
+    });
   },
 
   // Emite y vincula un F101 nuevo a un lote que todavía no tiene uno. La

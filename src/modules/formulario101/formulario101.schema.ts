@@ -20,6 +20,16 @@ export const reutilizarFormulario101Schema = z
   })
   .strict();
 
+// Corrige el código y/o la fecha de un Formulario 101 ya vinculado (típico:
+// error de tipeo). La fecha sigue atada a la del Conocimiento del lote.
+export const editarFormulario101Schema = z
+  .object({
+    codigo: z.string().trim().min(1).optional(),
+    fecha: z.coerce.date().optional(),
+  })
+  .strict()
+  .refine((d) => d.codigo !== undefined || d.fecha !== undefined, { message: "Indica el código o la fecha a corregir" });
+
 export const anularFormulario101Schema = z
   .object({
     motivo: z.string().trim().min(1),

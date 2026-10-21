@@ -42,6 +42,16 @@ export const formulario101Controller = {
     }
   },
 
+  async editar(req: AuthRequest, res: Response) {
+    try {
+      const formulario101 = await formulario101Service.editar(req.params.id as string, req.body, req.user!.id);
+      res.json({ success: true, data: formulario101 });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
   async reutilizar(req: AuthRequest, res: Response) {
     try {
       const formulario101 = await formulario101Service.reutilizar(req.params.id as string, req.body, req.user!.id);

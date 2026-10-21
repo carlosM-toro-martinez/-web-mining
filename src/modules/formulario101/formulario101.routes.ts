@@ -3,6 +3,7 @@ import { formulario101Controller } from "./formulario101.controller.js";
 import { validate, validateQuery, validateParams } from "../../middleware/validate.middleware.js";
 import {
   anularFormulario101Schema,
+  editarFormulario101Schema,
   formulario101QuerySchema,
   reutilizarFormulario101Schema,
   vincularFormulario101Schema,
@@ -30,6 +31,14 @@ router.post(
   validateParams(loteIdSchema),
   validate(vincularFormulario101Schema),
   formulario101Controller.vincular,
+);
+
+router.put(
+  "/:id",
+  requirePermiso("logistica.f101", "gestionar"),
+  validateParams(idSchema),
+  validate(editarFormulario101Schema),
+  formulario101Controller.editar,
 );
 
 router.post(
