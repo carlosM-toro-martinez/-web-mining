@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { valesController } from "./vales.controller.js";
 import {
@@ -44,28 +45,28 @@ router.post("/", validate(createValeSchema), valesController.createVale);
 // Auditoría de anulaciones
 router.get(
   "/anulaciones",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "ver_resumenes"),
   valesController.getAnulaciones,
 );
 
 // Resumen de todos los solicitantes con conteo de vales
 router.get(
   "/resumen-solicitantes",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "ver_resumenes"),
   valesController.getResumenSolicitantes,
 );
 
 // Productos pedidos por un usuario específico (con conteo y última fecha por producto)
 router.get(
   "/usuario/:userId/productos",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "ver_resumenes"),
   valesController.getProductosUsuario,
 );
 
 // Historial de vales de un solicitante específico
 router.get(
   "/solicitante/:userId",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "ver_resumenes"),
   valesController.getHistorialSolicitante,
 );
 
@@ -78,14 +79,14 @@ router.get("/:id", validateParams(idSchema), valesController.getValeById);
 // Aprobar vale
 router.post(
   "/:id/aprobar",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "aprobar"),
   validateParams(idSchema),
   validate(aprobarValeSchema),
   valesController.aprobarVale,
 );
 router.patch(
   "/:id/aprobar",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.vales", "aprobar"),
   validateParams(idSchema),
   validate(aprobarValeSchema),
   valesController.aprobarVale,
@@ -94,7 +95,7 @@ router.patch(
 // Entregar vale
 router.post(
   "/:id/entregar",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.vales", "entregar"),
   validateParams(idSchema),
   validate(entregarValeSchema),
   valesController.entregarVale,
@@ -102,19 +103,19 @@ router.post(
 // También acepta PATCH para retrocompatibilidad
 router.patch(
   "/:id/entregar",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.vales", "entregar"),
   validateParams(idSchema),
   validate(entregarValeSchema),
   valesController.entregarVale,
 );
 
 // Rechazar vale
-router.post("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
-router.patch("/:id/rechazar", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.rechazarVale);
+router.post("/:id/rechazar", requirePermiso("inventario.vales", "rechazar"), validateParams(idSchema), valesController.rechazarVale);
+router.patch("/:id/rechazar", requirePermiso("inventario.vales", "rechazar"), validateParams(idSchema), valesController.rechazarVale);
 
 // Anular vale (ADMIN, SUPERINTENDENTE, ALMACENERO)
-router.post("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
-router.patch("/:id/anular", authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"), validateParams(idSchema), valesController.anularVale);
+router.post("/:id/anular", requirePermiso("inventario.vales", "anular"), validateParams(idSchema), valesController.anularVale);
+router.patch("/:id/anular", requirePermiso("inventario.vales", "anular"), validateParams(idSchema), valesController.anularVale);
 
 // Eliminar vale permanentemente — solo ADMIN, sin contra-asientos
 router.delete("/:id/eliminar", authorize("ADMIN"), validateParams(idSchema), valesController.eliminarVale);

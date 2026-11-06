@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { pedidosController } from "./pedidos.controller.js";
 import { createPedidoSchema } from "./pedidos.schema.js";
@@ -22,10 +23,10 @@ router.get("/", pedidosController.getPedidos);
 router.get("/:id", validateParams(idSchema), pedidosController.getPedidoById);
 
 // Crear pedido (ADMIN, ALMACENERO)
-router.post("/", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validate(createPedidoSchema), pedidosController.createPedido);
+router.post("/", requirePermiso("inventario.pedidos", "crear"), validate(createPedidoSchema), pedidosController.createPedido);
 
 // Cancelar/cerrar pedido
-router.post("/:id/cancelar", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validateParams(idSchema), pedidosController.cancelarPedido);
-router.patch("/:id/cancelar", authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"), validateParams(idSchema), pedidosController.cancelarPedido);
+router.post("/:id/cancelar", requirePermiso("inventario.pedidos", "cancelar"), validateParams(idSchema), pedidosController.cancelarPedido);
+router.patch("/:id/cancelar", requirePermiso("inventario.pedidos", "cancelar"), validateParams(idSchema), pedidosController.cancelarPedido);
 
 export default router;

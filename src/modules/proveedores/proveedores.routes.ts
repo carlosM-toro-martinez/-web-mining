@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { proveedoresController } from "./proveedores.controller.js";
 import {
@@ -40,7 +41,7 @@ router.use(authenticate);
 // Crear proveedor (ADMIN, ALMACENERO)
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.proveedores", "crear"),
   validate(createProveedorSchema),
   proveedoresController.createProveedor,
 );
@@ -54,7 +55,7 @@ router.get("/:id", validateParams(idSchema), proveedoresController.getProveedorB
 // Actualizar proveedor (ADMIN, ALMACENERO)
 router.put(
   "/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.proveedores", "editar"),
   validateParams(idSchema),
   validate(updateProveedorSchema),
   proveedoresController.updateProveedor,
@@ -63,7 +64,7 @@ router.put(
 // Eliminar proveedor (ADMIN)
 router.delete(
   "/:id",
-  authorize("ADMIN"),
+  requirePermiso("inventario.proveedores", "eliminar"),
   validateParams(idSchema),
   proveedoresController.deleteProveedor,
 );

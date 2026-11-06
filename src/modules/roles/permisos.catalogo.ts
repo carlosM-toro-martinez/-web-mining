@@ -131,6 +131,94 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
     ],
   },
   {
+    clave: "inventario",
+    nombre: "Inventario",
+    // "Ver" de cada recurso controla qué pantallas y opciones del menú aparecen.
+    // Los datos de consulta (listas de compras, vales, productos, stock) siguen
+    // abiertos a cualquier usuario autenticado porque otras pantallas los
+    // necesitan; las acciones que modifican datos sí son granulares.
+    // ADMIN-only (ajustes, correcciones, backfill, monitoreo) no se asigna por rol.
+    recursos: [
+      {
+        clave: "inventario.compras",
+        nombre: "Compras",
+        descripcion: "Pedidos de compra y recepción de lo que llega a almacén. Crear = registrar el pedido; Recibir = confirmar lo recibido.",
+        acciones: [
+          VER, CREAR,
+          { clave: "recibir", nombre: "Recibir" },
+          { clave: "anular", nombre: "Anular" },
+          { clave: "ver_anulaciones", nombre: "Ver historial de anulaciones" },
+        ],
+      },
+      {
+        clave: "inventario.pedidos",
+        nombre: "Pedidos a proveedor",
+        descripcion: "Seguimiento de órdenes de compra sin afectar el stock.",
+        acciones: [VER, CREAR, { clave: "cancelar", nombre: "Cancelar" }],
+      },
+      {
+        clave: "inventario.vales",
+        nombre: "Vales de salida",
+        descripcion: "Registrar, aprobar y entregar vales. Crear la solicitud de un vale está abierto a todo usuario.",
+        acciones: [
+          VER,
+          { clave: "aprobar", nombre: "Aprobar" },
+          { clave: "entregar", nombre: "Entregar" },
+          { clave: "rechazar", nombre: "Rechazar" },
+          { clave: "anular", nombre: "Anular" },
+          { clave: "ver_resumenes", nombre: "Ver auditoría y resumen por solicitante" },
+        ],
+      },
+      {
+        clave: "inventario.vales_historicos",
+        nombre: "Vales y compras históricos",
+        descripcion: "Acceso a la pantalla. Para registrar cada cosa también hacen falta los permisos de Compras (crear, recibir) y de Vales (aprobar, entregar).",
+        acciones: [VER],
+      },
+      {
+        clave: "inventario.cierre",
+        nombre: "Cierre mensual",
+        descripcion: "Cerrar y reabrir meses del inventario y ver los diagnósticos de saldos y precios.",
+        acciones: [
+          { clave: "cerrar_mes", nombre: "Cerrar mes" },
+          { clave: "reabrir_mes", nombre: "Reabrir mes" },
+          { clave: "diagnosticos", nombre: "Diagnósticos" },
+        ],
+      },
+      {
+        clave: "inventario.productos",
+        nombre: "Productos y categorías",
+        acciones: [VER, CREAR, EDITAR, ELIMINAR],
+      },
+      {
+        clave: "inventario.proveedores",
+        nombre: "Proveedores",
+        acciones: [VER, CREAR, EDITAR, ELIMINAR],
+      },
+      {
+        clave: "inventario.stock",
+        nombre: "Stock y cargas",
+        descripcion: "Ver stock; importar catálogo, stock y saldos y editar el stock inicial (incluye reiniciar y sincronizar el stock); registrar entradas y salidas manuales.",
+        acciones: [
+          VER,
+          { clave: "importar", nombre: "Importar y editar stock inicial" },
+          { clave: "movimientos_manuales", nombre: "Entradas y salidas manuales" },
+        ],
+      },
+      {
+        clave: "inventario.reportes",
+        nombre: "Reportes",
+        acciones: [VER],
+      },
+      {
+        clave: "inventario.contabilidad",
+        nombre: "Contabilidad",
+        descripcion: "Editar = crear y modificar centros de costo, funciones de gasto, sectores y cuentas contables.",
+        acciones: [VER, EDITAR],
+      },
+    ],
+  },
+  {
     clave: "sistema",
     nombre: "Sistema",
     recursos: [

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { comprasController } from "./compras.controller.js";
 import { createCompraSchema, recibirCompraSchema, compraQuerySchema } from "./compras.schema.js";
@@ -36,7 +37,7 @@ router.use(authenticate);
 // Crear compra (ADMIN, ALMACENERO)
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.compras", "crear"),
   validate(createCompraSchema),
   comprasController.createCompra,
 );
@@ -50,7 +51,7 @@ router.get("/:id", validateParams(idSchema), comprasController.getCompraById);
 // Recibir compra (ADMIN, ALMACENERO)
 router.post(
   "/:id/recibir",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.compras", "recibir"),
   validateParams(idSchema),
   validate(recibirCompraSchema),
   comprasController.recibirCompra,
@@ -58,7 +59,7 @@ router.post(
 // También acepta PATCH para retrocompatibilidad
 router.patch(
   "/:id/recibir",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.compras", "recibir"),
   validateParams(idSchema),
   validate(recibirCompraSchema),
   comprasController.recibirCompra,
@@ -74,7 +75,7 @@ router.patch(
 // Anular compra (ADMIN, SUPERINTENDENTE, ALMACENERO)
 router.post(
   "/:id/anular",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.compras", "anular"),
   validateParams(idSchema),
   comprasController.anularCompra,
 );
@@ -82,7 +83,7 @@ router.post(
 // Listar anulaciones de compras
 router.get(
   "/anulaciones/historial",
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requirePermiso("inventario.compras", "ver_anulaciones"),
   comprasController.getAnulaciones,
 );
 

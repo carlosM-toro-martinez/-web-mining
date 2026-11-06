@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { contabilidadController } from "./contabilidad.controller.js";
 import {
@@ -39,13 +40,13 @@ router.get(
 );
 router.post(
   "/centros-costo",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validate(createCentroCostoSchema),
   contabilidadController.createCentroCosto,
 );
 router.put(
   "/centros-costo/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validateParams(idSchema),
   validate(updateCentroCostoSchema),
   contabilidadController.updateCentroCosto,
@@ -65,13 +66,13 @@ router.get(
 );
 router.post(
   "/funciones-gasto",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validate(createFuncionGastoSchema),
   contabilidadController.createFuncionGasto,
 );
 router.put(
   "/funciones-gasto/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validateParams(idSchema),
   validate(updateFuncionGastoSchema),
   contabilidadController.updateFuncionGasto,
@@ -87,13 +88,13 @@ router.get("/sectores", contabilidadController.getSectores);
 router.get("/sectores/:id", validateParams(idSchema), contabilidadController.getSectorById);
 router.post(
   "/sectores",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validate(createSectorSchema),
   contabilidadController.createSector,
 );
 router.put(
   "/sectores/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validateParams(idSchema),
   validate(updateSectorSchema),
   contabilidadController.updateSector,
@@ -116,26 +117,26 @@ router.get(
 );
 router.post(
   "/cuentas",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validate(createCuentaContableSchema),
   contabilidadController.createCuentaContable,
 );
 router.post(
   "/cuentas-contables",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validate(createCuentaContableSchema),
   contabilidadController.createCuentaContable,
 );
 router.put(
   "/cuentas/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validateParams(idSchema),
   validate(updateCuentaContableSchema),
   contabilidadController.updateCuentaContable,
 );
 router.put(
   "/cuentas-contables/:id",
-  authorize("ADMIN", "ALMACENERO"),
+  requirePermiso("inventario.contabilidad", "editar"),
   validateParams(idSchema),
   validate(updateCuentaContableSchema),
   contabilidadController.updateCuentaContable,

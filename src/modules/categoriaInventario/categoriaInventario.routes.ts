@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { categoriaInventarioController } from "./categoriaInventario.controller.js";
 import {
@@ -43,14 +44,14 @@ router.get("/:id", validateParams(idSchema), categoriaInventarioController.getBy
 
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "crear"),
   validate(createCategoriaInventarioSchema),
   categoriaInventarioController.create,
 );
 
 router.put(
   "/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "editar"),
   validateParams(idSchema),
   validate(updateCategoriaInventarioSchema),
   categoriaInventarioController.update,
@@ -58,7 +59,7 @@ router.put(
 
 router.delete(
   "/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "eliminar"),
   validateParams(idSchema),
   categoriaInventarioController.remove,
 );

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { inventarioImportController } from "./inventarioImport.controller.js";
 
 const upload = multer({
@@ -33,7 +34,7 @@ router.get(
 // NO toca la tabla Stock.
 router.post(
   "/catalogo",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   upload.single("file"),
   inventarioImportController.importarCatalogo,
 );
@@ -43,7 +44,7 @@ router.post(
 // Carga batch de stock actual (como primer registro, crea Movimiento SALDO_INICIAL).
 router.post(
   "/stock-inicial",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.cargarStockInicial,
 );
 
@@ -53,7 +54,7 @@ router.post(
 // Body con producto nuevo:     { crearProducto: { codigo, nombre, unidad, grupoId, subgrupoId, centroCostoId, funcionGastoId }, cantidad, precioUnit }
 router.post(
   "/stock-inicial/item",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.cargarStockInicialItem,
 );
 
@@ -63,7 +64,7 @@ router.post(
 // Body: { "confirmacion": "REINICIAR" }
 router.post(
   "/reiniciar-stock",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.reiniciarStock,
 );
 
@@ -73,7 +74,7 @@ router.post(
 // Body opcional: { "anio": 2025, "mes": 9 } para sincronizar desde un período específico.
 router.post(
   "/sincronizar-stock",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.sincronizarStock,
 );
 
@@ -82,7 +83,7 @@ router.post(
 // Carga masiva de saldos históricos de un mes (JSON).
 router.post(
   "/saldo-mensual",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.cargarSaldoMensual,
 );
 
@@ -107,7 +108,7 @@ router.get(
 // Body: { productoId | productoCodigo, anio, mes, saldoInicial, ingresoQty, salidaQty, saldoFinal, precioUnit }
 router.post(
   "/saldo-mensual/item",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.upsertSaldoMensualItem,
 );
 
@@ -118,7 +119,7 @@ router.post(
 // Body: { anio, mes }
 router.post(
   "/saldo-mensual/inicializar",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.inicializarPeriodo,
 );
 
@@ -163,7 +164,7 @@ router.get(
 // Actualizar campos de un registro existente.
 router.patch(
   "/saldo-mensual/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.updateSaldoMensualItem,
 );
 
@@ -171,7 +172,7 @@ router.patch(
 // Eliminar un registro de saldo mensual.
 router.delete(
   "/saldo-mensual/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "importar"),
   inventarioImportController.deleteSaldoMensualItem,
 );
 
@@ -198,7 +199,7 @@ router.get(
 // Consolida movimientos del mes en SaldoMensual y bloquea el período.
 router.post(
   "/cierre-mes",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "cerrar_mes"),
   inventarioImportController.cerrarMes,
 );
 
@@ -214,7 +215,7 @@ router.get(
 // Reabre un período cerrado para permitir correcciones.
 router.delete(
   "/cierre-mes",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "reabrir_mes"),
   inventarioImportController.reabrirMes,
 );
 
@@ -255,7 +256,7 @@ router.post(
 // Devuelve productos con stock > 0 y precioUnit = 0 (sin precio asignado).
 router.get(
   "/diagnostico-precios",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "diagnosticos"),
   inventarioImportController.diagnosticarPrecios,
 );
 
@@ -265,7 +266,7 @@ router.get(
 // Muestra discrepancias y verifica la ecuación contable por producto.
 router.get(
   "/diagnostico-saldos",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "diagnosticos"),
   inventarioImportController.diagnosticarSaldos,
 );
 
@@ -274,7 +275,7 @@ router.get(
 // Detecta si la suma per-grupo difiere de la flat y propone el fix mínimo.
 router.get(
   "/diagnostico-redondeo",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "diagnosticos"),
   inventarioImportController.diagnosticarRedondeo,
 );
 
@@ -283,7 +284,7 @@ router.get(
 // Ajusta un único ingresosBs ≤ 0.01 Bs para eliminar la discrepancia de redondeo.
 router.post(
   "/fix-redondeo",
-  authorize("ADMIN", "SUPERINTENDENTE"),
+  requirePermiso("inventario.cierre", "diagnosticos"),
   inventarioImportController.fixRedondeo,
 );
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { movimientoController } from "./movimiento.controller.js";
 import { createSalidaSchema, createEntradaSchema } from "./movimiento.schema.js";
@@ -10,14 +11,14 @@ router.use(authenticate);
 
 router.post(
   "/salidas",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "movimientos_manuales"),
   validate(createSalidaSchema),
   movimientoController.createSalida,
 );
 
 router.post(
   "/entradas",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.stock", "movimientos_manuales"),
   validate(createEntradaSchema),
   movimientoController.createEntrada,
 );

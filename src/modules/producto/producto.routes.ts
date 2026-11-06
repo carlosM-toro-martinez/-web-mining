@@ -6,7 +6,8 @@ import {
   updateProductoSchema,
   productoQuerySchema,
 } from "./producto.schema.js";
-import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { authenticate } from "../../middleware/auth.middleware.js";
+import { requirePermiso } from "../../middleware/permiso.middleware.js";
 import { z } from "zod";
 
 const idSchema = z.object({
@@ -42,14 +43,14 @@ router.get("/:id", validateParams(idSchema), productoController.getById);
 
 router.post(
   "/",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "crear"),
   validate(createProductoSchema),
   productoController.create,
 );
 
 router.put(
   "/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "editar"),
   validateParams(idSchema),
   validate(updateProductoSchema),
   productoController.update,
@@ -57,7 +58,7 @@ router.put(
 
 router.delete(
   "/:id",
-  authorize("ADMIN", "ALMACENERO", "SUPERINTENDENTE"),
+  requirePermiso("inventario.productos", "eliminar"),
   validateParams(idSchema),
   productoController.remove,
 );
