@@ -2,7 +2,7 @@ import type { Response } from "express";
 import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 import { comprasService } from "./compras.service.js";
-import { compraQuerySchema, corregirPrecioItemSchema } from "./compras.schema.js";
+import { compraQuerySchema, corregirPrecioItemSchema, documentoCompraSchema } from "./compras.schema.js";
 
 export const comprasController = {
   async createCompra(req: AuthRequest, res: Response) {
@@ -22,6 +22,32 @@ export const comprasController = {
       res.json({ success: true, data: result.compras, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async getResumen(req: AuthRequest, res: Response) {
+    try {
+      const query = compraQuerySchema.parse(req.query);
+      const data = await comprasService.getResumen(query);
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: (error as Error).message });
+    }
+  },
+
+  async registrarDocumento(req: AuthRequest, res: Response) {
+    try {
+      const parsed = documentoCompraSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const mensaje = parsed.error.issues[0]?.message ?? "Datos inválidos";
+        return res.status(400).json({ success: false, error: mensaje });
+      }
+      const result = await comprasService.registrarDocumento(String(req.params.id), parsed.data, req.user!.id);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      const status = error instanceof HttpError ? error.statusCode : 400;
       res.status(status).json({ success: false, error: (error as Error).message });
     }
   },

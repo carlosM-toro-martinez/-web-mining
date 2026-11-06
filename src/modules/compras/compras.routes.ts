@@ -45,13 +45,24 @@ router.post(
 // Listar compras
 router.get("/", validateQuery(compraQuerySchema), comprasController.getCompras);
 
+// Contadores del tablero de seguimiento (antes de "/:id" para que no lo tome como id)
+router.get("/resumen", validateQuery(compraQuerySchema), comprasController.getResumen);
+
 // Obtener compra por ID
 router.get("/:id", validateParams(idSchema), comprasController.getCompraById);
+
+// Registrar o cambiar el documento (factura, recibo o sin documento)
+router.patch(
+  "/:id/documento",
+  requirePermiso("inventario.compras", "documento"),
+  validateParams(idSchema),
+  comprasController.registrarDocumento,
+);
 
 // Recibir compra (ADMIN, ALMACENERO)
 router.post(
   "/:id/recibir",
-  requirePermiso("inventario.compras", "recibir"),
+  requirePermiso("inventario.recepcion", "recibir"),
   validateParams(idSchema),
   validate(recibirCompraSchema),
   comprasController.recibirCompra,
@@ -59,7 +70,7 @@ router.post(
 // También acepta PATCH para retrocompatibilidad
 router.patch(
   "/:id/recibir",
-  requirePermiso("inventario.compras", "recibir"),
+  requirePermiso("inventario.recepcion", "recibir"),
   validateParams(idSchema),
   validate(recibirCompraSchema),
   comprasController.recibirCompra,

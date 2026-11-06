@@ -141,14 +141,20 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
     recursos: [
       {
         clave: "inventario.compras",
-        nombre: "Compras",
-        descripcion: "Pedidos de compra y recepción de lo que llega a almacén. Crear = registrar el pedido; Recibir = confirmar lo recibido.",
+        nombre: "Pedidos de compra",
+        descripcion: "Crear pedidos a proveedores y seguirlos: si llegaron, si tienen factura o recibo. Lo que llega a almacén se confirma en Recepción de compras.",
         acciones: [
           VER, CREAR,
-          { clave: "recibir", nombre: "Recibir" },
+          { clave: "documento", nombre: "Registrar factura o recibo" },
           { clave: "anular", nombre: "Anular" },
           { clave: "ver_anulaciones", nombre: "Ver historial de anulaciones" },
         ],
+      },
+      {
+        clave: "inventario.recepcion",
+        nombre: "Recepción de compras",
+        descripcion: "Confirmar con las cantidades reales lo que llegó de cada pedido de compra. Recibir actualiza el stock.",
+        acciones: [VER, { clave: "recibir", nombre: "Recibir" }],
       },
       {
         clave: "inventario.pedidos",
@@ -172,7 +178,7 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
       {
         clave: "inventario.vales_historicos",
         nombre: "Vales y compras históricos",
-        descripcion: "Acceso a la pantalla. Para registrar cada cosa también hacen falta los permisos de Compras (crear, recibir) y de Vales (aprobar, entregar).",
+        descripcion: "Acceso a la pantalla. Para registrar cada cosa también hacen falta los permisos de Pedidos de compra (crear), Recepción (recibir) y Vales (aprobar, entregar).",
         acciones: [VER],
       },
       {

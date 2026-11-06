@@ -14,7 +14,7 @@ import {
   registrarMovimientoMovilTx,
   valorReversoCompra,
 } from "../kardex/kardexMovil.service.js";
-import type { CreateCompraDTO, RecibirCompraDTO, CompraQueryDTO } from "./compras.types.js";
+import type { CreateCompraDTO, RecibirCompraDTO, CompraQueryDTO, DocumentoCompraDTO } from "./compras.types.js";
 
 function calcularCPP(
   qAntes: Prisma.Decimal,
@@ -25,6 +25,61 @@ function calcularCPP(
   const totalQ = qAntes.add(qCompra);
   if (totalQ.isZero()) return precioCompraExIva;
   return qAntes.mul(precioPromExIva).add(qCompra.mul(precioCompraExIva)).div(totalQ);
+}
+
+// Filtros compartidos por el listado y el resumen de contadores.
+// `conEstadoYDocumento=false` los omite para que el resumen cuente cada categoría.
+function buildComprasWhere(query: CompraQueryDTO, conEstadoYDocumento = true) {
+  const where: Prisma.CompraWhereInput = {};
+  const and: Prisma.CompraWhereInput[] = [];
+
+  if (conEstadoYDocumento) {
+    if (query.estado) where.estado = query.estado;
+    if (query.pendientes && !query.estado) where.estado = { in: ["PENDIENTE", "PARCIAL"] };
+    if (query.documento === "PENDIENTE") {
+      and.push({ tipoDocumento: null, estado: { not: "ANULADA" } });
+    } else if (query.documento) {
+      where.tipoDocumento = query.documento;
+    }
+  }
+  if (query.proveedorId) where.proveedorId = query.proveedorId;
+
+  // Filtro por período (mes exacto tiene precedencia sobre rango libre)
+  if (query.anio && query.mes) {
+    const start = new Date(Date.UTC(query.anio, query.mes - 1, 1));
+    const end   = new Date(Date.UTC(query.anio, query.mes, 1));
+    and.push({
+      OR: [
+        { fechaOperacion: { gte: start, lt: end } },
+        { fechaOperacion: null, createdAt: { gte: start, lt: end } },
+      ],
+    });
+  } else if (query.fechaInicio || query.fechaFin) {
+    const range: { gte?: Date; lte?: Date } = {};
+    if (query.fechaInicio) range.gte = new Date(Date.UTC(query.fechaInicio.getUTCFullYear(), query.fechaInicio.getUTCMonth(), query.fechaInicio.getUTCDate()));
+    if (query.fechaFin)    range.lte = new Date(Date.UTC(query.fechaFin.getUTCFullYear(),    query.fechaFin.getUTCMonth(),    query.fechaFin.getUTCDate(),    23, 59, 59, 999));
+    and.push({
+      OR: [
+        { fechaOperacion: range },
+        { fechaOperacion: null, createdAt: range },
+      ],
+    });
+  }
+
+  if (query.busqueda) {
+    const texto = { contains: query.busqueda, mode: "insensitive" as const };
+    and.push({
+      OR: [
+        { numeroFactura: texto },
+        { observacion: texto },
+        { proveedor: { nombre: texto } },
+        { items: { some: { producto: { OR: [{ nombre: texto }, { codigo: texto }] } } } },
+      ],
+    });
+  }
+
+  if (and.length) where.AND = and;
+  return where;
 }
 
 export const comprasService = {
@@ -73,6 +128,14 @@ export const comprasService = {
       );
     }
 
+    // Documento: si solo llega el número se asume factura (así lo cargaban la
+    // pantalla anterior y las importaciones). SIN_DOCUMENTO no lleva número.
+    const numeroDocumento = data.tipoDocumento === "SIN_DOCUMENTO" ? null : (data.numeroFactura?.trim() || null);
+    const tipoDocumento = data.tipoDocumento ?? (numeroDocumento ? "FACTURA" : null);
+    if ((tipoDocumento === "FACTURA" || tipoDocumento === "RECIBO") && !numeroDocumento) {
+      throw new HttpError("La factura o el recibo necesitan su número", 400);
+    }
+
     const compra = await prisma.compra.create({
       data: {
         proveedorId: data.proveedorId,
@@ -80,7 +143,9 @@ export const comprasService = {
         estado: "PENDIENTE",
         observacion: data.observacion ?? null,
         fechaOperacion: data.fechaOperacion ?? null,
-        numeroFactura: data.numeroFactura ?? null,
+        numeroFactura: numeroDocumento,
+        tipoDocumento,
+        documentoRegistradoAt: tipoDocumento ? new Date() : null,
         tieneIva: data.tieneIva ?? true,
         esGasEspecial: data.esGasEspecial ?? null,
         items: {
@@ -125,27 +190,7 @@ export const comprasService = {
     const limit = Number(query.limit ?? 10);
     const skip  = (page - 1) * limit;
 
-    const where: any = {};
-    if (query.estado)      where.estado      = query.estado;
-    if (query.proveedorId) where.proveedorId = query.proveedorId;
-
-    // Filtro por período (mes exacto tiene precedencia sobre rango libre)
-    if (query.anio && query.mes) {
-      const start = new Date(Date.UTC(query.anio, query.mes - 1, 1));
-      const end   = new Date(Date.UTC(query.anio, query.mes, 1));
-      where.OR = [
-        { fechaOperacion: { gte: start, lt: end } },
-        { fechaOperacion: null, createdAt: { gte: start, lt: end } },
-      ];
-    } else if (query.fechaInicio || query.fechaFin) {
-      const range: any = {};
-      if (query.fechaInicio) range.gte = new Date(Date.UTC(query.fechaInicio.getUTCFullYear(), query.fechaInicio.getUTCMonth(), query.fechaInicio.getUTCDate()));
-      if (query.fechaFin)    range.lte = new Date(Date.UTC(query.fechaFin.getUTCFullYear(),    query.fechaFin.getUTCMonth(),    query.fechaFin.getUTCDate(),    23, 59, 59, 999));
-      where.OR = [
-        { fechaOperacion: range },
-        { fechaOperacion: null, createdAt: range },
-      ];
-    }
+    const where = buildComprasWhere(query);
 
     const include = {
       proveedor: true,
@@ -170,13 +215,91 @@ export const comprasService = {
     return { compras, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   },
 
+  // Contadores del tablero de seguimiento: cuántos pedidos hay por estado de
+  // llegada y por documento, con los mismos filtros de proveedor y fechas.
+  async getResumen(query: CompraQueryDTO) {
+    const where = buildComprasWhere(query, false);
+    const [porEstado, porDocumento, sinDocumento, recibidosSinDocumento] = await Promise.all([
+      prisma.compra.groupBy({ by: ["estado"], where, _count: { _all: true } }),
+      prisma.compra.groupBy({
+        by: ["tipoDocumento"],
+        where: { ...where, estado: { not: "ANULADA" } },
+        _count: { _all: true },
+      }),
+      prisma.compra.count({ where: { ...where, estado: { not: "ANULADA" }, tipoDocumento: null } }),
+      prisma.compra.count({ where: { ...where, estado: { in: ["PARCIAL", "COMPLETADO"] }, tipoDocumento: null } }),
+    ]);
+
+    const estados = { PENDIENTE: 0, PARCIAL: 0, COMPLETADO: 0, ANULADA: 0 };
+    for (const fila of porEstado) estados[fila.estado] = fila._count._all;
+    const documentos = { FACTURA: 0, RECIBO: 0, SIN_DOCUMENTO: 0, PENDIENTE: sinDocumento };
+    for (const fila of porDocumento) {
+      if (fila.tipoDocumento) documentos[fila.tipoDocumento] = fila._count._all;
+    }
+
+    return {
+      total: estados.PENDIENTE + estados.PARCIAL + estados.COMPLETADO + estados.ANULADA,
+      estados,
+      documentos,
+      // Mercadería que ya llegó (total o parcial) y todavía no tiene factura ni recibo registrado
+      recibidosSinDocumento,
+    };
+  },
+
+  async registrarDocumento(id: string, data: DocumentoCompraDTO, userId: number) {
+    const compra = await prisma.compra.findUnique({
+      where: { id },
+      select: { id: true, estado: true, proveedorId: true, tipoDocumento: true, numeroFactura: true },
+    });
+    if (!compra) throw new HttpError("Compra no encontrada", 404);
+    if (compra.estado === "ANULADA") {
+      throw new HttpError("No se puede registrar el documento de una compra anulada", 409);
+    }
+
+    const numero = data.tipoDocumento === "SIN_DOCUMENTO" ? null : (data.numeroFactura?.trim() || null);
+
+    const actualizada = await prisma.compra.update({
+      where: { id },
+      data: { tipoDocumento: data.tipoDocumento, numeroFactura: numero, documentoRegistradoAt: new Date() },
+      include: {
+        proveedor: true,
+        usuarioRegistro: { select: { id: true, nombre: true, email: true } },
+        usuarioRecibe: { select: { id: true, nombre: true, email: true } },
+        items: { include: { producto: true } },
+      },
+    });
+
+    // Aviso (no bloquea): el mismo número ya está en otra compra del mismo proveedor
+    const duplicada = numero
+      ? await prisma.compra.count({
+          where: { id: { not: id }, proveedorId: compra.proveedorId, numeroFactura: numero, estado: { not: "ANULADA" } },
+        })
+      : 0;
+
+    await prisma.log.create({
+      data: {
+        usuarioId: userId,
+        accion: "REGISTRAR_DOCUMENTO_COMPRA",
+        data: {
+          compraId: id,
+          antes: { tipoDocumento: compra.tipoDocumento, numeroFactura: compra.numeroFactura },
+          despues: { tipoDocumento: data.tipoDocumento, numeroFactura: numero },
+        },
+      },
+    });
+
+    logger.info({ userId, compraId: id, action: "REGISTRAR_DOCUMENTO_COMPRA" }, "Documento de compra registrado");
+    return { compra: actualizada, advertenciaDuplicado: duplicada > 0 };
+  },
+
   async getCompraById(id: string) {
-    return prisma.compra.findUnique({
+    const compra = await prisma.compra.findUnique({
       where: { id },
       include: {
         proveedor: true,
         usuarioRegistro: { select: { id: true, nombre: true, email: true } },
         usuarioRecibe: { select: { id: true, nombre: true, email: true } },
+        anulacion: { include: { usuario: { select: { id: true, nombre: true, email: true } } } },
         items: {
           include: {
             producto: {
@@ -194,6 +317,23 @@ export const comprasService = {
         },
       },
     });
+    if (!compra) return null;
+
+    // Llegadas registradas: cada entrada de stock que generó esta compra
+    const recepciones = await prisma.movimiento.findMany({
+      where: { referencia: "COMPRA", referenciaId: id, tipo: "ENTRADA" },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        createdAt: true,
+        cantidad: true,
+        productoId: true,
+        esRetroactivo: true,
+        usuario: { select: { id: true, nombre: true } },
+      },
+    });
+
+    return { ...compra, recepciones };
   },
 
   async recibirCompra(id: string, data: RecibirCompraDTO, userId: number) {
@@ -848,8 +988,22 @@ export const comprasService = {
             id: true,
             estado: true,
             createdAt: true,
+            fechaOperacion: true,
+            recibidoAt: true,
             numeroFactura: true,
-            proveedor: { select: { id: true, nombre: true } },
+            tipoDocumento: true,
+            proveedor: { select: { id: true, nombre: true, lugar: true } },
+            items: {
+              select: {
+                id: true,
+                productoId: true,
+                cantidadPedida: true,
+                cantidadRecibida: true,
+                precioUnit: true,
+                totalBs: true,
+                producto: { select: { id: true, codigo: true, nombre: true, unidad: true } },
+              },
+            },
           },
         },
       },

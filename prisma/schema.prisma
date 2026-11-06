@@ -242,6 +242,10 @@ model Compra {
   usuarioRecibidoId Int?
   usuarioRegistroId Int
   numeroFactura     String?
+  // null = el documento todavía no se registró; SIN_DOCUMENTO = se confirmó que no hay.
+  // numeroFactura guarda el número tanto de la factura como del recibo.
+  tipoDocumento         TipoDocumentoCompra?
+  documentoRegistradoAt DateTime?
   descuento         Decimal          @default(0) @db.Decimal(5, 2)
   fechaOperacion    DateTime?
   tieneIva          Boolean          @default(true)
@@ -1313,6 +1317,12 @@ enum EstadoCompra {
   PARCIAL
   COMPLETADO
   ANULADA
+}
+
+enum TipoDocumentoCompra {
+  FACTURA
+  RECIBO
+  SIN_DOCUMENTO
 }
 
 enum EstadoVale {

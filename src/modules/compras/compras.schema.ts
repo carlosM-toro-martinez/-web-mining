@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const TIPOS_DOCUMENTO_COMPRA = ["FACTURA", "RECIBO", "SIN_DOCUMENTO"] as const;
+
 export const createCompraSchema = z
   .object({
     proveedorId: z.number().int().positive(),
@@ -20,6 +22,7 @@ export const createCompraSchema = z
     observacion: z.string().optional(),
     fechaOperacion: z.coerce.date().optional(),
     numeroFactura: z.string().min(1).optional(),
+    tipoDocumento: z.enum(TIPOS_DOCUMENTO_COMPRA).optional(),
     tieneIva: z.boolean().optional(),
     esGasEspecial: z.boolean().optional().nullable(),
   })
@@ -30,6 +33,19 @@ export const recibirCompraSchema = z
     cantidadesRecibidas: z.record(z.string(), z.number().nonnegative()),
   })
   .strict();
+
+// Registrar o cambiar el documento de una compra. FACTURA y RECIBO llevan número;
+// SIN_DOCUMENTO se usa cuando se confirmó que no hay documento.
+export const documentoCompraSchema = z
+  .object({
+    tipoDocumento: z.enum(TIPOS_DOCUMENTO_COMPRA),
+    numeroFactura: z.string().trim().optional(),
+  })
+  .strict()
+  .refine(
+    (d) => d.tipoDocumento === "SIN_DOCUMENTO" || (d.numeroFactura ?? "").length > 0,
+    { message: "La factura o el recibo necesitan su número", path: ["numeroFactura"] },
+  );
 
 export const corregirPrecioItemSchema = z.object({
   precioUnit: z.number().positive().optional(),
@@ -43,6 +59,12 @@ export const corregirPrecioItemSchema = z.object({
 export const compraQuerySchema = z
   .object({
     estado: z.enum(["PENDIENTE", "PARCIAL", "COMPLETADO", "ANULADA"]).optional(),
+    // Solo lo que falta recibir (PENDIENTE y PARCIAL)
+    pendientes: z.string().optional().transform((v) => v === "true"),
+    // PENDIENTE = todavía sin documento registrado (excluye anuladas)
+    documento: z.enum(["FACTURA", "RECIBO", "SIN_DOCUMENTO", "PENDIENTE"]).optional(),
+    // Texto libre: proveedor, número de documento, observación o producto
+    busqueda: z.string().trim().min(1).optional(),
     proveedorId: z.coerce.number().int().positive().optional(),
     // Filtro por rango de fechas (usa fechaOperacion con fallback a createdAt)
     fechaInicio: z.string().optional().transform((v) => (v ? new Date(v) : undefined)),
