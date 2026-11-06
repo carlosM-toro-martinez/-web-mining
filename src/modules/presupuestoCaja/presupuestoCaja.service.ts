@@ -14,19 +14,43 @@ type PresupuestoCajaQuery = z.infer<typeof presupuestoCajaQuerySchema>;
 const INCLUDE_DETALLE = {
   caja: true,
   partidas: { orderBy: { descripcion: "asc" as const } },
-  asignadoMovimientoBanco: { include: { cuentaBancaria: true } },
+  // Ingresos del banco que trajeron la remesa (puede llegar en partes).
+  ingresos: {
+    where: { anulado: false },
+    include: { cuentaBancaria: true },
+    orderBy: { fecha: "asc" as const },
+  },
 } as const;
+
+const MENSAJE_CON_INGRESOS =
+  "esta remesa ya tiene ingresos del banco vinculados (desvincúlalos en Saldos para cambiarla).";
+
+export async function remesaTieneIngresos(presupuestoId: number) {
+  return (await prisma.movimientoBancoCaja.count({ where: { presupuestoId, anulado: false } })) > 0;
+}
 
 // Agrega a cada remesa el total presupuestado (suma de sus partidas), lo
 // realmente gastado (vía los gastos imputados a esas partidas) y el saldo a
 // favor — mismo cálculo que partidaPresupuestoCaja.service, pero sumado a
 // nivel de remesa completa.
-async function conEjecucion<T extends { id: number; partidas: Array<{ id: number; montoPresupuestado: unknown }> }>(
-  presupuestos: T[],
-) {
+async function conEjecucion<
+  T extends {
+    id: number;
+    partidas: Array<{ id: number; montoPresupuestado: unknown }>;
+    ingresos: Array<{ monto: unknown }>;
+  },
+>(presupuestos: T[]) {
+  const recibido = (p: T) => p.ingresos.reduce((acc, i) => acc + Number(i.monto), 0);
   const partidaIds = presupuestos.flatMap((p) => p.partidas.map((d) => d.id));
   if (partidaIds.length === 0) {
-    return presupuestos.map((p) => ({ ...p, totalPresupuestado: 0, totalGastado: 0, saldoAFavor: 0, porcentajeEjecucion: 0 }));
+    return presupuestos.map((p) => ({
+      ...p,
+      totalPresupuestado: 0,
+      totalGastado: 0,
+      saldoAFavor: 0,
+      porcentajeEjecucion: 0,
+      totalRecibido: recibido(p),
+    }));
   }
 
   const gastos = await prisma.gastoCaja.groupBy({
@@ -41,7 +65,7 @@ async function conEjecucion<T extends { id: number; partidas: Array<{ id: number
     const totalGastado = presupuesto.partidas.reduce((acc, d) => acc + (gastadoPorPartida.get(d.id) ?? 0), 0);
     const saldoAFavor = totalPresupuestado - totalGastado;
     const porcentajeEjecucion = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0;
-    return { ...presupuesto, totalPresupuestado, totalGastado, saldoAFavor, porcentajeEjecucion };
+    return { ...presupuesto, totalPresupuestado, totalGastado, saldoAFavor, porcentajeEjecucion, totalRecibido: recibido(presupuesto) };
   });
 }
 
@@ -96,9 +120,7 @@ export const presupuestoCajaService = {
   async update(id: number, data: UpdatePresupuestoCajaDTO, userId: number) {
     const existente = await prisma.presupuestoCaja.findUnique({ where: { id } });
     if (!existente) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
-    if (existente.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede editar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
-    }
+    if (await remesaTieneIngresos(id)) throw new HttpError(`No se puede editar: ${MENSAJE_CON_INGRESOS}`, 409);
 
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
 
@@ -117,9 +139,9 @@ export const presupuestoCajaService = {
     const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id }, include: { partidas: true } });
     if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
 
-    if (presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede eliminar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
-    }
+    if (await remesaTieneIngresos(id)) throw new HttpError(`No se puede eliminar: ${MENSAJE_CON_INGRESOS}`, 409);
+    // Los ingresos anulados que la nombraban se sueltan antes de borrarla.
+    await prisma.movimientoBancoCaja.updateMany({ where: { presupuestoId: id }, data: { presupuestoId: null } });
 
     const partidaIds = presupuesto.partidas.map((p) => p.id);
     const enUso = partidaIds.length

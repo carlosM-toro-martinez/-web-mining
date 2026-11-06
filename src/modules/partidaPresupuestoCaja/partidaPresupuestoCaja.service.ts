@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
+import { remesaTieneIngresos } from "../presupuestoCaja/presupuestoCaja.service.js";
 import type {
   CreatePartidaPresupuestoCajaDTO,
   UpdatePartidaPresupuestoCajaDTO,
@@ -76,8 +77,8 @@ export const partidaPresupuestoCajaService = {
   async create(data: CreatePartidaPresupuestoCajaDTO, userId: number) {
     const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id: data.presupuestoId } });
     if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
-    if (presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se pueden agregar partidas: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
+    if (await remesaTieneIngresos(presupuesto.id)) {
+      throw new HttpError("No se pueden agregar partidas: esta remesa ya tiene ingresos del banco vinculados (desvincúlalos en Saldos para cambiarla).", 409);
     }
 
     const partida = await prisma.partidaPresupuestoCaja.create({
@@ -111,8 +112,8 @@ export const partidaPresupuestoCajaService = {
       include: { presupuesto: true },
     });
     if (!existente) throw new HttpError("Partida de presupuesto no encontrada", 404);
-    if (existente.presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede editar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
+    if (await remesaTieneIngresos(existente.presupuestoId)) {
+      throw new HttpError("No se puede editar: esta remesa ya tiene ingresos del banco vinculados (desvincúlalos en Saldos para cambiarla).", 409);
     }
 
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
@@ -145,8 +146,8 @@ export const partidaPresupuestoCajaService = {
     // banco — el ingreso al banco ya se generó por el total de esa remesa,
     // así que borrar una partida después deja ese dinero sin partida a la
     // que imputarse cuando se registre el gasto real.
-    if (existente.presupuesto.asignadoMovimientoBancoId) {
-      throw new HttpError("No se puede eliminar: esta remesa ya tiene un ingreso del banco vinculado (desvincúlalo en Saldos para cambiarla).", 409);
+    if (await remesaTieneIngresos(existente.presupuestoId)) {
+      throw new HttpError("No se puede eliminar: esta remesa ya tiene ingresos del banco vinculados (desvincúlalos en Saldos para cambiarla).", 409);
     }
 
     const enUso = await prisma.gastoCaja.count({ where: { partidaPresupuestoId: id } });

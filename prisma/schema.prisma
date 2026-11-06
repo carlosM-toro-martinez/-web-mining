@@ -95,14 +95,14 @@ model Sector {
 }
 
 model CuentaContable {
-  id             Int          @id @default(autoincrement())
-  codigoCompleto String       @unique
+  id             Int             @id @default(autoincrement())
+  codigoCompleto String          @unique
   centroCostoId  Int
   funcionGastoId Int
   sectorId       Int?
-  centroCosto    CentroCosto  @relation(fields: [centroCostoId], references: [id])
-  funcionGasto   FuncionGasto @relation(fields: [funcionGastoId], references: [id])
-  sector         Sector?      @relation(fields: [sectorId], references: [id])
+  centroCosto    CentroCosto     @relation(fields: [centroCostoId], references: [id])
+  funcionGasto   FuncionGasto    @relation(fields: [funcionGastoId], references: [id])
+  sector         Sector?         @relation(fields: [sectorId], references: [id])
   movimientos    Movimiento[]
   productos      Producto[]
   transportistas Transportista[]
@@ -607,39 +607,39 @@ model AlicuotaRegalia {
 }
 
 model TarifaLiquidacion {
-  id                Int                     @id @default(autoincrement())
-  tipoEntidad       TipoEntidadTransportista
-  transportistaId   Int?
-  tipoMineralId     Int?
+  id                 Int                      @id @default(autoincrement())
+  tipoEntidad        TipoEntidadTransportista
+  transportistaId    Int?
+  tipoMineralId      Int?
   // null = aplica sin importar si el viaje llevó combustible de la empresa o
   // no (el comportamiento de siempre); CON_COMBUSTIBLE/SIN_COMBUSTIBLE = solo
   // para viajes marcados con ese estado puntual (ver buscarTarifaAplicable en
   // liquidacion.service.ts, que agrega esto como el desempate más específico).
   incluyeCombustible TipoCombustibleViaje?
-  precioPorTonelada Decimal                 @db.Decimal(14, 6)
-  vigenteDesde      DateTime
-  vigenteHasta      DateTime?
-  esSemilla         Boolean                 @default(false)
-  transportista     Transportista?          @relation(fields: [transportistaId], references: [id])
-  tipoMineral       TipoMineral?            @relation(fields: [tipoMineralId], references: [id])
+  precioPorTonelada  Decimal                  @db.Decimal(14, 6)
+  vigenteDesde       DateTime
+  vigenteHasta       DateTime?
+  esSemilla          Boolean                  @default(false)
+  transportista      Transportista?           @relation(fields: [transportistaId], references: [id])
+  tipoMineral        TipoMineral?             @relation(fields: [tipoMineralId], references: [id])
 
   @@index([tipoEntidad, tipoMineralId])
   @@index([transportistaId])
 }
 
 model ConceptoLiquidacion {
-  id     Int                       @id @default(autoincrement())
-  nombre String
-  tipo   TipoConceptoLiquidacion
-  activo Boolean                   @default(true)
+  id            Int                       @id @default(autoincrement())
+  nombre        String
+  tipo          TipoConceptoLiquidacion
+  activo        Boolean                   @default(true)
   // Marca el (o los) concepto(s) de tipo DEDUCCION cuyo monto se calcula
   // solo a partir del combustible realmente asignado a los lotes de la
   // liquidación (litros × PrecioCombustible vigente en cada fecha) — ver
   // calcularCombustibleSugerido() en liquidacion.service.ts. El usuario
   // elige libremente el nombre del concepto (ej. "Descuento combustible");
   // esta bandera es lo único que el sistema usa para reconocerlo.
-  esCombustible Boolean                @default(false)
-  items  LiquidacionItemConcepto[]
+  esCombustible Boolean                   @default(false)
+  items         LiquidacionItemConcepto[]
 }
 
 // Precio por litro de combustible, usado para sugerir automáticamente el
@@ -657,22 +657,22 @@ model PrecioCombustible {
 }
 
 model Transportista {
-  id                 Int                     @id @default(autoincrement())
+  id                 Int                      @id @default(autoincrement())
   tipoEntidad        TipoEntidadTransportista
   nombreORazonSocial String
   nitOCi             String
   banco              String?
   numeroCuenta       String?
   cuentaContableId   Int?
-  activo             Boolean                 @default(true)
+  activo             Boolean                  @default(true)
   // true = viene de seedLogistica.ts (la flota real transcrita de la Nota de
   // Remisión de Volquetas); logisticaReset.service.ts la deja afuera del
   // "eliminar todo" para no perder la flota real al reiniciar datos de prueba.
-  esSemilla          Boolean                 @default(false)
+  esSemilla          Boolean                  @default(false)
   liquidaciones      LiquidacionPeriodo[]
   lotesDespacho      LoteDespacho[]
   tarifas            TarifaLiquidacion[]
-  cuentaContable     CuentaContable?         @relation(fields: [cuentaContableId], references: [id])
+  cuentaContable     CuentaContable?          @relation(fields: [cuentaContableId], references: [id])
   vehiculos          Vehiculo[]
 
   @@index([cuentaContableId])
@@ -722,52 +722,52 @@ model EstadoFlotaHistorico {
 }
 
 model LoteDespacho {
-  id                    String                   @id @default(uuid())
-  correlativo           String
+  id                         String                   @id @default(uuid())
+  correlativo                String
   // Correlativo real: "N°/MM" (ej. "53/09"), un único contador compartido
   // por todos los transportistas/vehículos que se reinicia cada mes — el
   // mismo texto se repite cada año, así que la unicidad real es
   // (correlativo, anio), nunca correlativo solo.
-  anio                  Int
-  municipioOrigenId     Int
-  transportistaId       Int
-  vehiculoId            Int
-  choferId              Int
-  tipoMineralId         Int
-  destinoIngenioId      Int
-  nivel                 String?
+  anio                       Int
+  municipioOrigenId          Int
+  transportistaId            Int
+  vehiculoId                 Int
+  choferId                   Int
+  tipoMineralId              Int
+  destinoIngenioId           Int
+  nivel                      String?
   // Código que el ingenio le asigna al viaje en su balanza (se anota al pasar a
   // balanza o después, editando el lote).
-  codigoIngenio         String?
+  codigoIngenio              String?
   // Decidido viaje por viaje (el mismo transportista puede alternar): si la
   // empresa puso el combustible de este viaje o no — buscarTarifaAplicable en
   // liquidacion.service.ts lo usa para elegir, entre las tarifas vigentes del
   // transportista, la que corresponde a este caso puntual.
-  incluyeCombustible    TipoCombustibleViaje     @default(SIN_COMBUSTIBLE)
+  incluyeCombustible         TipoCombustibleViaje     @default(SIN_COMBUSTIBLE)
   // Solo tienen sentido cuando incluyeCombustible = CON_COMBUSTIBLE: cuánto
   // se le asignó al vehículo para este viaje (al crear el lote) y cuánto se
   // le entregó realmente después (no siempre coincide — puede quedar
   // sobrante, que se calcula en el frontend como asignado - entregado).
-  combustibleAsignadoLitros  Decimal?            @db.Decimal(10, 2)
-  combustibleEntregadoLitros Decimal?            @db.Decimal(10, 2)
-  fechaDespachoReal     DateTime
-  fechaDocumentalFiscal DateTime
-  estadoLote            EstadoLoteDespacho       @default(REGISTRADO)
-  usuarioRegistroId     Int
-  createdAt             DateTime                 @default(now())
-  anulacion             AnulacionLote?
-  conocimientoCarga     ConocimientoCarga?
-  formulario101         Formulario101?
-  detallesLiquidacion   LiquidacionDetalleLote[]
-  chofer                Chofer                   @relation(fields: [choferId], references: [id])
-  destinoIngenio        Ingenio                  @relation(fields: [destinoIngenioId], references: [id])
-  municipioOrigen       MunicipioOrigen          @relation(fields: [municipioOrigenId], references: [id])
-  transportista         Transportista            @relation(fields: [transportistaId], references: [id])
-  tipoMineral           TipoMineral              @relation(fields: [tipoMineralId], references: [id])
-  usuarioRegistro       User                     @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
-  vehiculo              Vehiculo                 @relation(fields: [vehiculoId], references: [id])
-  pesaje                PesajeIngenio?
-  transbordos           TransbordoLote[]
+  combustibleAsignadoLitros  Decimal?                 @db.Decimal(10, 2)
+  combustibleEntregadoLitros Decimal?                 @db.Decimal(10, 2)
+  fechaDespachoReal          DateTime
+  fechaDocumentalFiscal      DateTime
+  estadoLote                 EstadoLoteDespacho       @default(REGISTRADO)
+  usuarioRegistroId          Int
+  createdAt                  DateTime                 @default(now())
+  anulacion                  AnulacionLote?
+  conocimientoCarga          ConocimientoCarga?
+  formulario101              Formulario101?
+  detallesLiquidacion        LiquidacionDetalleLote[]
+  chofer                     Chofer                   @relation(fields: [choferId], references: [id])
+  destinoIngenio             Ingenio                  @relation(fields: [destinoIngenioId], references: [id])
+  municipioOrigen            MunicipioOrigen          @relation(fields: [municipioOrigenId], references: [id])
+  transportista              Transportista            @relation(fields: [transportistaId], references: [id])
+  tipoMineral                TipoMineral              @relation(fields: [tipoMineralId], references: [id])
+  usuarioRegistro            User                     @relation("UsuarioRegistroLote", fields: [usuarioRegistroId], references: [id])
+  vehiculo                   Vehiculo                 @relation(fields: [vehiculoId], references: [id])
+  pesaje                     PesajeIngenio?
+  transbordos                TransbordoLote[]
 
   @@unique([correlativo, anio])
   @@index([municipioOrigenId])
@@ -863,35 +863,35 @@ model CorrelativoContador {
 }
 
 model LiquidacionPeriodo {
-  id               String                    @id @default(uuid())
+  id                String                    @id @default(uuid())
   // Folio del documento impreso ("Nº 01/27"): correlativo compartido por
   // TODOS los transportistas, que se reinicia cada gestión minera
   // (octubre–septiembre), asignado recién al CERRAR (igual que un talonario
   // real). "27" es la gestión, guardada aparte en `gestion` (2027 =
   // oct-2026..sep-2027). Las liquidaciones viejas ("Nº 81", "Nº 86") quedan
   // con gestion null. Null mientras está en BORRADOR.
-  numero           Int?
-  gestion          Int?
+  numero            Int?
+  gestion           Int?
   // Folio del Comprobante de Egresos del pago al transportista — contador
   // global propio, distinto de "numero" (el de la liquidación en sí),
   // asignado recién la primera vez que se genera el comprobante.
-  numeroComprobante Int?                     @unique
-  transportistaId  Int
-  tipoPeriodo      TipoPeriodoLiquidacion
-  fechaInicio      DateTime
-  fechaFin         DateTime
-  estado           EstadoLiquidacion         @default(BORRADOR)
-  totalBruto       Decimal                   @default(0) @db.Decimal(14, 2)
-  totalAbonos      Decimal                   @default(0) @db.Decimal(14, 2)
-  totalDeducciones Decimal                   @default(0) @db.Decimal(14, 2)
-  totalNeto        Decimal                   @default(0) @db.Decimal(14, 2)
-  usuarioId        Int
-  createdAt        DateTime                  @default(now())
-  anulacion        AnulacionLiquidacion?
-  detalleLotes     LiquidacionDetalleLote[]
-  itemsConcepto    LiquidacionItemConcepto[]
-  transportista    Transportista             @relation(fields: [transportistaId], references: [id])
-  usuario          User                      @relation(fields: [usuarioId], references: [id])
+  numeroComprobante Int?                      @unique
+  transportistaId   Int
+  tipoPeriodo       TipoPeriodoLiquidacion
+  fechaInicio       DateTime
+  fechaFin          DateTime
+  estado            EstadoLiquidacion         @default(BORRADOR)
+  totalBruto        Decimal                   @default(0) @db.Decimal(14, 2)
+  totalAbonos       Decimal                   @default(0) @db.Decimal(14, 2)
+  totalDeducciones  Decimal                   @default(0) @db.Decimal(14, 2)
+  totalNeto         Decimal                   @default(0) @db.Decimal(14, 2)
+  usuarioId         Int
+  createdAt         DateTime                  @default(now())
+  anulacion         AnulacionLiquidacion?
+  detalleLotes      LiquidacionDetalleLote[]
+  itemsConcepto     LiquidacionItemConcepto[]
+  transportista     Transportista             @relation(fields: [transportistaId], references: [id])
+  usuario           User                      @relation(fields: [usuarioId], references: [id])
 
   @@unique([numero, gestion])
   @@index([transportistaId])
@@ -1077,18 +1077,22 @@ model AnulacionGastoCaja {
 }
 
 model MovimientoFondoCaja {
-  id         String                  @id @default(uuid())
-  cajaId     Int
-  tipo       TipoMovimientoFondoCaja
-  monto      Decimal                 @db.Decimal(14, 2)
-  moneda     MonedaCaja
-  fecha      DateTime
-  referencia String?
-  usuarioId  Int
-  createdAt  DateTime                @default(now())
-  caja       CajaChica               @relation(fields: [cajaId], references: [id])
-  usuario    User                    @relation(fields: [usuarioId], references: [id])
-  cuadre     CuadreSaldoCaja?
+  id                String                  @id @default(uuid())
+  cajaId            Int
+  tipo              TipoMovimientoFondoCaja
+  monto             Decimal                 @db.Decimal(14, 2)
+  moneda            MonedaCaja
+  fecha             DateTime
+  referencia        String?
+  usuarioId         Int
+  createdAt         DateTime                @default(now())
+  // Remesa que llegó por el banco: el ingreso vinculado a una remesa de la
+  // caja genera este fondo (y lo quita si se desvincula o se anula).
+  movimientoBancoId String?                 @unique
+  caja              CajaChica               @relation(fields: [cajaId], references: [id])
+  usuario           User                    @relation(fields: [usuarioId], references: [id])
+  movimientoBanco   MovimientoBancoCaja?    @relation(fields: [movimientoBancoId], references: [id])
+  cuadre            CuadreSaldoCaja?
 
   @@index([cajaId])
 }
@@ -1142,36 +1146,35 @@ model AnulacionRendicionCaja {
 }
 
 model CuentaBancariaCaja {
-  id           Int                   @id @default(autoincrement())
-  banco        String
-  numeroCuenta String?
-  nombreCuenta String
-  monedaBase   MonedaCaja            @default(BOB)
-  activo       Boolean               @default(true)
-  saldoInicial Decimal               @default(0) @db.Decimal(14, 2)
+  id                   Int                   @id @default(autoincrement())
+  banco                String
+  numeroCuenta         String?
+  nombreCuenta         String
+  monedaBase           MonedaCaja            @default(BOB)
+  activo               Boolean               @default(true)
+  saldoInicial         Decimal               @default(0) @db.Decimal(14, 2)
   // Cuenta contable propia de este banco (ej. "11.002.000"): la que se
   // acredita (HABER) en el Comprobante de Egresos de cada gasto pagado
   // desde esta cuenta — sin esto, esa línea no tenía con qué código salir.
   cuentaContableCajaId Int?
   cuentaContableCaja   CuentaContableCaja?   @relation(fields: [cuentaContableCajaId], references: [id])
-  gastos       GastoCaja[]
-  movimientos  MovimientoBancoCaja[]
-  cuadres      CuadreSaldoCaja[]
+  gastos               GastoCaja[]
+  movimientos          MovimientoBancoCaja[]
+  cuadres              CuadreSaldoCaja[]
 }
 
 model PresupuestoCaja {
-  id                        Int                      @id @default(autoincrement())
-  cajaId                    Int
-  anio                      Int
-  mes                       Int
-  nombre                    String
-  activo                    Boolean                  @default(true)
-  createdAt                 DateTime                 @default(now())
-  asignadoMovimientoBancoId String?                  @unique
-  asignadoEn                DateTime?
-  partidas                  PartidaPresupuestoCaja[]
-  asignadoMovimientoBanco   MovimientoBancoCaja?     @relation(fields: [asignadoMovimientoBancoId], references: [id])
-  caja                      CajaChica                @relation(fields: [cajaId], references: [id])
+  id        Int                      @id @default(autoincrement())
+  cajaId    Int
+  anio      Int
+  mes       Int
+  nombre    String
+  activo    Boolean                  @default(true)
+  createdAt DateTime                 @default(now())
+  partidas  PartidaPresupuestoCaja[]
+  // Ingresos del banco que trajeron esta remesa (puede llegar en partes).
+  ingresos  MovimientoBancoCaja[]
+  caja      CajaChica                @relation(fields: [cajaId], references: [id])
 
   @@index([cajaId, anio, mes])
 }
@@ -1197,27 +1200,37 @@ model PartidaPresupuestoCaja {
 }
 
 model MovimientoBancoCaja {
-  id                    String              @id @default(uuid())
-  cuentaBancariaId      Int
-  cajaId                Int?
-  fecha                 DateTime
-  formaPago             FormaPagoBanco
-  numeroCheque          String?
-  monto                 Decimal             @db.Decimal(14, 2)
-  moneda                MonedaCaja
-  depositanteNombre     String?
-  descripcion           String
-  usuarioId             Int
-  createdAt             DateTime            @default(now())
-  tipo                  TipoMovimientoBanco @default(SALIDA_A_CAJA)
-  caja                  CajaChica?          @relation(fields: [cajaId], references: [id])
-  cuentaBancaria        CuentaBancariaCaja  @relation(fields: [cuentaBancariaId], references: [id])
-  usuario               User                @relation(fields: [usuarioId], references: [id])
-  presupuestosAsignados PresupuestoCaja?
-  cuadre                CuadreSaldoCaja?
+  id                String               @id @default(uuid())
+  cuentaBancariaId  Int
+  cajaId            Int?
+  fecha             DateTime
+  formaPago         FormaPagoBanco
+  numeroCheque      String?
+  monto             Decimal              @db.Decimal(14, 2)
+  moneda            MonedaCaja
+  depositanteNombre String?
+  descripcion       String
+  usuarioId         Int
+  createdAt         DateTime             @default(now())
+  tipo              TipoMovimientoBanco  @default(SALIDA_A_CAJA)
+  // Remesa (presupuesto) que trajo este ingreso. Solo para INGRESO.
+  presupuestoId     Int?
+  // Un movimiento registrado por error (p. ej. duplicado) se anula, no se
+  // borra: deja de contar en todos los saldos y queda el motivo.
+  anulado           Boolean              @default(false)
+  motivoAnulacion   String?
+  anuladoEn         DateTime?
+  anuladoPorId      Int?
+  caja              CajaChica?           @relation(fields: [cajaId], references: [id])
+  cuentaBancaria    CuentaBancariaCaja   @relation(fields: [cuentaBancariaId], references: [id])
+  usuario           User                 @relation(fields: [usuarioId], references: [id])
+  presupuesto       PresupuestoCaja?     @relation(fields: [presupuestoId], references: [id])
+  fondoCaja         MovimientoFondoCaja?
+  cuadre            CuadreSaldoCaja?
 
   @@index([cajaId])
   @@index([cuentaBancariaId])
+  @@index([presupuestoId])
 }
 
 // Saldo real (contado o del extracto) de una caja o una cuenta bancaria al
@@ -1225,23 +1238,23 @@ model MovimientoBancoCaja {
 // se registra como un movimiento de ajuste, así todos los saldos parten de
 // ese monto real; nada anterior a fechaCorte se puede cambiar después.
 model CuadreSaldoCaja {
-  id                 String               @id @default(uuid())
-  cajaId             Int?
-  cuentaBancariaId   Int?
-  fechaCorte         DateTime
-  saldoSistema       Decimal              @db.Decimal(14, 2)
-  saldoReal          Decimal              @db.Decimal(14, 2)
-  diferencia         Decimal              @db.Decimal(14, 2)
-  motivo             String
-  movimientoFondoId  String?              @unique
-  movimientoBancoId  String?              @unique
-  usuarioId          Int
-  createdAt          DateTime             @default(now())
-  caja               CajaChica?           @relation(fields: [cajaId], references: [id])
-  cuentaBancaria     CuentaBancariaCaja?  @relation(fields: [cuentaBancariaId], references: [id])
-  movimientoFondo    MovimientoFondoCaja? @relation(fields: [movimientoFondoId], references: [id])
-  movimientoBanco    MovimientoBancoCaja? @relation(fields: [movimientoBancoId], references: [id])
-  usuario            User                 @relation(fields: [usuarioId], references: [id])
+  id                String               @id @default(uuid())
+  cajaId            Int?
+  cuentaBancariaId  Int?
+  fechaCorte        DateTime
+  saldoSistema      Decimal              @db.Decimal(14, 2)
+  saldoReal         Decimal              @db.Decimal(14, 2)
+  diferencia        Decimal              @db.Decimal(14, 2)
+  motivo            String
+  movimientoFondoId String?              @unique
+  movimientoBancoId String?              @unique
+  usuarioId         Int
+  createdAt         DateTime             @default(now())
+  caja              CajaChica?           @relation(fields: [cajaId], references: [id])
+  cuentaBancaria    CuentaBancariaCaja?  @relation(fields: [cuentaBancariaId], references: [id])
+  movimientoFondo   MovimientoFondoCaja? @relation(fields: [movimientoFondoId], references: [id])
+  movimientoBanco   MovimientoBancoCaja? @relation(fields: [movimientoBancoId], references: [id])
+  usuario           User                 @relation(fields: [usuarioId], references: [id])
 
   @@index([cajaId, fechaCorte])
   @@index([cuentaBancariaId, fechaCorte])

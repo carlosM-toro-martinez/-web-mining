@@ -3,7 +3,9 @@ import { movimientoBancoCajaController } from "./movimientoBancoCaja.controller.
 import { z } from "zod";
 import { validate, validateParams, validateQuery } from "../../middleware/validate.middleware.js";
 import {
+  anularMovimientoBancoCajaSchema,
   createMovimientoBancoCajaSchema,
+  remesaRapidaSchema,
   movimientoBancoCajaQuerySchema,
   vincularPresupuestoSchema,
 } from "./movimientoBancoCaja.schema.js";
@@ -28,6 +30,22 @@ router.patch(
   validateParams(z.object({ id: z.string().uuid() })),
   validate(vincularPresupuestoSchema),
   movimientoBancoCajaController.vincularPresupuesto,
+);
+
+router.post(
+  "/:id/remesa",
+  authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"),
+  validateParams(z.object({ id: z.string().uuid() })),
+  validate(remesaRapidaSchema),
+  movimientoBancoCajaController.crearRemesa,
+);
+
+router.post(
+  "/:id/anular",
+  authorize("ADMIN", "ADMINISTRADOR", "CONTADOR", "SUPERINTENDENTE"),
+  validateParams(z.object({ id: z.string().uuid() })),
+  validate(anularMovimientoBancoCajaSchema),
+  movimientoBancoCajaController.anular,
 );
 
 export default router;

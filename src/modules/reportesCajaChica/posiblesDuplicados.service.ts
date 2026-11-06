@@ -61,12 +61,13 @@ export async function getPosiblesDuplicados(query: {
       include: { caja: true, cuentaBancariaCaja: true },
     }),
     prisma.movimientoFondoCaja.findMany({
-      where: { tipo: { not: "AJUSTE_CUADRE" }, ...(query.cajaId ? { cajaId: query.cajaId } : {}), ...rango },
+      // Las remesas que llegaron por el banco ya se revisan como ingresos.
+      where: { tipo: { not: "AJUSTE_CUADRE" }, movimientoBancoId: null, ...(query.cajaId ? { cajaId: query.cajaId } : {}), ...rango },
       include: { caja: true },
     }),
     query.cajaId
       ? Promise.resolve([])
-      : prisma.movimientoBancoCaja.findMany({ where: { tipo: "INGRESO", ...rango }, include: { cuentaBancaria: true } }),
+      : prisma.movimientoBancoCaja.findMany({ where: { tipo: "INGRESO", anulado: false, ...rango }, include: { cuentaBancaria: true } }),
   ]);
 
   const itemGasto = (g: (typeof gastos)[number]): ItemDuplicado => ({

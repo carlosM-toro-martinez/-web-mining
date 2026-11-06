@@ -17,7 +17,7 @@ async function conSaldo<T extends { id: number; saldoInicial: unknown }>(cuentas
   const [movimientos, gastosDirectos] = await Promise.all([
     prisma.movimientoBancoCaja.groupBy({
       by: ["cuentaBancariaId", "tipo"],
-      where: { cuentaBancariaId: { in: ids } },
+      where: { cuentaBancariaId: { in: ids }, anulado: false },
       _sum: { monto: true },
     }),
     prisma.gastoCaja.groupBy({

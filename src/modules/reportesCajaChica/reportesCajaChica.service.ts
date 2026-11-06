@@ -39,10 +39,18 @@ const CATEGORIA_LABEL: Record<(typeof CATEGORIA_ORDEN)[number], string> = {
   MEDIO_AMBIENTE: "MEDIO AMBIENTE",
 };
 
+// Cómo se nombra en los reportes una remesa que llegó por el banco.
+function nombreRemesa(nombre: string) {
+  const n = nombre.trim().toUpperCase();
+  return n.startsWith("REMESA") ? n : `REMESA ${n}`;
+}
+
 // Reporte mensual "CAJA {SECTOR}" (réplica del Excel de la caja), compartido
 // por la rendición ya creada y por la vista previa antes de crearla.
-// En "Fondos Recibidos" solo van las remesas de la caja (CH-xxx), nunca los
-// traspasos del banco: son la misma plata de esas remesas.
+// En "Fondos Recibidos" van las remesas de la caja: las registradas directo
+// (CH-xxx) y las que llegaron por el banco (ingreso vinculado a una remesa;
+// si una remesa llegó en partes, va en una sola línea con la suma). Nunca
+// los traspasos del banco a la caja: son la misma plata de esas remesas.
 async function armarReporteMensual(params: {
   caja: Prisma.CajaChicaGetPayload<object>;
   numero: string;
@@ -55,16 +63,42 @@ async function armarReporteMensual(params: {
 }) {
   const fondosCaja = await prisma.movimientoFondoCaja.findMany({
     where: { cajaId: params.caja.id, fecha: { gte: params.periodoDesde, lte: params.periodoHasta } },
-    orderBy: { fecha: "asc" },
+    include: { movimientoBanco: { select: { presupuesto: { select: { id: true, nombre: true } } } } },
+    orderBy: [{ fecha: "asc" }, { createdAt: "asc" }],
   });
-  const fondos = fondosCaja.map((f) => ({
-    id: f.id,
-    tipo: f.tipo as string,
-    monto: f.monto,
-    moneda: f.moneda,
-    fecha: f.fecha,
-    referencia: f.referencia,
-  }));
+  type FondoReporte = {
+    id: string;
+    tipo: string;
+    monto: number;
+    moneda: string;
+    fecha: Date;
+    referencia: string | null;
+    descripcion: string | null;
+  };
+  const fondos: FondoReporte[] = [];
+  const porRemesa = new Map<number, FondoReporte>();
+  for (const f of fondosCaja) {
+    const remesa = f.movimientoBanco?.presupuesto;
+    const yaEsta = remesa ? porRemesa.get(remesa.id) : undefined;
+    if (yaEsta) {
+      yaEsta.monto += Number(f.monto);
+      if (f.referencia && !(yaEsta.referencia ?? "").split(" / ").includes(f.referencia)) {
+        yaEsta.referencia = yaEsta.referencia ? `${yaEsta.referencia} / ${f.referencia}` : f.referencia;
+      }
+      continue;
+    }
+    const fila: FondoReporte = {
+      id: f.id,
+      tipo: f.tipo as string,
+      monto: Number(f.monto),
+      moneda: f.moneda,
+      fecha: f.fecha,
+      referencia: f.referencia,
+      descripcion: remesa ? nombreRemesa(remesa.nombre) : null,
+    };
+    fondos.push(fila);
+    if (remesa) porRemesa.set(remesa.id, fila);
+  }
 
   // Todas las categorías, aunque estén vacías (el documento real siempre
   // muestra "ACTIVOS FIJOS" y "MEDIO AMBIENTE" con sub-total 0,00).
@@ -452,6 +486,7 @@ export const reportesCajaChicaService = {
           ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
           ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
         },
+        include: { movimientoBanco: { select: { presupuesto: { select: { nombre: true } } } } },
         orderBy: { fecha: "asc" },
       }),
       prisma.gastoCaja.findMany({
@@ -479,7 +514,7 @@ export const reportesCajaChicaService = {
       ...fondos.map((f) => ({
         fecha: f.fecha,
         tipo: "FONDO" as const,
-        detalle: f.tipo,
+        detalle: f.movimientoBanco?.presupuesto ? nombreRemesa(f.movimientoBanco.presupuesto.nombre) : f.tipo,
         referencia: f.referencia,
         ingreso: Math.max(Number(f.monto), 0),
         egreso: Math.max(-Number(f.monto), 0),
@@ -535,7 +570,7 @@ export const reportesCajaChicaService = {
 
     const [movimientosBanco, gastosDirectos] = await Promise.all([
       prisma.movimientoBancoCaja.findMany({
-        where: { cuentaBancariaId, ...(fechaFin ? { fecha: { lte: fechaFin } } : {}) },
+        where: { cuentaBancariaId, anulado: false, ...(fechaFin ? { fecha: { lte: fechaFin } } : {}) },
         include: { caja: true },
         orderBy: { fecha: "asc" },
       }),

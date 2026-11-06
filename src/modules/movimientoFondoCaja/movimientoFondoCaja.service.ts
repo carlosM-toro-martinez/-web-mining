@@ -20,7 +20,11 @@ export const movimientoFondoCajaService = {
 
     return prisma.movimientoFondoCaja.findMany({
       where,
-      include: { caja: true },
+      include: {
+        caja: true,
+        // Remesa que llegó por el banco (si el fondo viene de un ingreso).
+        movimientoBanco: { select: { presupuesto: { select: { nombre: true } } } },
+      },
       orderBy: { fecha: "desc" },
     });
   },
