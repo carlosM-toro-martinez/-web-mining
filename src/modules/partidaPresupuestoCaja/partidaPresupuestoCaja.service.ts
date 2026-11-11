@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
-import { remesaTieneIngresos } from "../presupuestoCaja/presupuestoCaja.service.js";
+import { asegurarRemesasPorDefecto, remesaTieneIngresos } from "../presupuestoCaja/presupuestoCaja.service.js";
 import type {
   CreatePartidaPresupuestoCajaDTO,
   UpdatePartidaPresupuestoCajaDTO,
@@ -47,6 +47,9 @@ function conCajaAplanada<T extends { presupuesto?: { caja: unknown } | null }>(p
 
 export const partidaPresupuestoCajaService = {
   async getAll(query: PartidaPresupuestoCajaQuery) {
+    // La remesa "otros gastos" del mes (el pedido, o el actual) ya existe: así su
+    // partida "Gastos adicionales" aparece siempre al registrar un gasto.
+    if (!query.presupuestoId) await asegurarRemesasPorDefecto({ cajaId: query.cajaId, anio: query.anio, mes: query.mes });
     const where: any = {};
     if (query.presupuestoId) where.presupuestoId = query.presupuestoId;
     if (query.cajaId || query.anio || query.mes || query.soloActivas) {

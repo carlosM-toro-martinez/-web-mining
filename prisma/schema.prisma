@@ -1176,6 +1176,9 @@ model PresupuestoCaja {
   mes       Int
   nombre    String
   activo    Boolean                  @default(true)
+  // "Otros gastos": la remesa que existe sola cada mes para los gastos que no
+  // estaban presupuestados. No recibe dinero del banco.
+  esPorDefecto Boolean                @default(false)
   createdAt DateTime                 @default(now())
   partidas  PartidaPresupuestoCaja[]
   // Ingresos del banco que trajeron esta remesa (puede llegar en partes).

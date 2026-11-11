@@ -101,6 +101,9 @@ async function validarRemesa(
   const presupuesto = await tx.presupuestoCaja.findUnique({ where: { id: presupuestoId }, include: { caja: true } });
   if (!presupuesto) throw new HttpError("Remesa (presupuesto) no encontrada", 404);
   if (!presupuesto.activo) throw new HttpError(`La remesa "${presupuesto.nombre}" está desactivada.`, 409);
+  if (presupuesto.esPorDefecto) {
+    throw new HttpError(`"${presupuesto.nombre}" es para los gastos que no estaban presupuestados: no recibe dinero del banco.`, 409);
+  }
   const anio = ingreso.fecha.getUTCFullYear();
   const mes = ingreso.fecha.getUTCMonth() + 1;
   if (presupuesto.anio !== anio || presupuesto.mes !== mes) {

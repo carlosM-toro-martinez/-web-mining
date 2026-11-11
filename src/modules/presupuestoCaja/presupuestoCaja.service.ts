@@ -25,6 +25,69 @@ const INCLUDE_DETALLE = {
 const MENSAJE_CON_INGRESOS =
   "esta remesa ya tiene ingresos del banco vinculados (desvincúlalos en Saldos para cambiarla).";
 
+// "Otros gastos": la remesa que existe sola en cada mes para los gastos que no
+// estaban presupuestados. Se crea al consultar un mes (no hay que crearla a
+// mano cada mes) y no recibe dinero del banco.
+const NOMBRE_REMESA_POR_DEFECTO = "OTROS GASTOS";
+const PARTIDA_POR_DEFECTO = "Gastos adicionales";
+const MONTO_PARTIDA_POR_DEFECTO = 100000;
+
+// El mes actual en Bolivia (el servidor puede estar en otra zona horaria).
+function mesActualBolivia() {
+  const [anio, mes] = new Intl.DateTimeFormat("en-CA", { timeZone: "America/La_Paz", year: "numeric", month: "2-digit" })
+    .format(new Date())
+    .split("-")
+    .map(Number);
+  return { anio: anio!, mes: mes! };
+}
+
+async function asegurarRemesaPorDefecto(cajaId: number, anio: number, mes: number) {
+  const existe = () => prisma.presupuestoCaja.findFirst({ where: { cajaId, anio, mes, esPorDefecto: true }, select: { id: true } });
+  if (await existe()) return;
+
+  // No se crea hacia atrás de lo que la caja ya tiene (navegar a un mes viejo no llena de remesas),
+  // ni más allá del mes que viene.
+  const actual = mesActualBolivia();
+  const clave = anio * 12 + mes;
+  if (clave > actual.anio * 12 + actual.mes + 1) return;
+  const [primerPresupuesto, primerGasto] = await Promise.all([
+    prisma.presupuestoCaja.findFirst({ where: { cajaId }, orderBy: [{ anio: "asc" }, { mes: "asc" }], select: { anio: true, mes: true } }),
+    prisma.gastoCaja.findFirst({ where: { cajaId }, orderBy: { fecha: "asc" }, select: { fecha: true } }),
+  ]);
+  const inicios = [
+    primerPresupuesto ? primerPresupuesto.anio * 12 + primerPresupuesto.mes : null,
+    primerGasto ? primerGasto.fecha.getUTCFullYear() * 12 + primerGasto.fecha.getUTCMonth() + 1 : null,
+  ].filter((v): v is number => v !== null);
+  if (clave < Math.min(actual.anio * 12 + actual.mes, ...inicios)) return;
+
+  await prisma.$transaction(async (tx) => {
+    // Dos consultas a la vez no deben crear dos remesas.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${cajaId * 1000000 + anio * 100 + mes})`;
+    const ya = await tx.presupuestoCaja.findFirst({ where: { cajaId, anio, mes, esPorDefecto: true }, select: { id: true } });
+    if (ya) return;
+    const creada = await tx.presupuestoCaja.create({
+      data: { cajaId, anio, mes, nombre: NOMBRE_REMESA_POR_DEFECTO, esPorDefecto: true, activo: true },
+    });
+    await tx.partidaPresupuestoCaja.create({
+      data: { presupuestoId: creada.id, descripcion: PARTIDA_POR_DEFECTO, montoPresupuestado: MONTO_PARTIDA_POR_DEFECTO, activo: true },
+    });
+    logger.info({ presupuestoId: creada.id, cajaId, anio, mes, action: "CREATE_REMESA_POR_DEFECTO" }, "Remesa 'otros gastos' creada");
+  });
+}
+
+// Asegura la remesa "otros gastos" del mes pedido (o del actual) en la caja
+// pedida (o en todas las cajas activas).
+export async function asegurarRemesasPorDefecto(opciones: { cajaId?: number | undefined; anio?: number | undefined; mes?: number | undefined }) {
+  const actual = mesActualBolivia();
+  const anio = opciones.anio ?? actual.anio;
+  const mes = opciones.mes ?? actual.mes;
+  if (mes < 1 || mes > 12) return;
+  const cajas = opciones.cajaId
+    ? [{ id: opciones.cajaId }]
+    : await prisma.cajaChica.findMany({ where: { activo: true }, select: { id: true } });
+  for (const c of cajas) await asegurarRemesaPorDefecto(c.id, anio, mes);
+}
+
 export async function remesaTieneIngresos(presupuestoId: number) {
   return (await prisma.movimientoBancoCaja.count({ where: { presupuestoId, anulado: false } })) > 0;
 }
@@ -71,6 +134,8 @@ async function conEjecucion<
 
 export const presupuestoCajaService = {
   async getAll(query: PresupuestoCajaQuery) {
+    // Al mirar un mes, su remesa "otros gastos" ya existe.
+    if (query.anio && query.mes) await asegurarRemesasPorDefecto({ cajaId: query.cajaId, anio: query.anio, mes: query.mes });
     const where: any = {};
     if (query.cajaId) where.cajaId = query.cajaId;
     if (query.anio) where.anio = query.anio;
@@ -120,6 +185,9 @@ export const presupuestoCajaService = {
   async update(id: number, data: UpdatePresupuestoCajaDTO, userId: number) {
     const existente = await prisma.presupuestoCaja.findUnique({ where: { id } });
     if (!existente) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
+    if (existente.esPorDefecto && (data.nombre !== undefined || data.activo !== undefined)) {
+      throw new HttpError('"Otros gastos" existe siempre en cada mes: no se puede renombrar ni desactivar.', 409);
+    }
     if (await remesaTieneIngresos(id)) throw new HttpError(`No se puede editar: ${MENSAJE_CON_INGRESOS}`, 409);
 
     const cleanData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as any;
@@ -139,6 +207,9 @@ export const presupuestoCajaService = {
     const presupuesto = await prisma.presupuestoCaja.findUnique({ where: { id }, include: { partidas: true } });
     if (!presupuesto) throw new HttpError("Presupuesto (remesa) no encontrado", 404);
 
+    if (presupuesto.esPorDefecto) {
+      throw new HttpError('"Otros gastos" existe siempre en cada mes: no se puede eliminar.', 409);
+    }
     if (await remesaTieneIngresos(id)) throw new HttpError(`No se puede eliminar: ${MENSAJE_CON_INGRESOS}`, 409);
     // Los ingresos anulados que la nombraban se sueltan antes de borrarla.
     await prisma.movimientoBancoCaja.updateMany({ where: { presupuestoId: id }, data: { presupuestoId: null } });
