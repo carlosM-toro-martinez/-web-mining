@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
-import { requirePermiso } from "../../middleware/permiso.middleware.js";
+import { requireAlgunPermiso, requirePermiso } from "../../middleware/permiso.middleware.js";
+import { requirePermisoAnularCompra } from "./compras.permisos.js";
 import { validate } from "../../middleware/validate.middleware.js";
 import { comprasController } from "./compras.controller.js";
 import { createCompraSchema, recibirCompraSchema, compraQuerySchema } from "./compras.schema.js";
@@ -86,7 +87,7 @@ router.patch(
 // Anular compra (ADMIN, SUPERINTENDENTE, ALMACENERO)
 router.post(
   "/:id/anular",
-  requirePermiso("inventario.compras", "anular"),
+  requirePermisoAnularCompra,
   validateParams(idSchema),
   comprasController.anularCompra,
 );
@@ -94,7 +95,7 @@ router.post(
 // Listar anulaciones de compras
 router.get(
   "/anulaciones/historial",
-  requirePermiso("inventario.compras", "ver_anulaciones"),
+  requireAlgunPermiso(["inventario.compras", "ver_anulaciones"], ["inventario.recepcion", "ver_anulaciones"]),
   comprasController.getAnulaciones,
 );
 

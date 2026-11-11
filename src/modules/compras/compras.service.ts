@@ -300,6 +300,12 @@ export const comprasService = {
         usuarioRegistro: { select: { id: true, nombre: true, email: true } },
         usuarioRecibe: { select: { id: true, nombre: true, email: true } },
         anulacion: { include: { usuario: { select: { id: true, nombre: true, email: true } } } },
+        // Solicitudes de pago que se hicieron por este pedido (módulo Solicitudes de pago)
+        solicitudesPago: {
+          where: { estado: { not: "ANULADA" } },
+          select: { id: true, numero: true, anio: true, mes: true, estado: true, total: true },
+          orderBy: { createdAt: "asc" },
+        },
         items: {
           include: {
             producto: {
@@ -382,11 +388,44 @@ export const comprasService = {
       if (cantidad === undefined || cantidad < 0) {
         throw new HttpError(`Cantidad inválida para item ${itemId}`, 400);
       }
-      if (cantidad > Number(item.cantidadPedida)) {
+      // Lo que se recibe ahora no puede pasar de lo que falta por llegar. Compararlo solo con
+      // lo pedido dejaba pasar una recepción repetida (por ejemplo un reintento del navegador
+      // tras una respuesta perdida) y la contaba dos veces.
+      const pendiente = Number(item.cantidadPedida) - Number(item.cantidadRecibida);
+      if (cantidad > pendiente + 0.000001) {
         throw new HttpError(
-          `La cantidad recibida no puede exceder la pedida para ${item.producto.nombre}`,
+          `La cantidad recibida (${cantidad}) supera lo que falta por recibir (${Math.max(pendiente, 0)}) de ${item.producto.nombre}`,
           409,
         );
+      }
+    }
+
+    // Fórmula de IVA: la confirma quien recibe. Cambiarla solo es válido mientras
+    // no haya llegado nada; con mercadería ya recibida los valores ya se calcularon.
+    if (data.tieneIva !== undefined || data.esGasEspecial !== undefined) {
+      const nuevoTieneIva = data.tieneIva ?? compra.tieneIva;
+      const nuevoGasEspecial = nuevoTieneIva
+        ? (data.esGasEspecial === undefined ? compra.esGasEspecial : data.esGasEspecial)
+        : null;
+      const cambia = nuevoTieneIva !== compra.tieneIva || (nuevoGasEspecial ?? null) !== (compra.esGasEspecial ?? null);
+      if (cambia) {
+        if (compra.items.some((item) => new Prisma.Decimal(item.cantidadRecibida).gt(0))) {
+          throw new HttpError("La fórmula de IVA ya no se puede cambiar: esta compra ya tiene mercadería recibida", 409);
+        }
+        await prisma.compra.update({ where: { id }, data: { tieneIva: nuevoTieneIva, esGasEspecial: nuevoGasEspecial } });
+        await prisma.log.create({
+          data: {
+            usuarioId: userId,
+            accion: "CAMBIAR_IVA_COMPRA",
+            data: {
+              compraId: id,
+              antes: { tieneIva: compra.tieneIva, esGasEspecial: compra.esGasEspecial },
+              despues: { tieneIva: nuevoTieneIva, esGasEspecial: nuevoGasEspecial },
+            },
+          },
+        });
+        compra.tieneIva = nuevoTieneIva;
+        compra.esGasEspecial = nuevoGasEspecial;
       }
     }
 

@@ -31,6 +31,10 @@ export const createCompraSchema = z
 export const recibirCompraSchema = z
   .object({
     cantidadesRecibidas: z.record(z.string(), z.number().nonnegative()),
+    // Fórmula de IVA confirmada por quien recibe. Si no se envía, se conserva la del pedido.
+    // Solo se puede cambiar mientras no haya llegado nada de la compra.
+    tieneIva: z.boolean().optional(),
+    esGasEspecial: z.boolean().nullable().optional(),
   })
   .strict();
 

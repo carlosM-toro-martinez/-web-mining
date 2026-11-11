@@ -40,3 +40,21 @@ export const requireModulo = (modulo: string) => {
     next();
   };
 };
+
+// Acceso si el rol tiene AL MENOS UNO de los permisos indicados ([recurso, acción]).
+// Para datos que se consultan desde dos pantallas con permisos distintos.
+//   router.get("/x", requireAlgunPermiso(["inventario.compras", "ver_anulaciones"], ["inventario.recepcion", "ver_anulaciones"]), ...)
+export const requireAlgunPermiso = (...pares: Array<[string, string]>) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Token requerido" });
+    }
+    if (req.user.role === ROL_SUPERADMIN) return next();
+
+    const permisos = await obtenerPermisosUsuario(req.user.id);
+    if (!pares.some(([recurso, accion]) => tienePermiso(permisos, recurso, accion))) {
+      return res.status(403).json({ success: false, error: "Acceso denegado" });
+    }
+    next();
+  };
+};

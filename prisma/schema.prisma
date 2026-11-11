@@ -210,6 +210,7 @@ model Proveedor {
   razonSocial String?
   compras     Compra[]
   pedidos     Pedido[]
+  solicitudesPago SolicitudPago[]
 }
 
 model Pedido {
@@ -251,6 +252,7 @@ model Compra {
   tieneIva          Boolean          @default(true)
   esGasEspecial     Boolean?
   anulacion         AnulacionCompra?
+  solicitudesPago   SolicitudPago[]
   proveedor         Proveedor        @relation(fields: [proveedorId], references: [id])
   usuarioRecibe     User?            @relation("UsuarioRecibe", fields: [usuarioRecibidoId], references: [id])
   usuarioRegistro   User             @relation("UsuarioRegistro", fields: [usuarioRegistroId], references: [id])
@@ -1550,4 +1552,104 @@ enum FormaPagoBanco {
   DEPOSITO
   CHEQUE
   TRANSFERENCIA
+}
+
+// ─── Solicitudes de pago ───────────────────────────────────────────────────────
+// Pedido formal de pago a presidencia (montos altos): compras, servicios, obras.
+// Se numera por empresa, año y mes. Tiene tres estados independientes: el pago
+// (estado), la factura (tipoDocumento) y la entrega o ejecución (estadoEntrega).
+
+enum EstadoSolicitudPago {
+  BORRADOR
+  SOLICITADA
+  PAGADA
+  ANULADA
+}
+
+enum EstadoEntregaSolicitud {
+  PENDIENTE
+  EN_EJECUCION
+  COMPLETADO
+}
+
+enum TipoFirmaSolicitud {
+  ELABORADO
+  REVISADO
+  VISTO_BUENO
+  ADMINISTRADOR
+}
+
+model SolicitudPago {
+  id                    String                 @id @default(uuid())
+  empresa               String                 @default("MARTE")
+  anio                  Int
+  mes                   Int
+  numero                Int
+  fecha                 DateTime               @db.Date
+  solicitadoPor         String                 @default("")
+  cotizacion            String?
+  informeUso            String?
+  observaciones         String?
+  total                 Decimal                @db.Decimal(14, 2)
+  proveedorId           Int?
+  compraId              String?
+  beneficiarioNombre    String
+  beneficiarioNit       String?
+  banco                 String?
+  cuenta                String?
+  estado                EstadoSolicitudPago    @default(BORRADOR)
+  fechaPago             DateTime?              @db.Date
+  referenciaPago        String?
+  pagadoPorId           Int?
+  pagadoAt              DateTime?
+  tipoDocumento         TipoDocumentoCompra?
+  numeroFactura         String?
+  documentoRegistradoAt DateTime?
+  estadoEntrega         EstadoEntregaSolicitud @default(PENDIENTE)
+  notaEntrega           String?
+  motivoAnulacion       String?
+  anuladoPorId          Int?
+  anuladoAt             DateTime?
+  creadoPorId           Int
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  proveedor             Proveedor?             @relation(fields: [proveedorId], references: [id])
+  compra                Compra?                @relation(fields: [compraId], references: [id])
+  items                 SolicitudPagoItem[]
+  firmas                SolicitudPagoFirma[]
+
+  @@unique([empresa, anio, mes, numero])
+  @@index([empresa, anio, mes])
+  @@index([estado])
+  @@index([proveedorId])
+  @@index([compraId])
+}
+
+model SolicitudPagoItem {
+  id          String        @id @default(uuid())
+  solicitudId String
+  orden       Int
+  referencia  String?
+  descripcion String
+  cantidad    Decimal       @default(1) @db.Decimal(12, 2)
+  precioUnit  Decimal       @db.Decimal(14, 2)
+  descuento   Decimal       @default(0) @db.Decimal(14, 2)
+  total       Decimal       @db.Decimal(14, 2)
+  solicitud   SolicitudPago @relation(fields: [solicitudId], references: [id], onDelete: Cascade)
+
+  @@index([solicitudId])
+}
+
+model SolicitudPagoFirma {
+  id            String             @id @default(uuid())
+  solicitudId   String
+  tipo          TipoFirmaSolicitud
+  nombre        String             @default("")
+  cargo         String?
+  usuarioId     Int?
+  usuarioNombre String?
+  firmadoAt     DateTime?
+  solicitud     SolicitudPago      @relation(fields: [solicitudId], references: [id], onDelete: Cascade)
+
+  @@unique([solicitudId, tipo])
 }

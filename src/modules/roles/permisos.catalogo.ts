@@ -146,15 +146,20 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
         acciones: [
           VER, CREAR,
           { clave: "documento", nombre: "Registrar factura o recibo" },
-          { clave: "anular", nombre: "Anular" },
-          { clave: "ver_anulaciones", nombre: "Ver historial de anulaciones" },
+          { clave: "anular", nombre: "Anular pedido (que aún no llegó)" },
+          { clave: "ver_anulaciones", nombre: "Ver historial de pedidos anulados" },
         ],
       },
       {
         clave: "inventario.recepcion",
         nombre: "Recepción de compras",
-        descripcion: "Confirmar con las cantidades reales lo que llegó de cada pedido de compra. Recibir actualiza el stock.",
-        acciones: [VER, { clave: "recibir", nombre: "Recibir" }],
+        descripcion: "Confirmar con las cantidades reales lo que llegó de cada pedido de compra (y la fórmula de IVA). Recibir actualiza el stock; anular una compra ya recibida lo revierte.",
+        acciones: [
+          VER,
+          { clave: "recibir", nombre: "Recibir" },
+          { clave: "anular", nombre: "Anular compra ya recibida (revierte el stock)" },
+          { clave: "ver_anulaciones", nombre: "Ver historial de compras recibidas anuladas" },
+        ],
       },
       {
         clave: "inventario.pedidos",
@@ -221,6 +226,26 @@ export const PERMISOS_CATALOGO: ModuloCatalogo[] = [
         nombre: "Contabilidad",
         descripcion: "Editar = crear y modificar centros de costo, funciones de gasto, sectores y cuentas contables.",
         acciones: [VER, EDITAR],
+      },
+    ],
+  },
+  {
+    clave: "pagos",
+    nombre: "Pagos",
+    recursos: [
+      {
+        clave: "pagos.solicitudes",
+        nombre: "Solicitudes de pago",
+        descripcion:
+          "Registro de las solicitudes de pago a presidencia. Crear/Editar arma la solicitud; cada firma (Revisó, VºBº, Administración) y el pago tienen su propio permiso.",
+        acciones: [
+          VER, CREAR, EDITAR,
+          { clave: "revisar", nombre: "Firmar como Revisó" },
+          { clave: "visto_bueno", nombre: "Firmar el VºBº" },
+          { clave: "autorizar", nombre: "Firmar como Administración" },
+          { clave: "pagar", nombre: "Registrar el pago" },
+          { clave: "anular", nombre: "Anular" },
+        ],
       },
     ],
   },
