@@ -193,24 +193,9 @@ export const rendicionCajaService = {
         throw new HttpError("Solo se puede cerrar una rendición en BORRADOR", 409);
       }
 
-      // No cerrar sin cuenta contable ni partida — el comprobante de diario
-      // necesita la cuenta. El centro de costo y la función de gasto NO son
-      // obligatorios: hay cuentas que no los llevan (ej. 50.002.000 Cuenta
-      // Compensación en el comprobante real) y en el comprobante esas líneas
-      // salen solo con la cuenta. Se completan editando el gasto (mientras
-      // siga REGISTRADO) antes de volver a intentar el cierre.
-      const gastosIncompletos = await tx.gastoCaja.count({
-        where: {
-          id: { in: rendicion.detalleGastos.map((d) => d.gastoId) },
-          OR: [{ cuentaContableCajaId: null }, { partidaPresupuestoId: null }],
-        },
-      });
-      if (gastosIncompletos > 0) {
-        throw new HttpError(
-          `No se puede cerrar: ${gastosIncompletos} gasto(s) de esta rendición no tienen cuenta contable o partida de presupuesto. Complétalos en "Gastos" antes de cerrar (el centro de costo y la función de gasto son opcionales).`,
-          409,
-        );
-      }
+      // Cerrar NO exige partida, cuenta contable, centro de costo ni función de
+      // gasto: todo eso se puede completar después. El comprobante de diario
+      // muestra "SIN CUENTA CONTABLE ASIGNADA" en las líneas que aún no la tengan.
 
       const resultado = await tx.rendicionCaja.updateMany({
         where: { id, estado: "BORRADOR" },

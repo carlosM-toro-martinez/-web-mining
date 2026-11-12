@@ -114,6 +114,8 @@ export const gastoCajaQuerySchema = z
     montoMin: z.coerce.number().nonnegative().optional(),
     montoMax: z.coerce.number().nonnegative().optional(),
     informacionIncompleta: z.enum(["true", "false"]).optional(),
+    sinPartida: z.enum(["true", "false"]).optional(),
+    posiblesRepetidos: z.enum(["true", "false"]).optional(),
     orden: z.enum(["fecha_desc", "fecha_asc", "monto_desc", "monto_asc"]).optional(),
   })
   .strict();

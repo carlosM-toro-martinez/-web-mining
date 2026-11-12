@@ -479,12 +479,20 @@ export const reportesCajaChicaService = {
     // (SALIDA_A_CAJA) no se suman: son la misma plata de las remesas, que se
     // depositan en el banco y de ahí se sacan a la caja (ver
     // rendicionCaja.service.ts create()).
+    // Un solo filtro de fecha: después del último cierre Y hasta la fecha pedida.
+    // (Dos filtros "fecha" separados se pisan y dejarían contar dos veces lo que
+    // ya está dentro del saldo del cierre.)
+    const rangoFecha = {
+      ...(cortaDesde ? { gt: cortaDesde } : {}),
+      ...(fechaFin ? { lte: fechaFin } : {}),
+    };
+    const filtroFecha = Object.keys(rangoFecha).length ? { fecha: rangoFecha } : {};
+
     const [fondos, gastos] = await Promise.all([
       prisma.movimientoFondoCaja.findMany({
         where: {
           cajaId,
-          ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
-          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
+          ...filtroFecha,
         },
         include: { movimientoBanco: { select: { presupuesto: { select: { nombre: true } } } } },
         orderBy: { fecha: "asc" },
@@ -493,8 +501,7 @@ export const reportesCajaChicaService = {
         where: {
           cajaId,
           estado: { not: "ANULADO" },
-          ...(cortaDesde ? { fecha: { gt: cortaDesde } } : {}),
-          ...(fechaFin ? { fecha: { lte: fechaFin } } : {}),
+          ...filtroFecha,
         },
         orderBy: { fecha: "asc" },
       }),

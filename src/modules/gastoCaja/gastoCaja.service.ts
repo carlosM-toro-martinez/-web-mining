@@ -5,6 +5,7 @@ import { obtenerSaldoActualCuentaBancaria } from "../cuentaBancariaCaja/cuentaBa
 import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
 import { movimientoFondoCajaService } from "../movimientoFondoCaja/movimientoFondoCaja.service.js";
 import { validarNoAnteriorAlCuadre } from "../cuadreSaldo/cuadreSaldo.service.js";
+import { idsPosiblesRepetidos } from "./gastoCaja.repetidos.js";
 import { parseCajaChicaExcel, type CategoriaRendicionGastoTexto } from "./gastoCajaImport.parser.js";
 import type {
   AnularGastoCajaDTO,
@@ -544,6 +545,21 @@ export const gastoCajaService = {
     }
 
     const condiciones: any[] = [];
+    // Para cerrar el mes: gastos vigentes que todavía no tienen partida.
+    if (query.sinPartida === "true") {
+      where.partidaPresupuestoId = null;
+      if (!query.estado) where.estado = { not: "ANULADO" };
+    }
+    // Los posibles repetidos se buscan entre todos los gastos vigentes (un
+    // repetido puede estar en otro mes), y después se aplican los demás filtros.
+    const vigentes = await prisma.gastoCaja.findMany({
+      where: { estado: { not: "ANULADO" } },
+      select: { id: true, fecha: true, proveedorNombre: true, montoTotal: true, moneda: true, numeroRespaldo: true },
+    });
+    const repetidos = idsPosiblesRepetidos(vigentes);
+    if (query.posiblesRepetidos === "true") {
+      where.id = { in: [...repetidos] };
+    }
     if (query.informacionIncompleta === "true") {
       condiciones.push({
         OR: [
@@ -583,7 +599,9 @@ export const gastoCajaService = {
     if (condiciones.length) where.AND = condiciones;
 
     const orderBy =
-      query.orden === "fecha_asc"
+      query.posiblesRepetidos === "true"
+        ? [{ proveedorNombre: "asc" as const }, { montoTotal: "asc" as const }, { fecha: "asc" as const }]
+        : query.orden === "fecha_asc"
         ? [{ fecha: "asc" as const }, { createdAt: "asc" as const }]
         : query.orden === "monto_desc"
           ? [{ montoTotal: "desc" as const }]
@@ -615,7 +633,7 @@ export const gastoCajaService = {
     ]);
 
     return {
-      gastos: gastos.map(conInfoIncompleta),
+      gastos: gastos.map((g) => ({ ...conInfoIncompleta(g), posibleRepetido: repetidos.has(g.id) })),
       meta: { page, limit, total, totalPages: Math.ceil(total / limit), totalMonto: Number(suma._sum.montoTotal ?? 0) },
     };
   },
