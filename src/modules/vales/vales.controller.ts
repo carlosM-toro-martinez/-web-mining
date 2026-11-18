@@ -3,6 +3,7 @@ import type { AuthRequest } from "../../middleware/auth.middleware.js";
 import { HttpError } from "../../errors/http.error.js";
 import { valesService } from "./vales.service.js";
 import { valeQuerySchema } from "./vales.schema.js";
+import { obtenerPermisosUsuario, tienePermiso } from "../roles/permisos.service.js";
 
 export const valesController = {
   async createVale(req: AuthRequest, res: Response) {
@@ -18,7 +19,11 @@ export const valesController = {
   async getVales(req: AuthRequest, res: Response) {
     try {
       const query = valeQuerySchema.parse(req.query);
-      const result = await valesService.getVales(query, req.user!.id, String(req.user!.role ?? ""));
+      // Quien tiene el permiso "Ver" de Vales de salida consulta todos los vales,
+      // no solo los propios (así un rol de solo consulta ve la información completa).
+      const permisos = await obtenerPermisosUsuario(req.user!.id);
+      const verTodos = tienePermiso(permisos, "inventario.vales", "ver");
+      const result = await valesService.getVales(query, req.user!.id, String(req.user!.role ?? ""), verTodos);
       res.json({ success: true, data: result.vales, meta: result.meta });
     } catch (error) {
       const status = error instanceof HttpError ? error.statusCode : 500;

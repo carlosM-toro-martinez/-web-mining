@@ -177,13 +177,13 @@ export const valesService = {
     return vale;
   },
 
-  async getVales(query: ValeQueryDTO, userId: number, userRole: string) {
+  async getVales(query: ValeQueryDTO, userId: number, userRole: string, verTodos = false) {
     const page  = Number(query.page ?? 1);
     const limit = Number(query.limit ?? 10);
     const skip  = (page - 1) * limit;
 
-    // ADMIN y SUPERINTENDENTE ven todos los vales; el resto solo los propios
-    const roleFilter: any = ROLES_SUPERVISORES.includes(userRole)
+    // ADMIN, SUPERINTENDENTE y quien tenga el permiso "Ver" ven todos los vales; el resto solo los propios
+    const roleFilter: any = verTodos || ROLES_SUPERVISORES.includes(userRole)
       ? null
       : { OR: [{ solicitanteId: userId }, { superintendenteId: userId }, { almaceneroId: userId }] };
 

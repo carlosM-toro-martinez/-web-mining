@@ -41,6 +41,25 @@ export const requireModulo = (modulo: string) => {
   };
 };
 
+// Para listados compartidos que el sistema fue usando por rol fijo (p. ej. el
+// selector de trabajadores): pasa quien tenga uno de los roles indicados O al
+// menos un permiso en alguno de los módulos indicados.
+//   router.get("/users", authenticate, requireRolOAlgunModulo(["ADMIN"], ["inventario", "personal"]), ...)
+export const requireRolOAlgunModulo = (roles: string[], modulos: string[]) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Token requerido" });
+    }
+    if (req.user.role === ROL_SUPERADMIN || roles.includes(req.user.role)) return next();
+
+    const permisos = await obtenerPermisosUsuario(req.user.id);
+    if (!modulos.some((modulo) => tieneAlgunPermiso(permisos, modulo))) {
+      return res.status(403).json({ success: false, error: "Acceso denegado" });
+    }
+    next();
+  };
+};
+
 // Acceso si el rol tiene AL MENOS UNO de los permisos indicados ([recurso, acción]).
 // Para datos que se consultan desde dos pantallas con permisos distintos.
 //   router.get("/x", requireAlgunPermiso(["inventario.compras", "ver_anulaciones"], ["inventario.recepcion", "ver_anulaciones"]), ...)

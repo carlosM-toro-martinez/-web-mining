@@ -11,6 +11,7 @@ import {
   updateUserSchema,
 } from "./auth.schema.js";
 import { authenticate, authorize } from "../../middleware/auth.middleware.js";
+import { requireRolOAlgunModulo } from "../../middleware/permiso.middleware.js";
 
 const router = Router();
 
@@ -26,10 +27,16 @@ router.post(
 router.post("/login", validate(loginSchema), authController.login);
 router.post("/refresh", authController.refresh);
 router.post("/logout", authenticate, authController.logout);
+// Listado de solo lectura que alimenta los selectores de trabajador/solicitante
+// de varias pantallas: además de los roles de siempre, cualquier rol con
+// permisos en un módulo (se asignan en Roles y permisos) puede consultarlo.
 router.get(
   "/users",
   authenticate,
-  authorize("ADMIN", "SUPERINTENDENTE", "ALMACENERO"),
+  requireRolOAlgunModulo(
+    ["ADMIN", "SUPERINTENDENTE", "ALMACENERO"],
+    ["inventario", "personal", "logistica", "pagos", "sistema"],
+  ),
   authController.listarUsuarios,
 );
 router.put(
