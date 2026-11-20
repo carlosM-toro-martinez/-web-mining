@@ -45,12 +45,62 @@ function nombreRemesa(nombre: string) {
   return n.startsWith("REMESA") ? n : `REMESA ${n}`;
 }
 
-// Reporte mensual "CAJA {SECTOR}" (réplica del Excel de la caja), compartido
-// por la rendición ya creada y por la vista previa antes de crearla.
-// En "Fondos Recibidos" van las remesas de la caja: las registradas directo
-// (CH-xxx) y las que llegaron por el banco (ingreso vinculado a una remesa;
-// si una remesa llegó en partes, va en una sola línea con la suma). Nunca
-// los traspasos del banco a la caja: son la misma plata de esas remesas.
+// Dinero que ENTRA a una caja (lo que va en "Fondos recibidos" del reporte, en
+// el saldo y en la rendición): lo que el banco le entregó a la caja (salidas
+// del banco hacia la caja, no anuladas) más los fondos y ajustes registrados
+// directo en la caja. Los ingresos a la CUENTA BANCARIA no son dinero de la
+// caja: solo lo son cuando salen del banco hacia ella.
+export type IngresoCaja = {
+  id: string;
+  tipo: string;
+  fecha: Date;
+  createdAt: Date;
+  monto: number;
+  moneda: string;
+  referencia: string | null;
+  descripcion: string | null;
+};
+
+export async function ingresosDeCaja(
+  cajaId: number,
+  rango: { gt?: Date; gte?: Date; lte?: Date },
+): Promise<IngresoCaja[]> {
+  const fecha = Object.keys(rango).length ? { fecha: rango } : {};
+  const [fondos, salidas] = await Promise.all([
+    prisma.movimientoFondoCaja.findMany({ where: { cajaId, movimientoBancoId: null, ...fecha } }),
+    prisma.movimientoBancoCaja.findMany({ where: { cajaId, tipo: "SALIDA_A_CAJA", anulado: false, ...fecha } }),
+  ]);
+  const referenciaSalida = (m: { formaPago: string; numeroCheque: string | null }) =>
+    m.formaPago === "CHEQUE" ? `CH- ${m.numeroCheque ?? ""}`.trim() : m.formaPago === "TRANSFERENCIA" ? "TRANSFERENCIA" : "DEPÓSITO";
+  return [
+    ...fondos.map((f) => ({
+      id: f.id,
+      tipo: f.tipo as string,
+      fecha: f.fecha,
+      createdAt: f.createdAt,
+      monto: Number(f.monto),
+      moneda: f.moneda as string,
+      referencia: f.referencia,
+      descripcion: null,
+    })),
+    ...salidas.map((m) => ({
+      id: m.id,
+      tipo: "REMESA_PRESUPUESTO",
+      fecha: m.fecha,
+      createdAt: m.createdAt,
+      monto: Number(m.monto),
+      moneda: m.moneda as string,
+      referencia: referenciaSalida(m),
+      descripcion: nombreRemesa(m.descripcion),
+    })),
+  ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
+}
+
+// Reporte mensual "CAJA {SECTOR}"
+// (réplica del Excel de la caja), compartido por la rendición ya creada y por
+// la vista previa antes de crearla. En "Fondos Recibidos" va lo que la caja
+// recibió: las entregas del banco a la caja y los fondos registrados directo.
+// Nunca los ingresos a la cuenta bancaria.
 async function armarReporteMensual(params: {
   caja: Prisma.CajaChicaGetPayload<object>;
   numero: string;
@@ -61,44 +111,15 @@ async function armarReporteMensual(params: {
   saldoAnterior: number;
   saldoNuevo?: number;
 }) {
-  const fondosCaja = await prisma.movimientoFondoCaja.findMany({
-    where: { cajaId: params.caja.id, fecha: { gte: params.periodoDesde, lte: params.periodoHasta } },
-    include: { movimientoBanco: { select: { presupuesto: { select: { id: true, nombre: true } } } } },
-    orderBy: [{ fecha: "asc" }, { createdAt: "asc" }],
-  });
-  type FondoReporte = {
-    id: string;
-    tipo: string;
-    monto: number;
-    moneda: string;
-    fecha: Date;
-    referencia: string | null;
-    descripcion: string | null;
-  };
-  const fondos: FondoReporte[] = [];
-  const porRemesa = new Map<number, FondoReporte>();
-  for (const f of fondosCaja) {
-    const remesa = f.movimientoBanco?.presupuesto;
-    const yaEsta = remesa ? porRemesa.get(remesa.id) : undefined;
-    if (yaEsta) {
-      yaEsta.monto += Number(f.monto);
-      if (f.referencia && !(yaEsta.referencia ?? "").split(" / ").includes(f.referencia)) {
-        yaEsta.referencia = yaEsta.referencia ? `${yaEsta.referencia} / ${f.referencia}` : f.referencia;
-      }
-      continue;
-    }
-    const fila: FondoReporte = {
-      id: f.id,
-      tipo: f.tipo as string,
-      monto: Number(f.monto),
-      moneda: f.moneda,
-      fecha: f.fecha,
-      referencia: f.referencia,
-      descripcion: remesa ? nombreRemesa(remesa.nombre) : null,
-    };
-    fondos.push(fila);
-    if (remesa) porRemesa.set(remesa.id, fila);
-  }
+  const fondos = (await ingresosDeCaja(params.caja.id, { gte: params.periodoDesde, lte: params.periodoHasta })).map((f) => ({
+    id: f.id,
+    tipo: f.tipo,
+    monto: f.monto,
+    moneda: f.moneda,
+    fecha: f.fecha,
+    referencia: f.referencia,
+    descripcion: f.descripcion,
+  }));
 
   // Todas las categorías, aunque estén vacías (el documento real siempre
   // muestra "ACTIVOS FIJOS" y "MEDIO AMBIENTE" con sub-total 0,00).
@@ -475,10 +496,8 @@ export const reportesCajaChicaService = {
     const saldoBase = ultimaCerrada ? Number(ultimaCerrada.saldoNuevo) : Number(caja.saldoInicial);
     const cortaDesde = ultimaCerrada ? ultimaCerrada.periodoHasta : undefined;
 
-    // Ingresos de la caja = solo sus remesas. Los traspasos banco -> caja
-    // (SALIDA_A_CAJA) no se suman: son la misma plata de las remesas, que se
-    // depositan en el banco y de ahí se sacan a la caja (ver
-    // rendicionCaja.service.ts create()).
+    // Ingresos de la caja = lo que el banco le entregó (SALIDA_A_CAJA) más los
+    // fondos directos. Los ingresos a la cuenta bancaria no cuentan.
     // Un solo filtro de fecha: después del último cierre Y hasta la fecha pedida.
     // (Dos filtros "fecha" separados se pisan y dejarían contar dos veces lo que
     // ya está dentro del saldo del cierre.)
@@ -489,14 +508,7 @@ export const reportesCajaChicaService = {
     const filtroFecha = Object.keys(rangoFecha).length ? { fecha: rangoFecha } : {};
 
     const [fondos, gastos] = await Promise.all([
-      prisma.movimientoFondoCaja.findMany({
-        where: {
-          cajaId,
-          ...filtroFecha,
-        },
-        include: { movimientoBanco: { select: { presupuesto: { select: { nombre: true } } } } },
-        orderBy: { fecha: "asc" },
-      }),
+      ingresosDeCaja(cajaId, rangoFecha),
       prisma.gastoCaja.findMany({
         where: {
           cajaId,
@@ -521,10 +533,10 @@ export const reportesCajaChicaService = {
       ...fondos.map((f) => ({
         fecha: f.fecha,
         tipo: "FONDO" as const,
-        detalle: f.movimientoBanco?.presupuesto ? nombreRemesa(f.movimientoBanco.presupuesto.nombre) : f.tipo,
+        detalle: f.descripcion ?? f.tipo,
         referencia: f.referencia,
-        ingreso: Math.max(Number(f.monto), 0),
-        egreso: Math.max(-Number(f.monto), 0),
+        ingreso: Math.max(f.monto, 0),
+        egreso: Math.max(-f.monto, 0),
       })),
       ...gastos.map((g) => ({
         fecha: g.fecha,
@@ -534,7 +546,7 @@ export const reportesCajaChicaService = {
         ingreso: 0,
         egreso: Number(g.montoTotal),
       })),
-    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || b.ingreso - a.ingreso);
 
     const antesDelRango = fechaInicio ? movimientos.filter((m) => m.fecha < fechaInicio) : [];
     const dentroDelRango = fechaInicio ? movimientos.filter((m) => m.fecha >= fechaInicio) : movimientos;
@@ -607,13 +619,19 @@ export const reportesCajaChicaService = {
         return {
           fecha: m.fecha,
           tipo: "FONDO" as const,
+          // Todo en mayúsculas y las remesas siempre como "REMESA + descripción".
           detalle:
-            m.tipo === "INGRESO"
-              ? `Ingreso · ${m.formaPago}`
-              : m.tipo === "AJUSTE_CUADRE"
-                ? "Ajuste por cuadre de saldo"
-                : `Salida hacia ${m.caja?.nombre ?? "caja"} · ${m.formaPago}`,
-          referencia: m.numeroCheque ? `Cheque ${m.numeroCheque}` : m.descripcion,
+            m.tipo === "AJUSTE_CUADRE"
+              ? "AJUSTE POR CUADRE DE SALDO"
+              : m.tipo === "INGRESO" && !m.presupuestoId
+                ? m.descripcion.trim().toUpperCase()
+                : nombreRemesa(m.descripcion),
+          referencia: m.numeroCheque
+            ? `CHEQUE ${m.numeroCheque}`
+            : [m.formaPago, m.tipo === "SALIDA_A_CAJA" ? m.caja?.nombre : null]
+                .filter(Boolean)
+                .join(" · ")
+                .toUpperCase(),
           ingreso: Math.max(efecto, 0),
           egreso: Math.max(-efecto, 0),
         };
@@ -626,7 +644,7 @@ export const reportesCajaChicaService = {
         ingreso: 0,
         egreso: Number(g.montoTotal),
       })),
-    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+    ].sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || b.ingreso - a.ingreso);
 
     const antesDelRango = fechaInicio ? movimientos.filter((m) => m.fecha < fechaInicio) : [];
     const dentroDelRango = fechaInicio ? movimientos.filter((m) => m.fecha >= fechaInicio) : movimientos;

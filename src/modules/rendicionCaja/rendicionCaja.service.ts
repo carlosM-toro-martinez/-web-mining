@@ -2,7 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { logger } from "../../config/logger.js";
 import { HttpError } from "../../errors/http.error.js";
 import { generarFolioRendicionCaja } from "../../utils/correlativo.js";
-import { reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
+import { ingresosDeCaja, reportesCajaChicaService } from "../reportesCajaChica/reportesCajaChica.service.js";
 import type { AnularRendicionCajaDTO, CreateRendicionCajaDTO } from "./rendicionCaja.types.js";
 import type { z } from "zod";
 import type { rendicionCajaQuerySchema } from "./rendicionCaja.schema.js";
@@ -52,15 +52,12 @@ export const rendicionCajaService = {
         where: { cajaId, estado: "REGISTRADO", fecha: { gte: periodoDesde, lte: periodoHasta } },
         orderBy: { fecha: "asc" },
       }),
-      prisma.movimientoFondoCaja.aggregate({
-        where: { cajaId, fecha: { gte: periodoDesde, lte: periodoHasta } },
-        _sum: { monto: true },
-      }),
+      ingresosDeCaja(cajaId, { gte: periodoDesde, lte: periodoHasta }),
       saldoAlEmpezar(cajaId, periodoDesde),
     ]);
 
-    // Ver nota en create(): solo las remesas cuentan como fondos de la caja.
-    const totalFondos = Number(fondos._sum.monto ?? 0);
+    // Fondos de la caja = lo que el banco le entregó + fondos directos.
+    const totalFondos = fondos.reduce((acc, f) => acc + f.monto, 0);
     const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
     const totalRetenciones = gastosElegibles.reduce(
       (acc, g) =>
@@ -103,18 +100,13 @@ export const rendicionCajaService = {
     }
 
     const [fondos, saldoAnterior] = await Promise.all([
-      prisma.movimientoFondoCaja.aggregate({
-        where: { cajaId: data.cajaId, fecha: { gte: data.periodoDesde, lte: data.periodoHasta } },
-        _sum: { monto: true },
-      }),
+      ingresosDeCaja(data.cajaId, { gte: data.periodoDesde, lte: data.periodoHasta }),
       saldoAlEmpezar(data.cajaId, data.periodoDesde),
     ]);
 
-    // Solo las remesas (CH-xxx) son fondos de la caja. Los traspasos del
-    // banco a la caja (SALIDA_A_CAJA) son la misma plata de esas remesas: se
-    // depositan en el banco y de ahí se sacan a la caja, así que sumarlos
-    // contaría el mismo dinero dos veces.
-    const totalFondos = Number(fondos._sum.monto ?? 0);
+    // Fondos de la caja = lo que el banco le entregó (SALIDA_A_CAJA) + fondos
+    // directos. Los ingresos a la cuenta bancaria no son dinero de la caja.
+    const totalFondos = fondos.reduce((acc, f) => acc + f.monto, 0);
     const totalGastos = gastosElegibles.reduce((acc, g) => acc + Number(g.montoTotal), 0);
     const totalRetenciones = gastosElegibles.reduce(
       (acc, g) =>

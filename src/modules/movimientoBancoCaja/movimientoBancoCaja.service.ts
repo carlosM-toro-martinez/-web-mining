@@ -26,68 +26,17 @@ const INCLUDE_DETALLE = {
 const fechaTexto = (d: Date) => d.toLocaleDateString("es-BO", { timeZone: "UTC" });
 const mesTexto = (anio: number, mes: number) => `${String(mes).padStart(2, "0")}/${anio}`;
 
-// Lo que va en la columna de cheque/referencia del Excel de la caja.
-function referenciaDeIngreso(m: { formaPago: string; numeroCheque: string | null }) {
-  if (m.formaPago === "CHEQUE") return `CH- ${m.numeroCheque ?? ""}`.trim();
-  if (m.formaPago === "TRANSFERENCIA") return "TRANSFERENCIA";
-  return "DEPÓSITO";
-}
-
-// Lo anterior al último cuadre de la caja o dentro de una rendición cerrada
-// ya quedó fijo: ahí no se agrega ni se quita dinero de la caja.
-async function periodoCerradoDeCaja(tx: Tx, cajaId: number, fecha: Date) {
-  const [cuadre, rendicion] = await Promise.all([
-    tx.cuadreSaldoCaja.findFirst({ where: { cajaId, fechaCorte: { gt: fecha } }, orderBy: { fechaCorte: "desc" } }),
-    tx.rendicionCaja.findFirst({
-      where: { cajaId, estado: "CERRADO", periodoDesde: { lte: fecha }, periodoHasta: { gte: fecha } },
-    }),
-  ]);
-  if (cuadre) return `el saldo de la caja se cuadró al ${fechaTexto(cuadre.fechaCorte)}`;
-  if (rendicion) return `la rendición ${rendicion.numero} ya está cerrada`;
-  return null;
-}
-
-// El ingreso vinculado a una remesa es dinero de la caja de esa remesa: se
-// refleja como un fondo de la caja (lo que leen el Excel, la rendición y el
-// saldo). Esta función deja ese fondo en el estado correcto después de
-// cualquier cambio: lo crea, lo mueve de caja o lo quita.
-async function sincronizarFondo(tx: Tx, movimientoId: string, userId: number) {
+// Un ingreso a la cuenta bancaria NO es dinero de la caja: la caja recibe
+// dinero cuando el banco se lo entrega (salida del banco a la caja). Antes el
+// ingreso vinculado a una remesa se copiaba como fondo de la caja; ya no. Esta
+// función solo quita un fondo antiguo de ese tipo si todavía existiera.
+async function sincronizarFondo(tx: Tx, movimientoId: string, _userId: number) {
   const m = await tx.movimientoBancoCaja.findUniqueOrThrow({
     where: { id: movimientoId },
-    include: { presupuesto: { include: { caja: true } }, fondoCaja: true },
+    include: { fondoCaja: true },
   });
-
-  const caja = m.presupuesto?.caja ?? null;
-  const debeTenerFondo =
-    m.tipo === "INGRESO" && !m.anulado && caja !== null && !(await periodoCerradoDeCaja(tx, caja.id, m.fecha));
-
-  if (m.fondoCaja && (!debeTenerFondo || m.fondoCaja.cajaId !== caja?.id)) {
-    const cerrado = await periodoCerradoDeCaja(tx, m.fondoCaja.cajaId, m.fondoCaja.fecha);
-    if (cerrado) {
-      throw new HttpError(
-        `No se puede: este ingreso ya es dinero de la caja del ${fechaTexto(m.fondoCaja.fecha)} y ${cerrado}.`,
-        409,
-      );
-    }
-    await tx.movimientoFondoCaja.delete({ where: { id: m.fondoCaja.id } });
-  } else if (m.fondoCaja) {
-    return; // ya está bien
-  }
-
-  if (debeTenerFondo && caja) {
-    await tx.movimientoFondoCaja.create({
-      data: {
-        cajaId: caja.id,
-        tipo: "REMESA_PRESUPUESTO",
-        monto: m.monto,
-        moneda: m.moneda,
-        fecha: m.fecha,
-        referencia: referenciaDeIngreso(m),
-        usuarioId: userId,
-        movimientoBancoId: m.id,
-      },
-    });
-  }
+  if (!m.fondoCaja) return;
+  await tx.movimientoFondoCaja.delete({ where: { id: m.fondoCaja.id } });
 }
 
 // Reglas para que un ingreso traiga una remesa: la remesa debe ser del mismo
