@@ -623,7 +623,7 @@ export const reportesCajaChicaService = {
           detalle:
             m.tipo === "AJUSTE_CUADRE"
               ? "AJUSTE POR CUADRE DE SALDO"
-              : m.tipo === "INGRESO" && !m.presupuestoId
+              : m.tipo === "INGRESO"
                 ? m.descripcion.trim().toUpperCase()
                 : nombreRemesa(m.descripcion),
           referencia: m.numeroCheque
