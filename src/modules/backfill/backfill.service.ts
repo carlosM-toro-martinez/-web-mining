@@ -8,6 +8,17 @@ type ProductoResult = {
   cppFinal: string;
 };
 
+// ── TEMPORAL: precios CPP fijados a mano ─────────────────────────────────────────────────
+// Corrección acordada con el cliente. El filtro 02-02-0047 arrastra un CPP de 435 desde oct-2025
+// (se anuló una de las dos compras y el CPP no se recalculó): su valor real es 217,50 por pieza
+// (3 piezas = Bs 652,50). Sin este ajuste, cada backfill de julio-2026 vuelve a valorar la salida
+// del vale a 435 y el total de julio queda en -217,50 Bs.
+// Cada backfill de ese producto y mes usa el CPP indicado en lugar del calculado.
+// PENDIENTE: borrar esta entrada (y todo este bloque si queda vacío) cuando ya no haga falta.
+const CPP_FIJADO: ReadonlyArray<{ codigo: string; anio: number; mes: number; cpp: string }> = [
+  { codigo: "02-02-0047", anio: 2026, mes: 7, cpp: "217.5" },
+];
+
 async function procesarProductoMes(
   productoId: number,
   anio: number,
@@ -113,9 +124,18 @@ async function procesarProductoMes(
   const totalQperiodo = saldoInicialD.add(totalCompraQty);
 
   // CPP = (stockInicial × cppAnterior + Σ(qtyCopra × preciSinIva)) / (stockInicial + ΣqtyCompra)
-  const periodCPP = totalQperiodo.isZero()
+  const cppCalculado = totalQperiodo.isZero()
     ? cppDecimal
     : saldoInicialD.mul(cppDecimal).add(totalCompraSinIva).div(totalQperiodo);
+
+  // CPP fijado a mano (ver CPP_FIJADO): solo se consulta el código del producto si el mes tiene entradas.
+  const fijadosMes = CPP_FIJADO.filter(f => f.anio === anio && f.mes === mes);
+  let periodCPP = cppCalculado;
+  if (fijadosMes.length > 0) {
+    const prod = await prisma.producto.findUnique({ where: { id: productoId }, select: { codigo: true } });
+    const fijado = fijadosMes.find(f => f.codigo === prod?.codigo);
+    if (fijado) periodCPP = new Prisma.Decimal(fijado.cpp);
+  }
 
   // ── PASO 2: Construir updates (cálculo matemático, sin tocar DB aún) ────────────────
   let currentStock    = saldoInicialD;
