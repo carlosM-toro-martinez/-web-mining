@@ -17,6 +17,11 @@ type ProductoResult = {
 // PENDIENTE: borrar esta entrada (y todo este bloque si queda vacío) cuando ya no haga falta.
 const CPP_FIJADO: ReadonlyArray<{ codigo: string; anio: number; mes: number; cpp: string }> = [
   { codigo: "02-02-0047", anio: 2026, mes: 7, cpp: "217.5" },
+  // Resaltadores 99-01-0024: julio ya está cerrado y no se toca. El inicial de agosto es Bs 117,68 por 22 piezas,
+  // que no coincide con 22 × 6,4346; el valor real es 117,68 / 22 = 5,349091 por pieza.
+  // Con 6,4346 el total de septiembre queda en -4,57.
+  { codigo: "99-01-0024", anio: 2026, mes: 8, cpp: "5.349091" },
+  { codigo: "99-01-0024", anio: 2026, mes: 9, cpp: "5.349091" },
 ];
 
 async function procesarProductoMes(
