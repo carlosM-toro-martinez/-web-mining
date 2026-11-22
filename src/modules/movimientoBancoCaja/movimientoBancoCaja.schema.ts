@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fechaCajaSchema } from "../../utils/fechaCaja.js";
 
 export const formaPagoBancoSchema = z.enum(["DEPOSITO", "CHEQUE", "TRANSFERENCIA"]);
 export const monedaMovimientoBancoSchema = z.enum(["BOB", "USD"]);
@@ -9,7 +10,7 @@ export const createMovimientoBancoCajaSchema = z
     cuentaBancariaId: z.number().int().positive(),
     tipo: tipoMovimientoBancoSchema,
     cajaId: z.number().int().positive().optional(),
-    fecha: z.coerce.date(),
+    fecha: fechaCajaSchema,
     formaPago: formaPagoBancoSchema,
     numeroCheque: z.string().trim().optional(),
     monto: z.number().positive(),

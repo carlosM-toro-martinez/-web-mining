@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fechaCajaSchema } from "../../utils/fechaCaja.js";
 
 export const tipoDocumentoGastoSchema = z.enum(["FACTURA", "CONTRATO_RETENCION", "RECIBO", "RECIBO_DIRECTO"]);
 export const categoriaRetencionGastoSchema = z.enum(["SERVICIO", "COMPRA"]);
@@ -28,7 +29,7 @@ export const createGastoCajaSchema = z
     origen: origenGastoCajaSchema.default("CAJA"),
     cajaId: z.number().int().positive().optional(),
     cuentaBancariaCajaId: z.number().int().positive().optional(),
-    fecha: z.coerce.date(),
+    fecha: fechaCajaSchema,
     tipoDocumento: tipoDocumentoGastoSchema,
     categoriaRetencion: categoriaRetencionGastoSchema.optional(),
     esCombustible: z.boolean().optional(),
@@ -79,7 +80,7 @@ export const createGastoCajaSchema = z
 // lo valida contra el gasto ya existente (fusionando lo nuevo con lo viejo).
 export const updateGastoCajaSchema = z
   .object({
-    fecha: z.coerce.date().optional(),
+    fecha: fechaCajaSchema.optional(),
     tipoDocumento: tipoDocumentoGastoSchema.optional(),
     categoriaRetencion: categoriaRetencionGastoSchema.nullable().optional(),
     esCombustible: z.boolean().optional(),

@@ -1,5 +1,6 @@
 import { TipoMovimientoFondoCaja } from "@prisma/client";
 import { z } from "zod";
+import { fechaCajaSchema } from "../../utils/fechaCaja.js";
 
 // z.nativeEnum en vez de una lista de strings a mano — la misma clase de
 // bug que el registro de usuarios (ver auth.schema.ts): si se agrega un
@@ -15,7 +16,7 @@ export const createMovimientoFondoCajaSchema = z
     tipo: tipoMovimientoFondoCajaSchema,
     monto: z.number().positive(),
     moneda: monedaCajaSchema,
-    fecha: z.coerce.date(),
+    fecha: fechaCajaSchema,
     referencia: z.string().optional(),
   })
   .strict()
