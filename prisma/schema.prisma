@@ -1504,6 +1504,8 @@ enum TipoDocumentoGasto {
   // de RECIBO_DIRECTO, que es sin respaldo y no deducible).
   RECIBO
   RECIBO_DIRECTO
+  // Pago por planilla (sueldos, jornales): sin créditos ni retenciones y deducible.
+  PLANILLA
 }
 
 enum CategoriaRetencionGasto {

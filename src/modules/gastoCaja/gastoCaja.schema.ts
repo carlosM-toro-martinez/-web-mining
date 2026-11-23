@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { fechaCajaSchema } from "../../utils/fechaCaja.js";
 
-export const tipoDocumentoGastoSchema = z.enum(["FACTURA", "CONTRATO_RETENCION", "RECIBO", "RECIBO_DIRECTO"]);
+export const tipoDocumentoGastoSchema = z.enum(["FACTURA", "CONTRATO_RETENCION", "RECIBO", "RECIBO_DIRECTO", "PLANILLA"]);
 export const categoriaRetencionGastoSchema = z.enum(["SERVICIO", "COMPRA"]);
 export const monedaCajaSchema = z.enum(["BOB", "USD"]);
 export const estadoGastoCajaSchema = z.enum(["REGISTRADO", "RENDIDO", "ANULADO"]);
