@@ -31,6 +31,7 @@ export const createGastoCajaSchema = z
     cuentaBancariaCajaId: z.number().int().positive().optional(),
     fecha: fechaCajaSchema,
     tipoDocumento: tipoDocumentoGastoSchema,
+    comprobanteId: z.number().int().positive().optional(),
     categoriaRetencion: categoriaRetencionGastoSchema.optional(),
     esCombustible: z.boolean().optional(),
     esNoDeducible: z.boolean().optional(),
@@ -82,6 +83,7 @@ export const updateGastoCajaSchema = z
   .object({
     fecha: fechaCajaSchema.optional(),
     tipoDocumento: tipoDocumentoGastoSchema.optional(),
+    comprobanteId: z.number().int().positive().optional(),
     categoriaRetencion: categoriaRetencionGastoSchema.nullable().optional(),
     esCombustible: z.boolean().optional(),
     esNoDeducible: z.boolean().optional(),
@@ -112,6 +114,7 @@ export const gastoCajaQuerySchema = z
     search: z.string().trim().max(120).optional(),
     categoriaRendicion: categoriaRendicionGastoSchema.optional(),
     tipoDocumento: tipoDocumentoGastoSchema.optional(),
+    comprobanteId: z.coerce.number().int().positive().optional(),
     montoMin: z.coerce.number().nonnegative().optional(),
     montoMax: z.coerce.number().nonnegative().optional(),
     informacionIncompleta: z.enum(["true", "false"]).optional(),

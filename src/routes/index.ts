@@ -44,6 +44,7 @@ import logisticaResetRoutes from "../modules/logisticaReset/logisticaReset.route
 import cajaChicaRoutes from "../modules/cajaChica/cajaChica.routes.js";
 import centroCostoCajaRoutes from "../modules/centroCostoCaja/centroCostoCaja.routes.js";
 import funcionGastoCajaRoutes from "../modules/funcionGastoCaja/funcionGastoCaja.routes.js";
+import comprobanteGastoCajaRoutes from "../modules/comprobanteGastoCaja/comprobanteGastoCaja.routes.js";
 import cuentaContableCajaRoutes from "../modules/cuentaContableCaja/cuentaContableCaja.routes.js";
 import conceptoRetencionCajaRoutes from "../modules/conceptoRetencionCaja/conceptoRetencionCaja.routes.js";
 // Caja Chica — Fase 2: núcleo
@@ -118,6 +119,7 @@ router.use("/logistica-reset", logisticaResetRoutes);
 router.use("/cajas-chicas", cajaChicaRoutes);
 router.use("/centros-costo-caja", centroCostoCajaRoutes);
 router.use("/funciones-gasto-caja", funcionGastoCajaRoutes);
+router.use("/comprobantes-gasto-caja", comprobanteGastoCajaRoutes);
 router.use("/cuentas-contables-caja", cuentaContableCajaRoutes);
 router.use("/conceptos-retencion-caja", conceptoRetencionCajaRoutes);
 

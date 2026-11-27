@@ -22,6 +22,7 @@ import type { Prisma, TipoMovimientoFondoCaja } from "@prisma/client";
 type GastoCajaQuery = z.infer<typeof gastoCajaQuerySchema>;
 
 const INCLUDE_DETALLE = {
+  comprobante: true,
   caja: true,
   cuentaBancariaCaja: true,
   centroCostoCaja: true,
@@ -91,6 +92,24 @@ type DatosImpuesto = {
 // documento (270,05 -> 189,04 -> 24,58).
 const PORCENTAJE_BASE_CREDITO_COMBUSTIBLE = 0.7;
 const redondear2 = (valor: number) => Math.round(valor * 100) / 100;
+
+// Comprobante del gasto: el elegido (su tratamiento debe coincidir con el tipo
+// de documento) o, si no se indica, el primero de ese tratamiento.
+async function resolverComprobante(tipoDocumento: CreateGastoCajaDTO["tipoDocumento"], comprobanteId?: number) {
+  if (comprobanteId) {
+    const elegido = await prisma.comprobanteGastoCaja.findUnique({ where: { id: comprobanteId } });
+    if (!elegido) throw new HttpError("Comprobante no encontrado", 404);
+    if (elegido.tratamiento !== tipoDocumento) {
+      throw new HttpError("El comprobante elegido no corresponde al tipo de documento", 400);
+    }
+    return elegido.id;
+  }
+  const porDefecto = await prisma.comprobanteGastoCaja.findFirst({
+    where: { tratamiento: tipoDocumento },
+    orderBy: [{ orden: "asc" }, { id: "asc" }],
+  });
+  return porDefecto?.id ?? null;
+}
 
 async function calcularImpuestos(data: DatosImpuesto) {
   let montoCreditoFiscalIva = 0;
@@ -538,6 +557,7 @@ export const gastoCajaService = {
     }
     if (query.categoriaRendicion) where.categoriaRendicion = query.categoriaRendicion;
     if (query.tipoDocumento) where.tipoDocumento = query.tipoDocumento;
+    if (query.comprobanteId) where.comprobanteId = query.comprobanteId;
     if (query.montoMin !== undefined || query.montoMax !== undefined) {
       where.montoTotal = {};
       if (query.montoMin !== undefined) where.montoTotal.gte = query.montoMin;
@@ -700,6 +720,7 @@ export const gastoCajaService = {
       }
     }
 
+    const comprobanteId = await resolverComprobante(data.tipoDocumento, data.comprobanteId);
     const impuestos = await calcularImpuestos(data);
 
     const gasto = await prisma.$transaction(async (tx) => {
@@ -710,6 +731,7 @@ export const gastoCajaService = {
           cuentaBancariaCajaId: data.origen === "BANCO" ? (data.cuentaBancariaCajaId ?? null) : null,
           fecha: data.fecha,
           tipoDocumento: data.tipoDocumento,
+          comprobanteId,
           categoriaRetencion: data.categoriaRetencion ?? null,
           categoriaRendicion: data.categoriaRendicion,
           proveedorNombre: data.proveedorNombre,
@@ -851,6 +873,9 @@ export const gastoCajaService = {
     cleanData.montoRetencionIueCompras = impuestos.montoRetencionIueCompras;
     cleanData.montoRetencionIt = impuestos.montoRetencionIt;
     cleanData.esNoDeducible = impuestos.esNoDeducible;
+    if (data.comprobanteId !== undefined || merged.tipoDocumento !== existente.tipoDocumento) {
+      cleanData.comprobanteId = await resolverComprobante(merged.tipoDocumento, data.comprobanteId);
+    }
 
     const gasto = await prisma.$transaction(async (tx) => {
       const actualizado = await tx.gastoCaja.update({

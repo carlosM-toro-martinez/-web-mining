@@ -1020,11 +1020,25 @@ model ConceptoRetencionCaja {
   cuentaContableCaja   CuentaContableCaja @relation(fields: [cuentaContableCajaId], references: [id])
 }
 
+// Opciones de "¿Qué comprobante te dieron?", editables en Parámetros. El
+// tratamiento define los impuestos; el nombre es libre.
+model ComprobanteGastoCaja {
+  id          Int                @id @default(autoincrement())
+  nombre      String             @unique
+  ayuda       String?
+  tratamiento TipoDocumentoGasto
+  activo      Boolean            @default(true)
+  orden       Int                @default(0)
+  gastos      GastoCaja[]
+}
+
 model GastoCaja {
   id                       String                   @id @default(uuid())
   cajaId                   Int?
   fecha                    DateTime
   tipoDocumento            TipoDocumentoGasto
+  comprobanteId            Int?
+  comprobante              ComprobanteGastoCaja?    @relation(fields: [comprobanteId], references: [id])
   categoriaRetencion       CategoriaRetencionGasto?
   proveedorNombre          String
   proveedorNitCi           String?

@@ -317,7 +317,7 @@ export const reportesCajaChicaService = {
 
     const gastos = await prisma.gastoCaja.findMany({
       where,
-      include: { caja: true },
+      include: { caja: true, comprobante: true },
       orderBy: { fecha: "asc" },
     });
 
@@ -345,7 +345,7 @@ export const reportesCajaChicaService = {
 
     const gastos = await prisma.gastoCaja.findMany({
       where,
-      include: { caja: true },
+      include: { caja: true, comprobante: true },
       orderBy: [{ tipoDocumento: "asc" }, { fecha: "asc" }],
     });
 
@@ -399,7 +399,7 @@ export const reportesCajaChicaService = {
 
     const gastos = await prisma.gastoCaja.findMany({
       where,
-      include: { caja: true },
+      include: { caja: true, comprobante: true },
       orderBy: { fecha: "asc" },
     });
 
@@ -590,7 +590,7 @@ export const reportesCajaChicaService = {
     const [movimientosBanco, gastosDirectos] = await Promise.all([
       prisma.movimientoBancoCaja.findMany({
         where: { cuentaBancariaId, anulado: false, ...(fechaFin ? { fecha: { lte: fechaFin } } : {}) },
-        include: { caja: true },
+        include: { caja: true, comprobante: true },
         orderBy: { fecha: "asc" },
       }),
       prisma.gastoCaja.findMany({
